@@ -8,6 +8,7 @@ edition.workspace = true
 default = []
 unstable = []
 default-bazel = []
+ork = []
 
 [dependencies]
 dunce = { workspace = true }
