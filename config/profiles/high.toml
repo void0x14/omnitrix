@@ -1,0 +1,17 @@
+[runtime]
+max_active_agents = 50
+mem_high_watermark_mb = 0
+swap_out_idle_ms = 60000
+max_depth = 7
+
+[router]
+default_strategy = "weighted"
+grounding = "required"
+
+[record]
+video = true
+dom = true
+events = true
+
+[notify]
+escalation = true

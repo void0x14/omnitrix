@@ -1,0 +1,17 @@
+[runtime]
+max_active_agents = "auto"
+mem_high_watermark_mb = 0
+swap_out_idle_ms = 30000
+max_depth = 5
+
+[router]
+default_strategy = "fallback"
+grounding = "required"
+
+[record]
+video = false
+dom = false
+events = true
+
+[notify]
+escalation = false
