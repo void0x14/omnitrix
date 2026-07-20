@@ -33,6 +33,8 @@ thiserror = { workspace = true }
 anyhow = { workspace = true }
 toml = { workspace = true }
 axum = { workspace = true }
+chrono = { workspace = true }
+dirs = { workspace = true }
 
 [features]
 poc-managed-agent = ["xai-grok-agent", "xai-grok-tools", "xai-chat-state", "uuid"]

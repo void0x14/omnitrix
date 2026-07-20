@@ -13,7 +13,7 @@ pub struct ToolValidator;
 
 impl ToolValidator {
     /// JSON argümanları şemaya göre validate et
-    pub fn validate_args(tool_name: &str, args: &Value) -> ValidationResult {
+    pub fn validate_args(_tool_name: &str, args: &Value) -> ValidationResult {
         // Free-text shell command detection
         if let Some(text) = args.get("command").and_then(|v| v.as_str()) {
             let shell_indicators = ["sh ", "bash ", "sudo ", "rm -rf", "chmod ", "> ", "| "];

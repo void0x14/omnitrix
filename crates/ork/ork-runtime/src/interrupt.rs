@@ -93,6 +93,7 @@ impl Interrupt {
     }
 }
 
+#[derive(Clone)]
 pub struct InterruptBus {
     tx: broadcast::Sender<Interrupt>,
     hierarchy: Option<Arc<HierarchyTree>>,

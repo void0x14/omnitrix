@@ -38,6 +38,7 @@ struct RegisteredProvider {
     base_url: String,
 }
 
+#[derive(Clone)]
 pub struct HealthProbe {
     states: Arc<RwLock<HashMap<String, ProviderState>>>,
     client: reqwest::Client,

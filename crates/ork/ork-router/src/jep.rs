@@ -26,7 +26,7 @@ pub struct JepEngine {
     executor: Executor,
     judge: Judge,
     max_iterations: u32,
-    policy: RoutingPolicy,
+    _policy: RoutingPolicy,
 }
 
 impl JepEngine {
@@ -36,7 +36,7 @@ impl JepEngine {
             executor: Executor::new(policy.clone()),
             judge: Judge::new(None),
             max_iterations: 3,
-            policy,
+            _policy: policy,
         }
     }
 

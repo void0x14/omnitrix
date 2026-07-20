@@ -1,4 +1,18 @@
 use std::path::PathBuf;
+use std::sync::Arc;
+
+use ork_provider::detection::ProviderDetector;
+use ork_provider::health::HealthProbe;
+use ork_provider::keyring::KeyManager;
+use ork_router::strategies::Router;
+use ork_runtime::interrupt::InterruptBus;
+use ork_runtime::penalty::PenaltyLedger;
+use ork_runtime::scheduler::Scheduler;
+use ork_storage::cas::CasBlobStore;
+use ork_storage::redb_store::RedbStore;
+use ork_storage::sqlite_schema::SchemaManager;
+use ork_storage::wal::WalReplay;
+use ork_storage::writer_actor::WriterActor;
 
 fn de_number_or_string<'de, D>(d: D) -> Result<String, D::Error>
 where
@@ -22,6 +36,7 @@ where
 }
 
 #[derive(Debug, serde::Deserialize)]
+#[allow(dead_code)]
 pub struct OrkConfig {
     pub runtime: RuntimeConfig,
     pub router: RouterConfig,
@@ -32,6 +47,7 @@ pub struct OrkConfig {
 }
 
 #[derive(Debug, serde::Deserialize)]
+#[allow(dead_code)]
 pub struct RuntimeConfig {
     #[serde(deserialize_with = "de_number_or_string")]
     pub max_active_agents: String,
@@ -41,12 +57,14 @@ pub struct RuntimeConfig {
 }
 
 #[derive(Debug, serde::Deserialize)]
+#[allow(dead_code)]
 pub struct RouterConfig {
     pub default_strategy: String,
     pub grounding: String,
 }
 
 #[derive(Debug, serde::Deserialize)]
+#[allow(dead_code)]
 pub struct RecordConfig {
     pub video: bool,
     pub dom: bool,
@@ -54,18 +72,46 @@ pub struct RecordConfig {
 }
 
 #[derive(Debug, serde::Deserialize)]
+#[allow(dead_code)]
 pub struct NotifyConfig {
     pub escalation: bool,
 }
 
 #[derive(Debug, serde::Deserialize)]
 pub struct ApiConfig {
+    #[serde(default = "default_api_addr")]
     pub addr: String,
 }
 
-pub struct OrkStorage;
-pub struct OrkProvider;
-pub struct OrkRouter;
+fn default_api_addr() -> String {
+    "127.0.0.1:9876".into()
+}
+
+#[allow(dead_code)]
+pub struct OrkContext {
+    pub scheduler: Scheduler,
+    pub storage: StorageLayer,
+    pub provider: ProviderLayer,
+    pub interrupt_bus: Arc<InterruptBus>,
+    pub penalty_ledger: PenaltyLedger,
+    pub health_probe: Arc<HealthProbe>,
+    pub config: OrkConfig,
+}
+
+#[allow(dead_code)]
+pub struct StorageLayer {
+    pub redb: RedbStore,
+    pub sqlite: SchemaManager,
+    pub cas: CasBlobStore,
+    pub writer: Option<WriterActor>,
+}
+
+#[allow(dead_code)]
+pub struct ProviderLayer {
+    pub detector: ProviderDetector,
+    pub health: Arc<HealthProbe>,
+    pub keyring: KeyManager,
+}
 
 pub fn init() -> anyhow::Result<()> {
     tracing_subscriber::fmt::init();
@@ -76,14 +122,14 @@ pub fn load_config() -> anyhow::Result<OrkConfig> {
     let profile = std::env::var("ORK_PROFILE").unwrap_or_else(|_| "mid".into());
 
     let config_dir = std::env::var("ORK_CONFIG_DIR").map(PathBuf::from).unwrap_or_else(|_| {
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../config")
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../../config")
     });
 
     let config_path = config_dir.join("profiles").join(format!("{}.toml", profile));
 
     let content = std::fs::read_to_string(&config_path)?;
     let config: OrkConfig = toml::from_str(&content)?;
-    tracing::info!("config loaded from {}: {:#?}", config_path.display(), config);
+    tracing::info!(profile, path=%config_path.display(), "config loaded");
     Ok(config)
 }
 
@@ -140,84 +186,86 @@ impl Default for NotifyConfig {
 impl Default for ApiConfig {
     fn default() -> Self {
         Self {
-            addr: "127.0.0.1:9876".into(),
+            addr: default_api_addr(),
         }
     }
 }
 
-pub fn init_storage(config: &OrkConfig) -> anyhow::Result<OrkStorage> {
-    let _ = config;
-    Ok(OrkStorage)
+pub fn init_storage(_config: &OrkConfig) -> anyhow::Result<StorageLayer> {
+    let data_dir = dirs::data_dir()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join("omnitrix")
+        .join("ork");
+
+    std::fs::create_dir_all(&data_dir)?;
+    tracing::info!(path=%data_dir.display(), "storage directory initialized");
+
+    let redb = RedbStore::new(&data_dir.join("hot.redb"))
+        .map_err(|e| anyhow::anyhow!("RedbStore init: {e}"))?;
+    let cas = CasBlobStore::new(&data_dir.join("cas"))
+        .map_err(|e| anyhow::anyhow!("CasBlobStore init: {e}"))?;
+    let sqlite = SchemaManager::new(&data_dir.join("ork.sqlite"))
+        .map_err(|e| anyhow::anyhow!("SchemaManager init: {e}"))?;
+
+    sqlite.run_migrations()
+        .map_err(|e| anyhow::anyhow!("Migration failed: {e}"))?;
+
+    let wal_path = data_dir.join("ork.sqlite");
+    let wal = WalReplay::new(&wal_path)
+        .map_err(|e| anyhow::anyhow!("WalReplay init: {e}"))?;
+    if let Ok(report) = wal.replay_pending() {
+        if report.replayed > 0 || report.failed > 0 {
+            tracing::info!(
+                total = report.total_ops,
+                replayed = report.replayed,
+                skipped = report.skipped,
+                failed = report.failed,
+                "WAL replay complete"
+            );
+        }
+    }
+
+    let writer = Some(WriterActor::new(&data_dir.join("ork.sqlite")));
+
+    Ok(StorageLayer { redb, sqlite, cas, writer })
 }
 
-pub fn init_provider(config: &OrkConfig) -> anyhow::Result<OrkProvider> {
-    let _ = config;
-    Ok(OrkProvider)
+pub fn init_provider(_config: &OrkConfig) -> ProviderLayer {
+    let keyring = KeyManager::new();
+    let health = Arc::new(HealthProbe::new_with_db(
+        dirs::data_dir()
+            .unwrap_or_else(|| PathBuf::from("."))
+            .join("omnitrix")
+            .join("ork")
+            .join("ork.sqlite"),
+    ));
+    let detector = ProviderDetector::new();
+    ProviderLayer { detector, health, keyring }
 }
 
-pub fn init_router(config: &OrkConfig) -> OrkRouter {
-    let _ = config;
-    OrkRouter
+pub fn init_router(health_probe: HealthProbe) -> Router {
+    Router::with_health_probe(health_probe)
+}
+
+pub fn init_scheduler(config: &OrkConfig) -> Scheduler {
+    Scheduler::new(0, 64, config.runtime.max_depth, config.runtime.mem_high_watermark_mb)
 }
 
 pub fn init_api(config: &OrkConfig) -> crate::api::ControlPlaneApi {
-    crate::api::ControlPlaneApi::new("127.0.0.1:9876")
+    let addr = if config.api.addr.is_empty() {
+        "127.0.0.1:9876"
+    } else {
+        &config.api.addr
+    };
+    crate::api::ControlPlaneApi::new(addr)
 }
 
-#[cfg(feature = "poc-managed-agent")]
-pub fn poc_managed_agent_spawn() {
-    use std::sync::Arc;
-
-    use ork_runtime::budget::Budget;
-    use ork_runtime::managed_agent::ManagedAgent;
-    use ork_runtime::persona::PersonaKind;
-    use uuid::Uuid;
-    use xai_chat_state::handle::ChatStateHandle;
-    use xai_grok_agent::{Agent, AgentDefinition, CompactionPolicy, PromptContext, ReminderPolicy};
-    use xai_grok_tools::bridge::ToolBridge;
-
-    let agent_def = AgentDefinition::from_json(&serde_json::json!({
-        "name": "poc-agent",
-        "description": "PoC managed agent — Faz 0.4"
-    }))
-    .expect("valid AgentDefinition");
-
-    let prompt_ctx = PromptContext::default();
-    let system_prompt = "PoC managed agent — Faz 0.4".to_string();
-    let tool_bridge = ToolBridge::for_test();
-    let compaction = CompactionPolicy::default();
-    let reminder = ReminderPolicy::default();
-
-    let agent = Agent::new(
-        agent_def,
-        prompt_ctx,
-        system_prompt,
-        Arc::new(tool_bridge),
-        reminder,
-        compaction,
-        Vec::new(),
-        false,
-    );
-
-    let managed = ManagedAgent::new(
-        agent,
-        PersonaKind::Explorer,
-        None,
-        Uuid::nil(),
-        0,
-        Budget::default(),
-        ChatStateHandle::noop(),
-    );
-
-    tracing::info!(
-        "PoC: ManagedAgent oluşturuldu — id={}, persona={:?}, depth={}",
-        managed.id,
-        managed.persona,
-        managed.depth
-    );
-}
-
-#[cfg(not(feature = "poc-managed-agent"))]
-pub fn poc_managed_agent_spawn() {
-    tracing::info!("PoC: ManagedAgent wrapper hazır (Faz 0 completed — agent crate disabled)");
+pub async fn shutdown(context: &mut OrkContext) {
+    tracing::info!("orkd shutting down...");
+    context.scheduler.shutdown().await;
+    if let Some(ref mut writer) = context.storage.writer {
+        writer.shutdown().await;
+    }
+    context.provider.keyring.clear().await;
+    tracing::info!("orkd shutdown complete");
 }

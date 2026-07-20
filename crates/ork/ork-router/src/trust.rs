@@ -24,7 +24,7 @@ pub struct Outcome {
 }
 
 const INITIAL_TRUST: f64 = 0.5;
-const DECAY_DAYS: i64 = 1;
+const _DECAY_DAYS: i64 = 1;
 const DECAY_RATE: f64 = 0.05;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

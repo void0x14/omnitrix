@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use axum::{
     Router,
     extract::ws::WebSocketUpgrade,
