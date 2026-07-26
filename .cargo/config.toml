@@ -1,3 +1,9 @@
+# Es zamanli rustc sayisi. 12 cekirdek x ~1GB/rustc, 15GB RAM'de OOM'a giriyor.
+# Ozellikle es zamanli calisan ajanlar da cargo cagirdigi icin tavan sart.
+# Yerel gelistirme ayari; CI'da CARGO_BUILD_JOBS ile ezilebilir.
+[build]
+jobs = 4
+
 # link-arg
 # https://pyo3.rs/v0.17.1/building_and_distribution.html#macos
 

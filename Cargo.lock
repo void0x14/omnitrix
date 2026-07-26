@@ -6974,6 +6974,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "omni-agent"
+version = "0.1.0"
+dependencies = [
+ "omni-tools",
+ "thiserror 2.0.18",
+ "tokio",
+ "tracing",
+ "xai-chat-state",
+ "xai-grok-agent",
+]
+
+[[package]]
 name = "omni-backup"
 version = "0.1.0"
 dependencies = [
@@ -7117,6 +7129,20 @@ dependencies = [
  "uuid",
  "xai-sqlite-journal",
  "zstd",
+]
+
+[[package]]
+name = "omni-tools"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "thiserror 2.0.18",
+ "tokio",
+ "tracing",
+ "xai-gix-status",
+ "xai-grok-tools",
+ "xai-hunk-tracker",
+ "xai-tool-runtime",
 ]
 
 [[package]]
