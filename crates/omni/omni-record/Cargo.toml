@@ -6,6 +6,7 @@ license.workspace = true
 description = "Session recording & replay for Omnitrix multiagent runs"
 
 [dependencies]
+omni-proto = { workspace = true }
 omni-storage = { workspace = true }
 tokio = { workspace = true }
 serde = { workspace = true }
@@ -23,3 +24,6 @@ rusqlite = { workspace = true }
 
 [lints]
 workspace = true
+
+[dev-dependencies]
+tempfile = { workspace = true }
