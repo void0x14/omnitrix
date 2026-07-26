@@ -9,7 +9,6 @@ default = []
 unstable = []
 dhat-heap = ["dep:dhat"]
 default-bazel = []
-ork = []
 
 [dependencies]
 dunce = { workspace = true }

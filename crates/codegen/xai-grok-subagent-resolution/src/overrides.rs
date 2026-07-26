@@ -150,9 +150,6 @@ pub fn resolve_effective_overrides(
         role_name,
         persona_error,
         isolation,
-        routing_policy: None,
-        budget_json: None,
-        capability_allowlist: None,
     }
 }
 

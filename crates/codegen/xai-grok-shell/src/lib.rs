@@ -31,8 +31,6 @@ pub mod leader;
 pub mod managed_config;
 pub mod mcp_doctor;
 pub use xai_grok_models as models;
-#[cfg(feature = "ork")]
-pub mod ork;
 pub mod plugin;
 pub mod relay;
 pub mod remote;

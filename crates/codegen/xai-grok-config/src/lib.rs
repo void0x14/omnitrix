@@ -21,7 +21,6 @@ mod loader;
 mod macos_managed;
 mod managed_cache;
 pub mod managed_text;
-pub mod ork;
 mod paths;
 pub mod shell;
 pub mod signed_policy;

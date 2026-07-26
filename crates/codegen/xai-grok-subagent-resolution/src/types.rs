@@ -43,12 +43,6 @@ pub struct EffectiveRuntimeConfig {
     pub persona_error: Option<String>,
     /// Isolation mode for the child execution environment.
     pub isolation: xai_tool_types::SubagentIsolationMode,
-    /// Multiagent routing policy (JSON string).
-    pub routing_policy: Option<String>,
-    /// Budget constraints as JSON (max_tokens, max_cost, max_latency_ms).
-    pub budget_json: Option<String>,
-    /// Allowlist of capability identifiers.
-    pub capability_allowlist: Option<Vec<String>>,
 }
 
 /// Data about a completed source subagent, needed for resume validation
@@ -133,9 +127,6 @@ mod tests {
         assert!(config.role_name.is_none());
         assert!(config.persona_error.is_none());
         assert_eq!(config.isolation, SubagentIsolationMode::None);
-        assert!(config.routing_policy.is_none());
-        assert!(config.budget_json.is_none());
-        assert!(config.capability_allowlist.is_none());
     }
 
     #[test]

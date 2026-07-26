@@ -27,8 +27,6 @@ pub mod hub_channel;
 pub mod hub_ids;
 pub mod hub_server;
 pub mod mcp;
-#[cfg(feature = "ork")]
-pub mod ork;
 pub mod permission;
 pub mod preview_supervisor;
 pub mod project_config;
