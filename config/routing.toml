@@ -1,0 +1,66 @@
+# config/routing.toml — yonlendirme modlari + rol->model baglamalari
+# (MASTER-PLAN 10.1 / 10.2, AS7, I5)
+#
+# Semayi okuyan: crates/omni/omni-router/src/strategies.rs (RoutingConfig)
+# Rol->model cozucu:  crates/omni/omni-router/src/catalog.rs (ModelCatalog)
+#
+# MODEL ADI BURADA DA GOMULU DEGILDIR (I5): zincir girdileri model adi yerine
+# ROL verir; rol calisma zamaninda `config/models.toml` + gomulu katalog
+# (`xai-grok-models::DEFAULT_MODELS_JSON`) uzerinden cozulur.
+
+# Varsayilan mod: round_robin | weighted | fallback | jep  (10.1)
+#   round_robin / weighted -> yuk tum canli anahtarlara dagitilir
+#   fallback               -> hata/bakiye-bitti olunca zincirde bir alta gecilir
+#   jep                    -> Judge-Executor-Planner rolleri asagidaki [jep]'ten
+strategy = "fallback"
+
+# Kanit kipi (10.3): required | preferred | off
+grounding = "required"
+
+# `provider_health` tablosunun okundugu SQLite dosyasi; verilmezse canlilik
+# suzgeci uygulanmaz.
+# health_db = "omnitrix.db"
+
+# ---------------------------------------------------------------------------
+# Aday zincir. Sirasi onemlidir (fallback yukaridan asagi iner).
+# Her blokta ya `role` (katalogdan cozulur — TERCIH EDILEN) ya da dogrudan
+# `model` verilir. `weight` yalnizca `weighted` modunda anlamlidir.
+# ---------------------------------------------------------------------------
+# [[provider]]
+# provider = "<provider-adi>"   # providers.name
+# role     = "executor"          # model katalogdan cozulur (AS7/I5)
+# weight   = 1.0
+
+# [[provider]]
+# provider = "<yedek-provider>"
+# role     = "executor"
+# weight   = 1.0
+
+# ---------------------------------------------------------------------------
+# JEP rol secimi (10.1). Degerler ROL ADIDIR, model adi degil.
+# Gecerli roller: judge · executor · planner · summary · web_search
+# ---------------------------------------------------------------------------
+[jep]
+planner  = "planner"
+executor = "executor"
+judge    = "judge"
+
+# ---------------------------------------------------------------------------
+# Devre kesici (xai-circuit-breaker). Alanlar opsiyonel; verilmeyen alan
+# kod tarafindaki varsayilanla doldurulur.
+# ---------------------------------------------------------------------------
+# [circuit_breaker]
+# enabled              = true
+# window_secs          = 60
+# min_samples          = 2
+# error_rate_threshold = 0.5
+# open_secs            = 30
+# half_open_max_probes = 1
+
+# ---------------------------------------------------------------------------
+# Butce zarfi (AS4). Hepsi opsiyonel.
+# ---------------------------------------------------------------------------
+# [budget]
+# max_tokens     = 0
+# max_cost       = 0.0
+# max_latency_ms = 0

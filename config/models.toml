@@ -1,0 +1,52 @@
+# config/models.toml — AS7 model katalogu override'i (MASTER-PLAN 10.2, I5)
+#
+# Bu dosya TAMAMEN BOS birakilabilir. Bos dosyada her rol
+# `xai-grok-models::DEFAULT_MODELS_JSON` icindeki gomulu varsayilanlardan
+# CALISMA ZAMANINDA cozulur. Plan/kod tarafinda hicbir literal model adi
+# ya da fiyati gomulu degildir (I5); burada yazan degerler yalnizca
+# `omni-router::catalog::ModelCatalog` tarafindan okunur.
+#
+# Okuyucu: crates/omni/omni-router/src/catalog.rs
+# Cozum sirasi (rol R icin):
+#   1. [roles] R              (bu dosya)
+#   2. default                (bu dosya)
+#   3. gomulu JSON'un role ozel alani (web_search / session_summary)
+#   4. gomulu JSON'un default alani
+# Bos string ("") "ayarlanmamis" demektir; bir ust katmana duser.
+
+# ---------------------------------------------------------------------------
+# Tum roller icin tek varsayilan. Bos/yorumda -> katalogdan cozulur.
+# ---------------------------------------------------------------------------
+# default = ""
+
+# ---------------------------------------------------------------------------
+# Rol -> model baglamalari.
+# Gecerli rol anahtarlari (baskasi hata verir):
+#   judge · executor · planner · summary · web_search
+#
+# Kisa bicim : judge = "<model-id>"
+# Genis bicim: [roles.judge]
+#              model    = "<model-id>"
+#              provider = "<provider-adi>"
+# ---------------------------------------------------------------------------
+[roles]
+judge      = ""   # bos -> katalogdan cozulur
+executor   = ""   # bos -> katalogdan cozulur
+planner    = ""   # bos -> katalogdan cozulur
+summary    = ""   # bos -> katalogdan cozulur (JSON: session_summary)
+web_search = ""   # bos -> katalogdan cozulur (JSON: web_search)
+
+# Genis bicim ornegi (provider birlikte verilecekse):
+# [roles.judge]
+# model    = "<model-id>"
+# provider = "<provider-adi>"
+
+# ---------------------------------------------------------------------------
+# Model metadata zenginlestirmesi / yeni model ekleme.
+# Anahtar = model-id. Gomulu JSON'da olmayan bir id burada tanimlanirsa
+# katalog kaydi olarak eklenir.
+# ---------------------------------------------------------------------------
+# [models."<model-id>"]
+# provider       = "<provider-adi>"
+# context_window = 0
+# api_backend    = "<backend-adi>"
