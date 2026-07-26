@@ -6,7 +6,7 @@ use super::dashboard_telemetry::{
 };
 use super::modes::{dispatch_cycle_mode_and_sync, set_yolo_mode, yolo_enable_blocked};
 use super::permissions::resolve_permission_queue_transition;
-use super::queue::{maybe_drain_queue, note_peek_page_flip_after_drain};
+use super::queue::{maybe_drain_queue, note_peek_page_flip};
 use super::router::dispatch;
 use super::session::lifecycle::{
     dispatch_new_session_inner_with_id, dispatch_new_worktree_session,
@@ -15,11 +15,11 @@ use super::session::load::dispatch_load_session;
 use super::session::load::focus_if_session_already_open;
 use super::session::modal::dispatch_sessions_confirm_close;
 use super::turn::dispatch_cancel_turn;
-use super::voice::voice_stop_on_submit;
+use super::voice::{merge_prompt_with_voice_interim, voice_stop_on_submit};
 use crate::app::actions::{Action, Effect};
 use crate::app::agent::AgentId;
 use crate::app::agent_view::AgentView;
-use crate::app::app_view::{ActiveView, AppView, TrustState};
+use crate::app::app_view::{ActiveView, AppView, DashboardReturn, TrustState};
 use agent_client_protocol as acp;
 
 // ---------------------------------------------------------------------------
@@ -50,10 +50,20 @@ pub(super) fn ensure_dashboard_state(app: &mut AppView) {
     let mut state = dashboard_state_from_persisted(app);
     state.gc_stale_refs(&dashboard_alive_fn(&app.agents));
     state.adopt_slash_mru(app.slash_mru.clone());
+    state.adopt_command_tags(app.command_tags.clone());
     state.set_screen_mode(app.screen_mode);
     state.set_recap_visible(app.session_recap_available);
     state.set_voice_visible(app.voice_mode_enabled);
     state.set_restricted_commands(&app.tier_restricted_commands);
+    let billing = app.usage_visible;
+    state
+        .dispatch
+        .slash_controller
+        .set_billing_surface_visible(billing);
+    state
+        .peek_reply
+        .slash_controller
+        .set_billing_surface_visible(billing);
     app.dashboard = Some(state);
 }
 
@@ -139,6 +149,11 @@ pub(super) fn dispatch_open_dashboard(app: &mut AppView) -> Vec<Effect> {
     if matches!(app.active_view, ActiveView::AgentDashboard) {
         return dispatch_exit_dashboard(app);
     }
+    // Stamp return target for this visit (clears any prior leftover).
+    app.dashboard_return = match app.active_view {
+        ActiveView::Agent(id) => Some(DashboardReturn::Agent(id)),
+        _ => None,
+    };
     // Preserve in-memory state across reopen.
     // `app.dashboard.is_some()` means we've previously initialised
     // it; preserve the user's filter / dispatch text / hover /
@@ -199,16 +214,12 @@ pub(super) fn dispatch_open_dashboard(app: &mut AppView) -> Vec<Effect> {
     //
     configure_dashboard_state(app);
     app.active_view = ActiveView::AgentDashboard;
-    // Outside leader mode there is no live leader roster to poll, so the
-    // dashboard would only show this process's in-memory agents. Seed it with
-    // the local on-disk session list (dormant/idle sessions) so it isn't empty;
-    // the event loop keeps it fresh on the roster-poll timer while open.
     log_dashboard_opened(app);
-    if !app.leader_mode {
-        app.dashboard_sessions_loading = true;
-        return vec![Effect::FetchDashboardSessions];
+    app.dashboard_sessions_loading = true;
+    if app.leader_mode {
+        return vec![Effect::FetchRoster];
     }
-    vec![]
+    vec![Effect::FetchDashboardSessions]
 }
 
 /// Helper: produce a closure that answers "does this DashboardRowId
@@ -242,14 +253,54 @@ pub(super) fn dispatch_exit_dashboard(app: &mut AppView) -> Vec<Effect> {
         d.close_popup();
     }
     log_dashboard_closed(app);
-    // Return to either Welcome or the most recently active agent.
-    if let Some(id) = app.agents.keys().next().copied() {
+    let preferred = app
+        .dashboard_return
+        .take()
+        .filter(|t| app.agents.contains_key(&t.agent_id()));
+    // Overlay chrome only when the preferred target is still alive — never
+    // on the insertion-order fallback after the return agent was closed.
+    let (return_id, rearm_overlay) = match preferred {
+        Some(t) => (Some(t.agent_id()), t.is_overlay()),
+        None => (app.agents.keys().next().copied(), false),
+    };
+    if let Some(id) = return_id {
         app.active_view = ActiveView::Agent(id);
+        if rearm_overlay {
+            rearm_session_overlay(app, id);
+        }
         surface_yolo_launch_block_notice(app, id);
     } else {
         show_welcome(app);
     }
     vec![]
+}
+
+/// Restore session-overlay chrome (`attached_agent` + row cursor).
+/// Keeps a live subagent takeover; otherwise clears it and selects TopLevel.
+fn rearm_session_overlay(app: &mut AppView, id: AgentId) {
+    use crate::views::dashboard::DashboardRowId;
+    let live_child = app.agents.get(&id).and_then(|a| {
+        a.active_subagent
+            .as_ref()
+            .filter(|c| a.subagent_sessions.contains_key(*c))
+            .cloned()
+    });
+    let row = match live_child {
+        Some(child_session_id) => DashboardRowId::Subagent {
+            parent: id,
+            child_session_id,
+        },
+        None => {
+            if let Some(agent) = app.agents.get_mut(&id) {
+                agent.active_subagent = None;
+            }
+            DashboardRowId::TopLevel(id)
+        }
+    };
+    if let Some(d) = app.dashboard.as_mut() {
+        d.focus_row(row);
+        d.attached_agent = Some(id);
+    }
 }
 
 pub(super) fn dispatch_dashboard_attach(
@@ -317,13 +368,8 @@ pub(super) fn dispatch_dashboard_attach(
                 }
                 return vec![];
             }
-            if let Some(agent) = app.agents.get_mut(&parent)
-                && agent.subagent_views.contains_key(&child_session_id)
-            {
-                // Mirror `open_subagent_fullscreen`: load the resume-deferred
-                // child transcript on demand so the dashboard shows full history.
-                crate::app::subagent::ensure_subagent_child_replayed(agent, &child_session_id);
-                agent.active_subagent = Some(child_session_id.clone());
+            if let Some(agent) = app.agents.get_mut(&parent) {
+                agent.open_subagent_fullscreen(child_session_id.clone());
             }
             let row_id = DashboardRowId::Subagent {
                 parent,
@@ -398,6 +444,10 @@ pub(super) fn dispatch_dashboard_attach(
 /// `[✗]` close from the older design but applied to the new
 /// fullscreen-with-frame layout.
 pub(super) fn dispatch_dashboard_overlay_exit(app: &mut AppView) -> Vec<Effect> {
+    // Capture before close_popup() clears attached_agent.
+    if let ActiveView::Agent(id) = app.active_view {
+        app.dashboard_return = Some(DashboardReturn::Overlay(id));
+    }
     if let Some(d) = app.dashboard.as_mut() {
         d.restore_peek_viewport(&mut app.agents);
         d.close_popup();
@@ -617,9 +667,7 @@ fn open_dashboard_worktree_dialog(
 /// Mirrors `dispatch_dashboard_dispatch`'s new-session arm with `attach=true`,
 /// minus the prompt enqueue.
 pub(super) fn dispatch_dashboard_create_new_agent_with_detail(app: &mut AppView) -> Vec<Effect> {
-    // Creating/switching consumes the dispatch surface — stop voice and drop the
-    // target so a late final can't refill the box after the view switch.
-    voice_stop_on_submit(app);
+    let _ = voice_stop_on_submit(app);
     // Worktree mode armed + git repo: open the label dialog (which spawns the
     // agent in a fresh worktree on confirm) instead of a plain session. The
     // button opens the detail view, so confirm attaches (`attach = true`).
@@ -1051,10 +1099,7 @@ pub(super) fn dispatch_dashboard_dispatch(
     text: String,
     attach: bool,
 ) -> Vec<Effect> {
-    // Enter is a submit attempt — stop voice and drop the target up front (as the
-    // agent path does), so even a rejected send (empty / over-cap) can't leave a
-    // hot mic or let a late final refill the box.
-    voice_stop_on_submit(app);
+    let text = merge_prompt_with_voice_interim(text, voice_stop_on_submit(app));
     // Paste-then-immediate-send: a Cmd+V image probe is still off-thread. Stash
     // this send and re-issue it once the probe completes so the image is never
     // dropped from the dispatched prompt's content blocks.
@@ -1234,14 +1279,14 @@ pub(super) fn dispatch_dashboard_dispatch_slash(app: &mut AppView, text: String)
     use crate::slash::command::{CommandExecCtx, CommandResult};
     use crate::slash::parse_invocation;
 
-    // Enter is a submit attempt — stop voice and drop the target up front.
-    voice_stop_on_submit(app);
+    let text = merge_prompt_with_voice_interim(text, voice_stop_on_submit(app));
     let trimmed = text.trim().to_string();
     if trimmed.is_empty() || !trimmed.starts_with('/') {
         return vec![];
     }
 
     let coding_data_sharing_opt_out_from_app = app.coding_data_retention_opt_out;
+    let coding_data_sharing_lock_from_app = app.coding_data_sharing_lock();
     let show_tips_from_app = app.show_tips;
     let auto_update_from_app = app.auto_update;
     let respect_manual_folds_from_app = app.appearance.scrollback.scroll.respect_manual_folds;
@@ -1332,6 +1377,7 @@ pub(super) fn dispatch_dashboard_dispatch_slash(app: &mut AppView, text: String)
             session_id: None,
             bundle_state: &app.bundle_state,
             screen_mode: app.screen_mode,
+            billing_surface_visible: app.usage_visible,
             pager_state: crate::settings::PagerLocalSnapshot {
                 multiline_mode: dashboard_multiline,
                 yolo_mode: app.default_yolo,
@@ -1345,6 +1391,7 @@ pub(super) fn dispatch_dashboard_dispatch_slash(app: &mut AppView, text: String)
                     .map(|(id, info)| (info.name.clone(), id.clone()))
                     .collect(),
                 coding_data_sharing_opt_out: coding_data_sharing_opt_out_from_app,
+                coding_data_sharing_lock: coding_data_sharing_lock_from_app,
                 plan_mode_active: false,
                 show_tips: show_tips_from_app,
                 auto_update: auto_update_from_app,
@@ -1459,6 +1506,13 @@ pub(super) fn dispatch_dashboard_dispatch_slash(app: &mut AppView, text: String)
                 d.error_toast = None;
             }
             dispatch(action, app)
+        }
+        CommandResult::Doctor(_) => {
+            if let Some(d) = app.dashboard.as_mut() {
+                d.dispatch.set_text("");
+                d.set_error_toast("Open a session to run /doctor.");
+            }
+            vec![]
         }
         CommandResult::QueueCommand(_)
         | CommandResult::InjectSkill { .. }
@@ -1622,9 +1676,7 @@ pub(super) fn dispatch_dashboard_peek_reply(
 ) -> Vec<Effect> {
     use crate::views::dashboard::DashboardRowId;
 
-    // Enter is a submit attempt — stop voice and drop the target up front so a
-    // rejected reply can't leave a hot mic or let a late final refill the box.
-    voice_stop_on_submit(app);
+    let text = merge_prompt_with_voice_interim(text, voice_stop_on_submit(app));
 
     // Paste-then-immediate-send: a Cmd+V image probe is still off-thread. Stash
     // this reply and re-issue it once the probe completes so the image is never
@@ -1671,7 +1723,7 @@ pub(super) fn dispatch_dashboard_peek_reply(
         return vec![];
     }
 
-    let effects = {
+    let drain = {
         let Some(agent) = app.agents.get_mut(&agent_id) else {
             if let Some(d) = app.dashboard.as_mut() {
                 d.set_peek(None);
@@ -1691,8 +1743,8 @@ pub(super) fn dispatch_dashboard_peek_reply(
         }
         maybe_drain_queue(agent)
     };
-    // Note page-flip before restore on attach.
-    note_peek_page_flip_after_drain(app, agent_id);
+    note_peek_page_flip(app, agent_id, drain.page_flip_entry);
+    let effects = drain.effects;
 
     // Clear the reply draft now that it's been accepted, and drop any
     // stale error toast.
@@ -1742,10 +1794,7 @@ pub(super) fn dispatch_dashboard_begin_rename(app: &mut AppView) {
     // the user a hold-Backspace. Esc / empty-draft Enter cancel without
     // touching the existing name.
     if let Some(d) = app.dashboard.as_mut() {
-        d.rename = Some(crate::views::dashboard::state::RenameDraft {
-            row: sel,
-            draft: String::new(),
-        });
+        d.rename = Some(crate::views::dashboard::state::RenameDraft::new(sel, ""));
     }
 }
 
@@ -1757,7 +1806,7 @@ pub(super) fn dispatch_dashboard_commit_rename(app: &mut AppView) -> Vec<Effect>
         return vec![];
     };
     // Edge case 5: empty/whitespace draft cancels without committing.
-    let trimmed = rn.draft.trim();
+    let trimmed = rn.text().trim();
     if trimmed.is_empty() {
         return vec![];
     }

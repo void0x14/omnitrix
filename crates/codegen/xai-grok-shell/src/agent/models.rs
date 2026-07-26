@@ -1388,6 +1388,7 @@ fn build_prefetched_map(
             info,
             api_key: None,
             env_key: None,
+            auth_provider: None,
             api_base_url: m.api_base_url.clone().or(api_base_url_override.clone()),
         };
         map.insert(key, entry);
@@ -1569,19 +1570,31 @@ fn resolve_prefetch_env(grok_com_config: Option<GrokComConfig>) -> Option<Prefet
 /// credentials from disk.
 pub fn start_early_prefetch_with_auth(auth: Option<GrokAuth>) -> Option<EarlyPrefetchHandle> {
     let env = resolve_prefetch_env_with_auth(auth)?;
-    Some(spawn_prefetch_thread(env))
+    Some(spawn_prefetch_thread(env, true))
 }
 
 /// Start model + settings prefetch on a background thread.
 ///
 /// Convenience wrapper that reads cached auth from disk. Prefer
 /// `start_early_prefetch_with_auth` when you have pre-resolved credentials.
+/// Also runs a best-effort managed-config sync when the cache is stale.
 pub fn start_early_prefetch(grok_com_config: Option<GrokComConfig>) -> Option<EarlyPrefetchHandle> {
     let env = resolve_prefetch_env(grok_com_config)?;
-    Some(spawn_prefetch_thread(env))
+    Some(spawn_prefetch_thread(env, true))
 }
 
-fn spawn_prefetch_thread(env: PrefetchEnv) -> EarlyPrefetchHandle {
+/// Prefetch models + remote settings only — **no** managed-config sync.
+///
+/// Used before the managed-policy gate so a kill-switch can apply on cold start
+/// without healing a tampered on-disk policy before the fail-closed gate runs.
+pub fn start_early_prefetch_settings_only(
+    grok_com_config: Option<GrokComConfig>,
+) -> Option<EarlyPrefetchHandle> {
+    let env = resolve_prefetch_env(grok_com_config)?;
+    Some(spawn_prefetch_thread(env, false))
+}
+
+fn spawn_prefetch_thread(env: PrefetchEnv, sync_managed: bool) -> EarlyPrefetchHandle {
     std::thread::spawn(move || {
         let mut timer = crate::instrumentation_timer!("startup.early_prefetch");
         let proxy_endpoint = env.endpoints.proxy_url();
@@ -1591,7 +1604,9 @@ fn spawn_prefetch_thread(env: PrefetchEnv) -> EarlyPrefetchHandle {
             env.auth.as_ref(),
             env.model_fetch_auth,
         );
-        if (env.endpoints.deployment_key.is_some() || crate::managed_config::has_active_team_auth())
+        if sync_managed
+            && (env.endpoints.deployment_key.is_some()
+                || crate::managed_config::has_active_team_auth())
             && crate::config::is_managed_config_stale_for(
                 &crate::managed_config::current_serving_identity(),
             )
@@ -2015,6 +2030,7 @@ mod tests {
             info: config::ModelInfo::fallback("fp-model"),
             api_key: None,
             env_key: None,
+            auth_provider: None,
             api_base_url: None,
         };
         flagged.info.show_model_fingerprint = true;
@@ -2027,6 +2043,7 @@ mod tests {
                 info: config::ModelInfo::fallback("plain-model"),
                 api_key: None,
                 env_key: None,
+                auth_provider: None,
                 api_base_url: None,
             },
         );
@@ -2037,6 +2054,7 @@ mod tests {
             info: config::ModelInfo::fallback("enterprise-slug"),
             api_key: None,
             env_key: None,
+            auth_provider: None,
             api_base_url: None,
         };
         custom.info.show_model_fingerprint = true;
@@ -2207,6 +2225,7 @@ mod tests {
                 info: config::ModelInfo::fallback("test-model"),
                 api_key: None,
                 env_key: None,
+                auth_provider: None,
                 api_base_url: None,
             },
         );
@@ -2261,6 +2280,7 @@ mod tests {
             info: config::ModelInfo::fallback("reasoning-model"),
             api_key: None,
             env_key: None,
+            auth_provider: None,
             api_base_url: None,
         };
         reasoning_entry.info.supports_reasoning_effort = true;
@@ -2283,6 +2303,7 @@ mod tests {
             info: config::ModelInfo::fallback("plain-model"),
             api_key: None,
             env_key: None,
+            auth_provider: None,
             api_base_url: None,
         };
         prefetched.insert("plain-model".to_string(), plain_entry);
@@ -2310,6 +2331,7 @@ mod tests {
             info: config::ModelInfo::fallback("grok-4.5"),
             api_key: None,
             env_key: None,
+            auth_provider: None,
             api_base_url: None,
         };
         no_none.info.supports_reasoning_effort = true;
@@ -2328,6 +2350,7 @@ mod tests {
             info: config::ModelInfo::fallback("legacy-none"),
             api_key: None,
             env_key: None,
+            auth_provider: None,
             api_base_url: None,
         };
         with_none.info.supports_reasoning_effort = true;
@@ -2434,6 +2457,7 @@ mod tests {
             info: config::ModelInfo::fallback("reasoning-model"),
             api_key: None,
             env_key: None,
+            auth_provider: None,
             api_base_url: None,
         };
         reasoning_entry.info.supports_reasoning_effort = true;
@@ -2443,6 +2467,7 @@ mod tests {
             info: config::ModelInfo::fallback("plain-model"),
             api_key: None,
             env_key: None,
+            auth_provider: None,
             api_base_url: None,
         };
         prefetched.insert("plain-model".to_string(), plain_entry);
@@ -2485,6 +2510,7 @@ mod tests {
             info: config::ModelInfo::fallback(model_id),
             api_key: None,
             env_key: None,
+            auth_provider: None,
             api_base_url: None,
         }
     }
@@ -3268,6 +3294,7 @@ mod tests {
                 info: config::ModelInfo::fallback("static-one"),
                 api_key: None,
                 env_key: None,
+                auth_provider: None,
                 api_base_url: None,
             },
         );
@@ -3295,6 +3322,7 @@ mod tests {
             info: config::ModelInfo::fallback("oauth-only"),
             api_key: None,
             env_key: None,
+            auth_provider: None,
             api_base_url: None,
         };
         oauth_only.info.supported_in_api = false;
@@ -3304,6 +3332,7 @@ mod tests {
             info: config::ModelInfo::fallback("public-model"),
             api_key: None,
             env_key: None,
+            auth_provider: None,
             api_base_url: None,
         };
         catalog.insert("public-model".to_string(), public);
