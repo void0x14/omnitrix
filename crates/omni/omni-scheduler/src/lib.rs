@@ -9,3 +9,6 @@ pub mod budget;
 pub mod research;
 pub mod capability_broker;
 pub mod tool_validator;
+pub mod governor;
+pub mod tier;
+pub mod subagent_backend;
