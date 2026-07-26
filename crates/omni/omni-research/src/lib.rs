@@ -760,6 +760,13 @@ impl ResearchEngine {
                 let batch_findings = self.provider.search(&req).await?;
                 executed.push(q);
 
+                // Saglayici mod butcesinden fazlasini dondurduyse fazlasi burada
+                // dusuyor. Bunu raporlamazsak cagiran 500 sonuctan 8'ini aldigini
+                // goremez; sessiz kirpma "hepsi getirildi" gibi okunur.
+                if batch_findings.len() > params.per_query_results {
+                    truncated = true;
+                }
+
                 for f in batch_findings.into_iter().take(params.per_query_results) {
                     if !seen_urls.insert(f.dedup_key()) {
                         continue;
