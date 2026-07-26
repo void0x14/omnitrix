@@ -1,0 +1,61 @@
+[package]
+name = "omni-tests"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+description = "Integration test harness for Omnitrix; hosts the root tests/ gate suites"
+publish = false
+
+# Kok `tests/` dizinindeki dosyalar MASTER-PLAN Bolum 4 klasor yapisinda oldugu
+# yerde kalir; bu crate onlari `path` ile hedefleyerek derlenir/kosulur hale
+# getirir. Kok Cargo.toml sanal bir workspace oldugu icin ([package] yok) o
+# dosyalari baska hicbir crate derlemiyordu.
+
+[dependencies]
+omni-storage = { workspace = true }
+rusqlite = { workspace = true }
+tempfile = { workspace = true }
+tokio = { workspace = true }
+
+[dev-dependencies]
+omni-control = { workspace = true }
+omni-proto = { workspace = true }
+omni-tools = { workspace = true }
+axum = { workspace = true }
+chrono = { workspace = true }
+eventsource-stream = { workspace = true }
+futures = { workspace = true }
+tokio-tungstenite = { workspace = true }
+reqwest = { workspace = true }
+mockito = { workspace = true }
+omni-provider = { workspace = true }
+omni-router = { workspace = true }
+omni-scheduler = { workspace = true }
+serde_json = { workspace = true }
+uuid = { workspace = true }
+xai-chat-state = { workspace = true }
+xai-grok-agent = { workspace = true }
+xai-grok-tools = { workspace = true }
+
+[lints]
+workspace = true
+
+[[test]]
+name = "crash_recovery"
+path = "../../../tests/crash_recovery.rs"
+
+[[test]]
+name = "multiagent_fanout"
+path = "../../../tests/multiagent_fanout.rs"
+
+[[test]]
+name = "provider_fallback"
+path = "../../../tests/provider_fallback.rs"
+
+[[test]]
+name = "ui_parity"
+path = "../../../tests/ui_parity.rs"
+
+[[test]]
+name = "diff_visibility"
+path = "../../../tests/diff_visibility.rs"

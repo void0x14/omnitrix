@@ -1,0 +1,6 @@
+{
+  "cold_start_warm_ms": 100.0,
+  "cold_start_cold_ms": 400.0,
+  "shutdown_ms": 50.0,
+  "rss_max_kb": 262144.0
+}

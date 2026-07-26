@@ -18,8 +18,13 @@ use xai_grok_tools::notification::ToolNotificationHandle;
 // Helper: create a tree with a root and chain of children down to `target_depth`.
 // Returns the parent_id at depth `target_depth` (for further extension).
 //
+/// Zincirdeki cocuklar `Uuid::from_u128(1..=target_depth)` oldugu icin kokun
+/// bu araliktan UZAK bir kimligi olmali; aksi halde ilk cocuk kokle carpisir ve
+/// `add_node` `DuplicateNode` dondurur.
+const CHAIN_ROOT: Uuid = Uuid::from_u128(u128::MAX);
+
 fn build_chain(tree: &HierarchyTree, target_depth: u32) -> Option<Uuid> {
-    let root_id = Uuid::parse_str("00000000-0000-0000-0000-000000000001").unwrap();
+    let root_id = CHAIN_ROOT;
     let _ = tree.add_node(root_id, None);
     let mut parent = root_id;
     for d in 1..=target_depth {
@@ -41,11 +46,13 @@ fn test_multiagent_fanout_basic() {
     let root = Uuid::new_v4();
     tree.add_node(root, None).expect("root");
 
-    let children: Vec<Uuid> = (0..3).map(|_| {
-        let id = Uuid::new_v4();
-        tree.add_node(id, Some(root)).expect("child");
-        id
-    });
+    let children: Vec<Uuid> = (0..3)
+        .map(|_| {
+            let id = Uuid::new_v4();
+            tree.add_node(id, Some(root)).expect("child");
+            id
+        })
+        .collect();
 
     assert_eq!(tree.get_children(&root).len(), 3);
     for child in &children {
@@ -88,9 +95,17 @@ fn test_multiagent_concurrent_limit() {
     // 1 GiB RAM limit, max 2 concurrent
     let ctrl = AdmissionController::new(1_073_741_824, 2);
 
-    assert!(ctrl.try_admit_sync(1_000).is_ok(), "admit #1");
-    assert!(ctrl.try_admit_sync(1_000).is_ok(), "admit #2");
+    // AdmissionToken'in Drop'u kotayi geri verir; tokenlar bagli tutulmazsa
+    // ucuncu kabul de basarili olur ve test hicbir sey olcmez.
+    let token_1 = ctrl.try_admit_sync(1_000).expect("admit #1");
+    let token_2 = ctrl.try_admit_sync(1_000).expect("admit #2");
     assert!(ctrl.try_admit_sync(1_000).is_err(), "admit #3 should be rejected");
+
+    // Bir token birakilinca yer acilmali.
+    drop(token_1);
+    let token_3 = ctrl.try_admit_sync(1_000).expect("admit #4 after release");
+    drop(token_2);
+    drop(token_3);
 
     // ManagedAgentState shouldn't need Agent — just verify it's an enum
     let _idle = ManagedAgentState::Idle;
@@ -106,11 +121,15 @@ fn test_multiagent_concurrent_limit() {
 async fn test_agent_router_end_to_end() {
     use omni_router::strategies::{GroundingMode, Router, RoutingPolicy, RoutingStrategy};
 
+    // Bildirim alicisi test boyunca canli tutulur; dusurulurse gonderimler
+    // sessizce hata verir.
+    let (notifications, _notification_rx) = ToolNotificationHandle::channel();
+
     // 1. AgentBuilder ile Agent oluştur
     let agent = AgentBuilder::new(
         std::env::temp_dir(),
         Arc::new(LocalTerminalBackend::new()),
-        ToolNotificationHandle::noop(),
+        notifications,
     )
     .from_definition(AgentDefinition::default_grok_build())
     .build()

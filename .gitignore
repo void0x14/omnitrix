@@ -6,3 +6,9 @@
 .claude
 .grok
 .qoder
+
+# Ajanlarin biraktigi gecici derleme ciktilari
+.build.log
+.check.log
+.clippy.log
+.rustc.log

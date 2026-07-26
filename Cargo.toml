@@ -88,14 +88,19 @@ members = [
     "third_party/ordered_hashmap",
     "crates/omni/omni-agent",
     "crates/omni/omni-backup",
+    "crates/omni/omni-bench",
+    "crates/omni/omni-config",
     "crates/omni/omni-control",
+    "crates/omni/omni-core",
     "crates/omni/omni-notify",
     "crates/omni/omni-proto",
     "crates/omni/omni-provider",
     "crates/omni/omni-record",
+    "crates/omni/omni-research",
     "crates/omni/omni-router",
     "crates/omni/omni-scheduler",
     "crates/omni/omni-storage",
+    "crates/omni/omni-tests",
     "crates/omni/omni-tools",
     "crates/omni/omni-tui",
     "crates/omni/omni-webui",
@@ -203,14 +208,19 @@ once_cell = "1"
 opentelemetry = "0.32"
 omni-agent = { path = "crates/omni/omni-agent" }
 omni-backup = { path = "crates/omni/omni-backup" }
+omni-bench = { path = "crates/omni/omni-bench" }
+omni-config = { path = "crates/omni/omni-config" }
 omni-control = { path = "crates/omni/omni-control" }
+omni-core = { path = "crates/omni/omni-core" }
 omni-notify = { path = "crates/omni/omni-notify" }
 omni-proto = { path = "crates/omni/omni-proto" }
 omni-provider = { path = "crates/omni/omni-provider" }
 omni-record = { path = "crates/omni/omni-record" }
+omni-research = { path = "crates/omni/omni-research" }
 omni-router = { path = "crates/omni/omni-router" }
 omni-scheduler = { path = "crates/omni/omni-scheduler" }
 omni-storage = { path = "crates/omni/omni-storage" }
+omni-tests = { path = "crates/omni/omni-tests" }
 omni-tools = { path = "crates/omni/omni-tools" }
 omni-tui = { path = "crates/omni/omni-tui" }
 omni-webui = { path = "crates/omni/omni-webui" }
@@ -320,6 +330,7 @@ xai-gix-status = { path = "crates/codegen/xai-gix-status" }
 xai-grok-agent = { path = "crates/codegen/xai-grok-agent" }
 xai-grok-announcements = { path = "crates/codegen/xai-grok-announcements" }
 xai-grok-auth = { path = "crates/codegen/xai-grok-auth" }
+xai-grok-compaction = { path = "crates/common/xai-grok-compaction" }
 xai-grok-config = { path = "crates/codegen/xai-grok-config" }
 xai-grok-config-types = { path = "crates/codegen/xai-grok-config-types" }
 xai-grok-env = { path = "crates/codegen/xai-grok-env" }
