@@ -1,0 +1,10 @@
+# FAZ 5 kapi kaniti: bu dosya derleme yapilmadan, calisan surecin persona
+# defterine dusmelidir. Kapi olculdukten sonra silinebilir.
+name          = "faz5_probe"
+description   = "Kapi olcum personasi; derlemesiz yukleme kanitidir"
+role          = "executor"
+temperature   = 0.2
+tools         = ["hashline_read", "hashline_grep"]
+routing       = "jep"
+max_depth     = 3
+recording     = "event_log"

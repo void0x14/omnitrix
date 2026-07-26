@@ -97,8 +97,7 @@ fn half_tool_rows(conn: &Connection) -> Vec<String> {
 fn authoritative_status(conn: &Connection, op_id: &str) -> Option<String> {
     tool_rows(conn)
         .into_iter()
-        .filter(|(_, _, args)| envelope_of(args.as_deref()).is_some_and(|e| e.op_id == op_id))
-        .next_back()
+        .rfind(|(_, _, args)| envelope_of(args.as_deref()).is_some_and(|e| e.op_id == op_id))
         .map(|(_, status, _)| status)
 }
 
@@ -435,7 +434,7 @@ fn interrupt_worker_entrypoint() {
         let mut n = 0u32;
         while std::time::Instant::now() < deadline {
             // Cagrilar bilerek bitirilmez: her biri ucusta kalir.
-            let idempotency = if n % 2 == 0 {
+            let idempotency = if n.is_multiple_of(2) {
                 ToolIdempotency::Idempotent
             } else {
                 ToolIdempotency::NonIdempotent

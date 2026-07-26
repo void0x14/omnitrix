@@ -994,7 +994,7 @@ impl SoakRun {
                         threads: threads.unwrap_or(0),
                     };
                     taken += 1;
-                    if self.progress_every > 0 && taken % self.progress_every == 0 {
+                    if self.progress_every > 0 && taken.is_multiple_of(self.progress_every) {
                         eprintln!(
                             "omni-bench soak: [{:.0}s/{:.0}s] rss={:.0} kB fd={} thr={} restart={}",
                             sample.elapsed_s,
@@ -2059,7 +2059,15 @@ mod tests {
         assert!(fds >= 3, "en az stdin/stdout/stderr: {fds}");
         let threads = read_proc_status_u64(pid, "Threads:").expect("threads");
         assert!(threads >= 1);
-        assert!(matches!(read_proc_state(pid), Some('R') | Some('S')));
+        // Canli bir surec R/S disinda D (kesintisiz uyku, disk I/O) ya da t
+        // (izleme duraklamasi) da raporlayabilir; yuk altinda hepsi mesru.
+        // Testin dogruladigi sey durumun OKUNABILIR ve OLU OLMAMASI: soak
+        // kosusunda 'Z'/'X' gormek surecin dustugu anlamina gelir.
+        let state = read_proc_state(pid).expect("durum okunabilmeli");
+        assert!(
+            !matches!(state, 'Z' | 'X' | 'x'),
+            "surec olmus olmamali, durum: {state}"
+        );
     }
 
     #[test]

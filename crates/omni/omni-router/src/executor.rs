@@ -378,10 +378,17 @@ mod tests {
         let plan = Planner::new().generate_plan("test task").await.unwrap();
         let output = executor.execute_plan(&plan).await.unwrap();
 
+        // execute_plan plani BASTAN SONA kosar; bu testin isi sirayi dogrulamak.
+        // Planner zinciri analysis -> research -> execute -> verify olarak kurar,
+        // dolayisiyla her gorev bagimliligindan SONRA cagrilmalidir.
         let call_order: Vec<_> = output.tool_calls.iter().map(|tc| tc.tool_name.clone()).collect();
-        assert_eq!(call_order, vec!["analysis"], "only analysis should be ready initially");
+        assert_eq!(
+            call_order,
+            vec!["analysis", "research", "execute", "verify"],
+            "gorevler topolojik sirada cagrilmali"
+        );
 
-        assert_eq!(output.completed_tasks.len(), 1, "only analysis completes in one round");
+        assert_eq!(output.completed_tasks.len(), 4, "plandaki tum gorevler tamamlanmali");
     }
 
     #[tokio::test]
