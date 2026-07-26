@@ -6,8 +6,6 @@ license.workspace = true
 description = "TUI dashboard for Omnitrix multiagent monitoring"
 
 [dependencies]
-xai-grok-pager-render = { workspace = true }
-xai-ratatui-inline = { workspace = true }
 tokio = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

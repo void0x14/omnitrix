@@ -7025,9 +7025,6 @@ dependencies = [
  "tokio",
  "tracing",
  "uuid",
- "xai-circuit-breaker",
- "xai-grok-models",
- "xai-grok-secrets",
  "zeroize",
 ]
 
@@ -7071,9 +7068,6 @@ dependencies = [
  "tokio",
  "tracing",
  "uuid",
- "xai-grok-agent",
- "xai-grok-models",
- "xai-tool-runtime",
 ]
 
 [[package]]
@@ -7099,11 +7093,6 @@ dependencies = [
  "uuid",
  "xai-chat-state",
  "xai-grok-agent",
- "xai-grok-memory",
- "xai-grok-subagent-resolution",
- "xai-sqlite-journal",
- "xai-tool-runtime",
- "xai-tool-types",
  "zstd",
 ]
 
@@ -7143,8 +7132,6 @@ dependencies = [
  "thiserror 2.0.18",
  "tokio",
  "tracing",
- "xai-grok-pager-render",
- "xai-ratatui-inline",
 ]
 
 [[package]]
@@ -7191,11 +7178,6 @@ dependencies = [
  "toml",
  "tracing",
  "tracing-subscriber",
- "uuid",
- "xai-chat-state",
- "xai-grok-agent",
- "xai-grok-config",
- "xai-grok-tools",
 ]
 
 [[package]]

@@ -6,9 +6,6 @@ license.workspace = true
 description = "Provider & key management for Omnitrix multiagent orchestration"
 
 [dependencies]
-xai-grok-models = { workspace = true }
-xai-grok-secrets = { workspace = true }
-xai-circuit-breaker = { workspace = true }
 tokio = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

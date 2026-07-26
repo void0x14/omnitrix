@@ -6,9 +6,6 @@ license.workspace = true
 description = "Request routing & dispatch for Omnitrix multiagent orchestration"
 
 [dependencies]
-xai-grok-agent = { workspace = true }
-xai-tool-runtime = { workspace = true }
-xai-grok-models = { workspace = true }
 omni-provider = { workspace = true }
 tokio = { workspace = true }
 serde = { workspace = true }
