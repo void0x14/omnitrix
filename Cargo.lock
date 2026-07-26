@@ -6974,6 +6974,231 @@ dependencies = [
 ]
 
 [[package]]
+name = "omni-backup"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "blake3",
+ "chrono",
+ "reqwest 0.12.24",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "tokio",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
+name = "omni-notify"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "reqwest 0.12.24",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "omni-provider"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "chacha20poly1305",
+ "chrono",
+ "dirs 5.0.1",
+ "rand 0.9.2",
+ "reqwest 0.12.24",
+ "ring",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "thiserror 2.0.18",
+ "tokio",
+ "tracing",
+ "uuid",
+ "xai-circuit-breaker",
+ "xai-grok-models",
+ "xai-grok-secrets",
+ "zeroize",
+]
+
+[[package]]
+name = "omni-record"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "blake3",
+ "chrono",
+ "omni-storage",
+ "parking_lot",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "tokio",
+ "tracing",
+ "uuid",
+ "zstd",
+]
+
+[[package]]
+name = "omni-router"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "backon",
+ "chrono",
+ "futures",
+ "mockito",
+ "omni-provider",
+ "rand 0.9.2",
+ "regex",
+ "reqwest 0.12.24",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "tokio",
+ "tracing",
+ "uuid",
+ "xai-grok-agent",
+ "xai-grok-models",
+ "xai-tool-runtime",
+]
+
+[[package]]
+name = "omni-scheduler"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "blake3",
+ "chrono",
+ "dashmap",
+ "futures",
+ "libc",
+ "omni-storage",
+ "parking_lot",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.18",
+ "tokio",
+ "tokio-util",
+ "tracing",
+ "uuid",
+ "xai-chat-state",
+ "xai-grok-agent",
+ "xai-grok-memory",
+ "xai-grok-subagent-resolution",
+ "xai-sqlite-journal",
+ "xai-tool-runtime",
+ "xai-tool-types",
+ "zstd",
+]
+
+[[package]]
+name = "omni-storage"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "blake3",
+ "chrono",
+ "dashmap",
+ "parking_lot",
+ "redb",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.18",
+ "tokio",
+ "tracing",
+ "uuid",
+ "xai-sqlite-journal",
+ "zstd",
+]
+
+[[package]]
+name = "omni-tui"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "crossterm",
+ "futures",
+ "ratatui",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "tokio",
+ "tracing",
+ "xai-grok-pager-render",
+ "xai-ratatui-inline",
+]
+
+[[package]]
+name = "omni-webui"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "axum",
+ "chrono",
+ "futures",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "tokio",
+ "tokio-stream",
+ "tower",
+ "tower-http",
+ "tracing",
+]
+
+[[package]]
+name = "omnitrix"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "axum",
+ "chrono",
+ "crossterm",
+ "dirs 5.0.1",
+ "omni-backup",
+ "omni-notify",
+ "omni-provider",
+ "omni-record",
+ "omni-router",
+ "omni-scheduler",
+ "omni-storage",
+ "omni-tui",
+ "omni-webui",
+ "ratatui",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "tokio",
+ "toml",
+ "tracing",
+ "tracing-subscriber",
+ "uuid",
+ "xai-chat-state",
+ "xai-grok-agent",
+ "xai-grok-config",
+ "xai-grok-tools",
+]
+
+[[package]]
 name = "once_cell"
 version = "1.21.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7141,230 +7366,6 @@ dependencies = [
 [[package]]
 name = "ordered_hashmap"
 version = "0.0.3"
-
-[[package]]
-name = "ork-backup"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "async-trait",
- "blake3",
- "chrono",
- "reqwest 0.12.24",
- "rusqlite",
- "serde",
- "serde_json",
- "thiserror 2.0.18",
- "tokio",
- "tracing",
- "uuid",
-]
-
-[[package]]
-name = "ork-daemon"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "axum",
- "chrono",
- "dirs 5.0.1",
- "ork-backup",
- "ork-notify",
- "ork-provider",
- "ork-record",
- "ork-router",
- "ork-runtime",
- "ork-storage",
- "ork-tui",
- "ork-webui",
- "serde",
- "serde_json",
- "thiserror 2.0.18",
- "tokio",
- "toml",
- "tracing",
- "tracing-subscriber",
- "uuid",
- "xai-chat-state",
- "xai-grok-agent",
- "xai-grok-config",
- "xai-grok-tools",
-]
-
-[[package]]
-name = "ork-notify"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "async-trait",
- "reqwest 0.12.24",
- "serde",
- "serde_json",
- "thiserror 2.0.18",
- "tokio",
- "tracing",
-]
-
-[[package]]
-name = "ork-provider"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "async-trait",
- "chacha20poly1305",
- "chrono",
- "dirs 5.0.1",
- "rand 0.9.2",
- "reqwest 0.12.24",
- "ring",
- "rusqlite",
- "serde",
- "serde_json",
- "sha2 0.10.9",
- "thiserror 2.0.18",
- "tokio",
- "tracing",
- "uuid",
- "xai-circuit-breaker",
- "xai-grok-models",
- "xai-grok-secrets",
- "zeroize",
-]
-
-[[package]]
-name = "ork-record"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "async-trait",
- "blake3",
- "chrono",
- "ork-storage",
- "parking_lot",
- "rusqlite",
- "serde",
- "serde_json",
- "thiserror 2.0.18",
- "tokio",
- "tracing",
- "uuid",
- "zstd",
-]
-
-[[package]]
-name = "ork-router"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "async-trait",
- "backon",
- "chrono",
- "futures",
- "mockito",
- "ork-provider",
- "rand 0.9.2",
- "regex",
- "reqwest 0.12.24",
- "serde",
- "serde_json",
- "thiserror 2.0.18",
- "tokio",
- "tracing",
- "uuid",
- "xai-grok-agent",
- "xai-grok-models",
- "xai-tool-runtime",
-]
-
-[[package]]
-name = "ork-runtime"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "async-trait",
- "blake3",
- "chrono",
- "dashmap",
- "futures",
- "libc",
- "ork-storage",
- "parking_lot",
- "serde",
- "serde_json",
- "tempfile",
- "thiserror 2.0.18",
- "tokio",
- "tokio-util",
- "tracing",
- "uuid",
- "xai-chat-state",
- "xai-grok-agent",
- "xai-grok-memory",
- "xai-grok-sandbox",
- "xai-grok-subagent-resolution",
- "xai-sqlite-journal",
- "xai-tool-runtime",
- "xai-tool-types",
- "zstd",
-]
-
-[[package]]
-name = "ork-storage"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "async-trait",
- "blake3",
- "chrono",
- "dashmap",
- "parking_lot",
- "redb",
- "rusqlite",
- "serde",
- "serde_json",
- "tempfile",
- "thiserror 2.0.18",
- "tokio",
- "tracing",
- "uuid",
- "xai-sqlite-journal",
- "zstd",
-]
-
-[[package]]
-name = "ork-tui"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "crossterm",
- "futures",
- "ratatui",
- "serde",
- "serde_json",
- "thiserror 2.0.18",
- "tokio",
- "tracing",
- "xai-grok-pager-render",
- "xai-ratatui-inline",
-]
-
-[[package]]
-name = "ork-webui"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "axum",
- "chrono",
- "futures",
- "serde",
- "serde_json",
- "thiserror 2.0.18",
- "tokio",
- "tokio-stream",
- "tower",
- "tower-http",
- "tracing",
-]
 
 [[package]]
 name = "os_info"

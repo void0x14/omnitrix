@@ -2,12 +2,12 @@ use std::sync::Arc;
 
 use uuid::Uuid;
 
-use ork_runtime::admission::AdmissionController;
-use ork_runtime::budget::Budget;
-use ork_runtime::hierarchy::{HierarchyError, HierarchyTree};
-use ork_runtime::managed_agent::ManagedAgent;
-use ork_runtime::managed_agent::ManagedAgentState;
-use ork_runtime::persona::PersonaKind;
+use omni_scheduler::admission::AdmissionController;
+use omni_scheduler::budget::Budget;
+use omni_scheduler::hierarchy::{HierarchyError, HierarchyTree};
+use omni_scheduler::managed_agent::ManagedAgent;
+use omni_scheduler::managed_agent::ManagedAgentState;
+use omni_scheduler::persona::PersonaKind;
 use xai_chat_state::ChatStateHandle;
 use xai_grok_agent::config::AgentDefinition;
 use xai_grok_agent::AgentBuilder;
@@ -104,7 +104,7 @@ fn test_multiagent_concurrent_limit() {
 
 #[tokio::test]
 async fn test_agent_router_end_to_end() {
-    use ork_router::strategies::{GroundingMode, Router, RoutingPolicy, RoutingStrategy};
+    use omni_router::strategies::{GroundingMode, Router, RoutingPolicy, RoutingStrategy};
 
     // 1. AgentBuilder ile Agent oluştur
     let agent = AgentBuilder::new(

@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
-use ork_storage::wal::WalReplay;
-use ork_storage::writer_actor::{WriteOp, WriterActor};
+use omni_storage::wal::WalReplay;
+use omni_storage::writer_actor::{WriteOp, WriterActor};
 use rusqlite::Connection;
 use tokio::sync::oneshot;
 

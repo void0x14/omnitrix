@@ -86,16 +86,16 @@ members = [
     "third_party/graphlib_rust",
     "third_party/mermaid-to-svg",
     "third_party/ordered_hashmap",
-    "crates/ork/ork-runtime",
-    "crates/ork/ork-storage",
-    "crates/ork/ork-backup",
-    "crates/ork/ork-daemon",
-    "crates/ork/ork-notify",
-    "crates/ork/ork-provider",
-    "crates/ork/ork-record",
-    "crates/ork/ork-router",
-    "crates/ork/ork-tui",
-    "crates/ork/ork-webui",
+    "crates/omni/omni-backup",
+    "crates/omni/omni-notify",
+    "crates/omni/omni-provider",
+    "crates/omni/omni-record",
+    "crates/omni/omni-router",
+    "crates/omni/omni-scheduler",
+    "crates/omni/omni-storage",
+    "crates/omni/omni-tui",
+    "crates/omni/omni-webui",
+    "crates/omni/omnitrix",
 ]
 
 [workspace.package]
@@ -195,16 +195,16 @@ oauth2 = "5"
 obfstr = "0.4"
 once_cell = "1"
 opentelemetry = "0.32"
-ork-runtime = { path = "crates/ork/ork-runtime" }
-ork-storage = { path = "crates/ork/ork-storage" }
-ork-backup = { path = "crates/ork/ork-backup" }
-ork-daemon = { path = "crates/ork/ork-daemon" }
-ork-notify = { path = "crates/ork/ork-notify" }
-ork-provider = { path = "crates/ork/ork-provider" }
-ork-record = { path = "crates/ork/ork-record" }
-ork-router = { path = "crates/ork/ork-router" }
-ork-tui = { path = "crates/ork/ork-tui" }
-ork-webui = { path = "crates/ork/ork-webui" }
+omni-backup = { path = "crates/omni/omni-backup" }
+omni-notify = { path = "crates/omni/omni-notify" }
+omni-provider = { path = "crates/omni/omni-provider" }
+omni-record = { path = "crates/omni/omni-record" }
+omni-router = { path = "crates/omni/omni-router" }
+omni-scheduler = { path = "crates/omni/omni-scheduler" }
+omni-storage = { path = "crates/omni/omni-storage" }
+omni-tui = { path = "crates/omni/omni-tui" }
+omni-webui = { path = "crates/omni/omni-webui" }
+omnitrix = { path = "crates/omni/omnitrix" }
 opentelemetry-http = { version = "0.32", features = ["reqwest-blocking"] }
 opentelemetry-otlp = { version = "0.32", features = ["grpc-tonic", "reqwest-blocking-client", "tls-roots"] }
 opentelemetry-proto = { version = "0.32", features = ["gen-tonic"] }

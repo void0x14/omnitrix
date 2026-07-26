@@ -10,14 +10,12 @@ async fn test_provider_fallback_on_429() {
     let mut server_b = mockito::Server::new();
 
     let mock_a = server_a
-        .mock("GET", "/models")
-        .with_status(429)
+        .mock("HEAD", "/")
+        .with_status(503)
         .create();
     let mock_b = server_b
-        .mock("GET", "/models")
+        .mock("HEAD", "/")
         .with_status(200)
-        .with_header("content-type", "application/json")
-        .with_body(r#"{"data":[]}"#)
         .create();
 
     let router = Router::new();
@@ -59,7 +57,7 @@ async fn test_provider_fallback_on_429() {
     };
 
     let selected = router.route(&policy).await.unwrap();
-    assert_eq!(selected.provider, "B", "429 on A should fallback to B");
+    assert_eq!(selected.provider, "B", "down A should fallback to B");
     assert_eq!(selected.model, "gpt-4");
 
     mock_a.assert();
@@ -102,13 +100,13 @@ async fn test_full_fallback_chain_exhaustion() {
     let mut server_b = mockito::Server::new();
 
     let mock_a = server_a
-        .mock("GET", "/models")
-        .with_status(429)
+        .mock("HEAD", "/")
+        .with_status(503)
         .expect_at_least(1)
         .create();
     let mock_b = server_b
-        .mock("GET", "/models")
-        .with_status(429)
+        .mock("HEAD", "/")
+        .with_status(503)
         .expect_at_least(1)
         .create();
 

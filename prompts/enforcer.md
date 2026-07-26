@@ -20,7 +20,7 @@ Sistemi kural ihlallerine karşı denetle. Executor/planner/explorer davranışl
 
 ## Routing Policy
 
-- **Strateji:** Yok (kontrol düzlemi) — doğrudan `ork-runtime` interrupt API'si
+- **Strateji:** Yok (kontrol düzlemi) — doğrudan `omni-scheduler` interrupt API'si
 - **Model:** En güçlü, en düşük sıcaklık (0.0) — yanlış karar affedilmez
 - **Budget:** Düşük (nadiren çağrılır, ama çağrılınca doğru olmalı)
 - **Fallback:** Yok — enforcer kararı nihai, yalnızca insan onayı geçersiz kılabilir
