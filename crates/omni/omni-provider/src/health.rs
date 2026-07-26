@@ -212,7 +212,12 @@ impl HealthProbe {
         {
             Ok(resp) => {
                 let latency_ms = start.elapsed().as_millis() as u64;
-                let status = if resp.status().is_success() {
+                // 429 kotasi bitmis saglayicidir; `Healthy` sayilirsa zincirin
+                // basinda secilmeye devam eder ve fallback hic devreye girmez.
+                // `provider_health.state` CHECK kisiti bu degeri zaten taniyor (0002).
+                let status = if resp.status() == reqwest::StatusCode::TOO_MANY_REQUESTS {
+                    HealthStatus::QuotaExhausted
+                } else if resp.status().is_success() {
                     HealthStatus::Healthy
                 } else if resp.status().is_server_error() {
                     HealthStatus::Down
@@ -277,25 +282,26 @@ impl HealthProbe {
 
         state.status = new_status.clone();
         let current = new_status;
+        let changed = current != previous;
 
-        if current != previous {
+        // Yazma kilidi kosulsuz burada birakilir. `tokio::sync::RwLock` yeniden
+        // girisli degildir: guard elde tutulurken ayni gorevde `read()` beklemek
+        // sonsuza kadar asili kalir. Durum degismedigi durumda tam bu oluyordu.
+        drop(states);
+
+        if changed {
             self.write_health(provider_id, None, &current, None, Some(detail));
-            drop(states);
             let _ = self.tx.send(HealthEvent {
                 provider_id: provider_id.to_string(),
                 previous,
-                current,
+                current: current.clone(),
                 latency_ms: None,
                 error: Some(detail.to_string()),
                 timestamp: chrono::Utc::now(),
             });
         }
 
-        let read_states = self.states.read().await;
-        read_states
-            .get(provider_id)
-            .map(|s| s.status.clone())
-            .unwrap_or(HealthStatus::Healthy)
+        current
     }
 
     pub async fn get_provider_state(&self, provider_id: &str) -> HealthStatus {

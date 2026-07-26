@@ -23,6 +23,7 @@ sha2 = { workspace = true }
 ring = { workspace = true }
 rand = { workspace = true }
 rusqlite = { workspace = true }
+xai-fsnotify = { workspace = true }
 
 [lints]
 workspace = true
