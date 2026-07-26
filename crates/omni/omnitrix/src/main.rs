@@ -1,5 +1,6 @@
 mod api;
 mod bootstrap;
+mod run;
 
 use std::io::{Stdout, Write as _};
 use std::time::{Duration, Instant};
@@ -17,7 +18,7 @@ use ratatui::{
 };
 
 use bootstrap::WarmupPhase;
-use omni_tui::dashboard::{AgentSummary, Dashboard, QueueMetrics};
+use omni_tui::dashboard::Dashboard;
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 
@@ -71,6 +72,7 @@ fn main() -> anyhow::Result<()> {
         }
         Some("key") => block_on_command(cmd_key(args[1..].to_vec())),
         Some("task") => block_on_command(cmd_task(args[1..].to_vec())),
+        Some("run") => block_on_command(run::cmd_run(args[1..].to_vec())),
         Some(other) => {
             eprintln!("omnitrix: bilinmeyen arguman: {other}");
             print_help();
@@ -249,20 +251,14 @@ fn run_tui(t0: Instant) -> anyhow::Result<()> {
     }
 }
 
+/// Isinma bitene kadar cizilen cerceve. Pano bos bir `UiState` ile baslar ve
+/// yalnizca durum satirini + olculen RSS'i tasir; ajan/gorev satirlari
+/// `SystemSnapshot` geldiginde (omni-control akisi) dolar (Bolum 6.2).
 fn draw(terminal: &mut Tui, phase: WarmupPhase) -> anyhow::Result<()> {
     let rss = bootstrap::rss_kb().unwrap_or(0);
-    let dashboard = Dashboard {
-        agents: vec![AgentSummary {
-            id: "bootstrap".into(),
-            persona: "omnitrix".into(),
-            state: phase.label().into(),
-            ram_kb: rss,
-            ..Default::default()
-        }],
-        queue: QueueMetrics::default(),
-        used_ram_kb: rss,
-        ..Default::default()
-    };
+    let mut dashboard = Dashboard::new();
+    dashboard.set_status(phase.label());
+    dashboard.set_local_rss_kb(rss);
 
     terminal.draw(|frame| {
         let area = frame.area();

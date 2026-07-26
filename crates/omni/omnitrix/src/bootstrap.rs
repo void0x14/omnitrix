@@ -2,6 +2,8 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Instant;
 
+use omni_control::Broadcaster;
+use omni_core::CoreState;
 use omni_provider::detection::ProviderDetector;
 use omni_provider::health::HealthProbe;
 use omni_provider::keyring::KeyManager;
@@ -14,7 +16,7 @@ use omni_storage::redb_store::RedbStore;
 use omni_storage::sqlite_schema::SchemaManager;
 use omni_storage::wal::WalReplay;
 use omni_storage::writer_actor::{WriteOp, WriterActor};
-use tokio::sync::watch;
+use tokio::sync::{Mutex, watch};
 
 /// `max_active_agents` profillerde hem sayi (low=2, high=50) hem de string
 /// (mid="auto") olarak yaziliyor; ikisini de tek bir `String` alanina indirger.
@@ -91,6 +93,12 @@ pub struct NotifyConfig {
 pub struct ApiConfig {
     #[serde(default = "default_api_addr")]
     pub addr: String,
+    /// Kayitli token'larin argon2 PHC dizeleri: `id=<phc>;id=<phc>`.
+    ///
+    /// Ham token BURADA TUTULMAZ. Ortam degiskeni (`OMNITRIX_API_TOKEN_HASH`)
+    /// bu alanin onunde gelir (AS8). Bos birakilirsa API baslatilmaz (K9).
+    #[serde(default)]
+    pub token_hash: Option<String>,
 }
 
 fn default_api_addr() -> String {
@@ -105,6 +113,12 @@ pub struct OmnitrixContext {
     pub interrupt_bus: Arc<InterruptBus>,
     pub penalty_ledger: PenaltyLedger,
     pub health_probe: Arc<HealthProbe>,
+    /// Tek yazar cekirdek (6.2). Kontrol duzlemi ve alt katmanlar ayni ornegi
+    /// paylasir; ikinci bir durum kopyasi yoktur (I3).
+    pub core: Arc<Mutex<CoreState>>,
+    /// Kontrol duzlemi yayincisi. API baslatilamadiysa `None` olur — o zaman
+    /// olay yayacak bir yuz de yoktur.
+    pub events: Option<Broadcaster>,
     pub config: OmnitrixConfig,
 }
 
@@ -279,6 +293,7 @@ impl Default for ApiConfig {
     fn default() -> Self {
         Self {
             addr: default_api_addr(),
+            token_hash: None,
         }
     }
 }
@@ -351,13 +366,21 @@ pub fn init_scheduler(config: &OmnitrixConfig) -> Scheduler {
     )
 }
 
-pub fn init_api(config: &OmnitrixConfig) -> crate::api::ControlPlaneApi {
+/// Kontrol duzlemini kurar: `omni-control` router'i + `omni-core` koprusu.
+///
+/// # Errors
+/// Token hash'i ne ortamda ne yapilandirmada varsa hata doner; cagiran API'yi
+/// baslatmaz. Auth opsiyonel degildir (K9).
+pub fn init_api(
+    config: &OmnitrixConfig,
+    core: Arc<Mutex<CoreState>>,
+) -> Result<crate::api::ControlPlaneApi, crate::api::ApiSetupError> {
     let addr = if config.api.addr.is_empty() {
-        "127.0.0.1:9876"
+        default_api_addr()
     } else {
-        &config.api.addr
+        config.api.addr.clone()
     };
-    crate::api::ControlPlaneApi::new(addr)
+    crate::api::ControlPlaneApi::new(addr, config.api.token_hash.as_deref(), core)
 }
 
 // ---------------------------------------------------------------------------
@@ -407,12 +430,31 @@ pub async fn warm_up(phase: &watch::Sender<WarmupPhase>) -> anyhow::Result<Omnit
     let interrupt_bus = Arc::new(InterruptBus::default());
     let penalty_ledger = PenaltyLedger::new();
 
-    let api = init_api(&config);
-    tokio::spawn(async move {
-        if let Err(e) = api.serve().await {
-            tracing::warn!(%e, "kontrol duzlemi API durdu");
+    // Tek yazar cekirdek. Derinlik tavani koddan degil yapilandirmadan gelir
+    // (K1/AS3); `u8` tasmasi tavani en buyuk degere sabitler, panik yoktur (I6).
+    let depth_cap = u8::try_from(config.runtime.max_depth).unwrap_or(u8::MAX);
+    let core = Arc::new(Mutex::new(CoreState::new().with_depth_cap(depth_cap)));
+
+    // 8.2 sirasi korunur: API ilk TUI frame'inden SONRA, bu arka plan
+    // gorevinin icinde kalkar; TUI onu beklemez.
+    let events = match init_api(&config, Arc::clone(&core)) {
+        Ok(api) => {
+            let events = api.broadcaster();
+            tracing::info!(addr = %api.addr(), "kontrol duzlemi kaldiriliyor");
+            tokio::spawn(async move {
+                if let Err(e) = api.serve().await {
+                    tracing::warn!(%e, "kontrol duzlemi API durdu");
+                }
+            });
+            Some(events)
         }
-    });
+        Err(e) => {
+            // Auth kurulamadiysa API acilmaz. Sessizce kimliksiz dinlemek
+            // yerine neden loglanir ve surec API'siz devam eder (K9).
+            tracing::error!(%e, "kontrol duzlemi API baslatilmadi");
+            None
+        }
+    };
 
     let _ = phase.send(WarmupPhase::Ready);
 
@@ -423,6 +465,8 @@ pub async fn warm_up(phase: &watch::Sender<WarmupPhase>) -> anyhow::Result<Omnit
         interrupt_bus,
         penalty_ledger,
         health_probe,
+        core,
+        events,
         config,
     })
 }

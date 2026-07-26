@@ -1,228 +1,195 @@
-use axum::extract::ws::{Message, WebSocket};
-use axum::extract::ws::WebSocketUpgrade;
-use axum::response::IntoResponse;
-use chrono::Utc;
-use futures::{SinkExt, StreamExt};
-use serde::{Deserialize, Serialize};
+//! WebSocket ucu — cift yonlu alternatif (Bolum 5: SSE birincil, WS cift yon).
+//!
+//! Asagi yon [`live::Fragment`] ile ayni HTML parcalarini tasir; yukari yonde
+//! istemci kanonik `Command` JSON'u gonderir. Yazma yolu form POST'u ile **ayni**
+//! cekirdek ucuna duser (Bolum 6.2): sonuc `StateEvent` olarak her iki yuze
+//! yayilir, bu yuzden basarida ack gonderilmez.
+//!
+//! Cerceve bicimi `omni-control` ile ayni zarftir — `{ "kind": ..., "payload": ... }` —
+//! yalnizca `payload` icerigi JSON durum degil, sunucuda uretilmis HTML'dir (K7).
+
+use axum::extract::State;
+use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
+use axum::response::Response;
+use futures::stream::StreamExt;
+use omni_control::ControlPlane;
+use omni_proto::Command;
 use serde_json::Value;
 use tokio::sync::broadcast;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum AgentEventType {
-    AgentSpawned,
-    AgentCompleted,
-    AgentFailed,
-    ToolCalled,
-    InterruptRaised,
-    BudgetExceeded,
+use crate::live::{self, Fragment};
+
+/// HTML parcasi tasiyan cerceve.
+pub const FRAME_FRAGMENT: &str = "fragment";
+/// Akista bosluk olustu; istemci sayfayi yeniden yuklemeli.
+pub const FRAME_RELOAD: &str = "reload";
+/// Hata cercevesi (yalnizca yukari yon icin).
+pub const FRAME_ERROR: &str = "error";
+
+/// Ortak cerceve bicimi.
+fn frame(kind: &str, payload: Value) -> Value {
+    serde_json::json!({ "kind": kind, "payload": payload })
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct WsEvent {
-    #[serde(rename = "type")]
-    pub event_type: AgentEventType,
-    pub agent_id: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub payload: Option<Value>,
-    pub timestamp: i64,
-}
-
-impl WsEvent {
-    pub fn new(event_type: AgentEventType, agent_id: impl Into<String>) -> Self {
-        Self {
-            event_type,
-            agent_id: agent_id.into(),
-            payload: None,
-            timestamp: Utc::now().timestamp_millis(),
+/// Parcayi cerceveye sarar; serilestirilemezse `None`.
+fn fragment_frame(fragment: &Fragment) -> Option<Value> {
+    match serde_json::to_value(fragment) {
+        Ok(payload) => Some(frame(FRAME_FRAGMENT, payload)),
+        Err(err) => {
+            tracing::error!(error = %err, "HTML parcasi WS'e serilestirilemedi, atlandi");
+            None
         }
     }
-
-    pub fn with_payload(
-        event_type: AgentEventType,
-        agent_id: impl Into<String>,
-        payload: Value,
-    ) -> Self {
-        Self {
-            event_type,
-            agent_id: agent_id.into(),
-            payload: Some(payload),
-            timestamp: Utc::now().timestamp_millis(),
-        }
-    }
-
-    pub fn to_json_string(&self) -> String {
-        serde_json::to_string(self).expect("WsEvent serialization should not fail")
-    }
 }
 
-pub async fn ws_handler(
-    ws: WebSocketUpgrade,
-    tx: broadcast::Sender<String>,
-) -> impl IntoResponse {
-    ws.on_upgrade(move |socket| handle_socket(socket, tx))
+/// **WS ucu.** Yukseltmeyi kabul eder ve oturumu baslatir.
+pub async fn ws_handler<S: ControlPlane>(
+    upgrade: WebSocketUpgrade,
+    State(state): State<S>,
+) -> Response {
+    upgrade.on_upgrade(move |socket| ws_session(socket, state))
 }
 
-async fn handle_socket(socket: WebSocket, tx: broadcast::Sender<String>) {
-    let mut rx = tx.subscribe();
-    let (mut sender, mut receiver) = socket.split();
+/// Tek bir WebSocket oturumu.
+///
+/// 1. Ilk cerceve: tum pano (anlik goruntuden SSR).
+/// 2. Sonrasi: olay basina bir parca + istemci komutlari.
+async fn ws_session<S: ControlPlane>(socket: WebSocket, state: S) {
+    // Abonelik anlik goruntuden once acilir: aradaki olaylar kaybolmasin.
+    let mut receiver = state.events().subscribe();
+    let (mut sink, mut source) = socket.split();
 
-    let send_task = tokio::spawn(async move {
-        while let Ok(msg) = rx.recv().await {
-            if sender.send(Message::Text(msg.into())).await.is_err() {
-                break;
+    let first = match state.snapshot().await {
+        Ok(snapshot) => fragment_frame(&live::board_fragment(&snapshot)),
+        Err(err) => Some(frame(
+            FRAME_ERROR,
+            serde_json::json!({ "code": err.code(), "detail": err.to_string() }),
+        )),
+    };
+    match first {
+        Some(value) => {
+            if !send_frame(&mut sink, value).await {
+                return;
             }
         }
-    });
+        None => return,
+    }
 
-    let recv_task = tokio::spawn(async move {
-        while let Some(Ok(_msg)) = receiver.next().await {
-            // Client mesajlarını şimdilik ignore et
+    loop {
+        tokio::select! {
+            event = receiver.recv() => {
+                let outgoing = match event {
+                    Ok(event) => match fragment_frame(&live::fragment_for(event.as_ref())) {
+                        Some(value) => value,
+                        None => continue,
+                    },
+                    Err(broadcast::error::RecvError::Lagged(skipped)) => {
+                        tracing::warn!(skipped, "WebUI WS abonesi geride kaldi; yeniden yukleme gerekli");
+                        frame(FRAME_RELOAD, serde_json::json!({ "skipped": skipped }))
+                    }
+                    // Yayinci kapandi: oturum sonlanir.
+                    Err(broadcast::error::RecvError::Closed) => break,
+                };
+                if !send_frame(&mut sink, outgoing).await {
+                    break;
+                }
+            }
+            incoming = source.next() => {
+                match incoming {
+                    Some(Ok(Message::Text(text))) => {
+                        if let Some(reply) = handle_client_text(&state, text.as_str()).await
+                            && !send_frame(&mut sink, reply).await
+                        {
+                            break;
+                        }
+                    }
+                    Some(Ok(Message::Close(_))) | None => break,
+                    // Ping/Pong axum tarafindan yanitlanir; ikili cerceve kullanilmaz.
+                    Some(Ok(_)) => {}
+                    Some(Err(err)) => {
+                        tracing::debug!(error = %err, "WebUI WS oturumu hata ile kapandi");
+                        break;
+                    }
+                }
+            }
         }
-    });
+    }
+}
 
-    let _ = tokio::join!(send_task, recv_task);
+/// Istemciden gelen metni kanonik `Command` olarak cozer ve cekirdege iletir.
+///
+/// Donen deger yalnizca hata durumunda doludur; basarida sonuc akista gorunur.
+async fn handle_client_text<S: ControlPlane>(state: &S, text: &str) -> Option<Value> {
+    let command = match serde_json::from_str::<Command>(text) {
+        Ok(command) => command,
+        Err(err) => {
+            return Some(frame(
+                FRAME_ERROR,
+                serde_json::json!({ "code": "bad_request", "detail": err.to_string() }),
+            ));
+        }
+    };
+
+    match state.dispatch(command).await {
+        Ok(()) => None,
+        Err(err) => Some(frame(
+            FRAME_ERROR,
+            serde_json::json!({ "code": err.code(), "detail": err.to_string() }),
+        )),
+    }
+}
+
+/// Cerceveyi sokete yazar; baglanti yasiyorsa `true` doner.
+async fn send_frame<W>(sink: &mut W, payload: Value) -> bool
+where
+    W: futures::SinkExt<Message> + Unpin,
+{
+    sink.send(Message::Text(payload.to_string().into()))
+        .await
+        .is_ok()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serde_json::json;
+    use omni_proto::SystemSnapshot;
 
     #[test]
-    fn test_ws_event_serialization() {
-        let event = WsEvent::with_payload(
-            AgentEventType::AgentSpawned,
-            "agent-1",
-            json!({"task": "analyze"}),
-        );
-        let json = event.to_json_string();
-        let parsed: WsEvent = serde_json::from_str(&json).unwrap();
-        assert_eq!(parsed.event_type, AgentEventType::AgentSpawned);
-        assert_eq!(parsed.agent_id, "agent-1");
-        assert_eq!(
-            parsed.payload.unwrap().get("task").unwrap(),
-            "analyze"
-        );
+    fn cerceve_bicimi_kararli() {
+        let value = frame(FRAME_FRAGMENT, serde_json::json!({ "a": 1 }));
+        assert_eq!(value["kind"], FRAME_FRAGMENT);
+        assert_eq!(value["payload"]["a"], 1);
     }
 
     #[test]
-    fn test_all_event_types_serialize() {
-        let types = [
-            AgentEventType::AgentSpawned,
-            AgentEventType::AgentCompleted,
-            AgentEventType::AgentFailed,
-            AgentEventType::ToolCalled,
-            AgentEventType::InterruptRaised,
-            AgentEventType::BudgetExceeded,
-        ];
-        for ty in &types {
-            let event = WsEvent::new(*ty, "test-agent");
-            let json = event.to_json_string();
-            let parsed: WsEvent = serde_json::from_str(&json).unwrap();
-            assert_eq!(parsed.event_type, *ty);
-            assert_eq!(parsed.agent_id, "test-agent");
-        }
-    }
-
-    #[test]
-    fn test_event_serialized_field_names() {
-        let event = WsEvent::new(AgentEventType::AgentCompleted, "a1");
-        let json = event.to_json_string();
-        let v: Value = serde_json::from_str(&json).unwrap();
-        assert!(v.get("type").is_some());
-        assert!(v.get("agent_id").is_some());
-        assert!(v.get("timestamp").is_some());
-        assert_eq!(v["type"], "agent_completed");
-        assert_eq!(v["agent_id"], "a1");
-    }
-
-    #[tokio::test]
-    async fn test_broadcast_to_ws_event_roundtrip() {
-        let (tx, _dummy) = broadcast::channel::<String>(16);
-        drop(_dummy);
-
-        let mut rx = tx.subscribe();
-        let event = WsEvent::with_payload(
-            AgentEventType::ToolCalled,
-            "agent-42",
-            json!({"tool": "read_file", "args": {"path": "/tmp/test"}}),
-        );
-        let event_json = event.to_json_string();
-        tx.send(event_json.clone()).unwrap();
-
-        let received = rx.recv().await.unwrap();
-        let parsed: WsEvent = serde_json::from_str(&received).unwrap();
-
-        assert_eq!(parsed.event_type, AgentEventType::ToolCalled);
-        assert_eq!(parsed.agent_id, "agent-42");
-        let payload = parsed.payload.unwrap();
-        assert_eq!(payload["tool"], "read_file");
-    }
-
-    #[tokio::test]
-    async fn test_multiple_events_flow() {
-        let (tx, _dummy) = broadcast::channel::<String>(16);
-        drop(_dummy);
-
-        let events = vec![
-            WsEvent::new(AgentEventType::AgentSpawned, "agent-1"),
-            WsEvent::new(AgentEventType::AgentCompleted, "agent-1"),
-            WsEvent::new(AgentEventType::AgentSpawned, "agent-2"),
-            WsEvent::new(AgentEventType::AgentFailed, "agent-2"),
-        ];
-
-        let mut rx = tx.subscribe();
-        for ev in &events {
-            tx.send(ev.to_json_string()).unwrap();
-        }
-
-        let mut count = 0;
-        while let Ok(msg) = rx.recv().await {
-            let parsed: WsEvent = serde_json::from_str(&msg).unwrap();
-            assert_eq!(parsed.agent_id, events[count].agent_id);
-            assert_eq!(parsed.event_type, events[count].event_type);
-            count += 1;
-            if count == events.len() {
-                break;
+    fn cerceve_adlari_ayrik() {
+        let names = [FRAME_FRAGMENT, FRAME_RELOAD, FRAME_ERROR];
+        for (i, a) in names.iter().enumerate() {
+            for b in names.iter().skip(i + 1) {
+                assert_ne!(a, b);
             }
         }
-        assert_eq!(count, events.len());
     }
 
     #[test]
-    fn test_event_no_payload_omits_field() {
-        let event = WsEvent::new(AgentEventType::BudgetExceeded, "agent-x");
-        let json = event.to_json_string();
-        let v: Value = serde_json::from_str(&json).unwrap();
-        assert!(v.get("payload").is_none());
+    fn pano_cercevesi_html_tasir() {
+        let snapshot = SystemSnapshot::empty(omni_proto::now());
+        let value = fragment_frame(&live::board_fragment(&snapshot)).expect("cerceve");
+        assert_eq!(value["kind"], FRAME_FRAGMENT);
+        assert_eq!(value["payload"]["target"], "board");
+        let html = value["payload"]["html"].as_str().expect("html");
+        assert!(html.contains("id=\"agents\""));
     }
 
     #[test]
-    fn test_snake_case_serde_names() {
-        assert_eq!(
-            serde_json::to_value(AgentEventType::AgentSpawned).unwrap(),
-            "agent_spawned"
-        );
-        assert_eq!(
-            serde_json::to_value(AgentEventType::AgentCompleted).unwrap(),
-            "agent_completed"
-        );
-        assert_eq!(
-            serde_json::to_value(AgentEventType::AgentFailed).unwrap(),
-            "agent_failed"
-        );
-        assert_eq!(
-            serde_json::to_value(AgentEventType::ToolCalled).unwrap(),
-            "tool_called"
-        );
-        assert_eq!(
-            serde_json::to_value(AgentEventType::InterruptRaised).unwrap(),
-            "interrupt_raised"
-        );
-        assert_eq!(
-            serde_json::to_value(AgentEventType::BudgetExceeded).unwrap(),
-            "budget_exceeded"
-        );
+    fn komut_govdesi_cozulur() {
+        let raw = serde_json::json!({
+            "cmd": "write_to_agent",
+            "agent_id": 4,
+            "content": "devam"
+        })
+        .to_string();
+        let command: Command = serde_json::from_str(&raw).expect("cozme");
+        assert_eq!(command.target_agent(), Some(4));
     }
 }

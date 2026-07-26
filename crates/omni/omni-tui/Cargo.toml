@@ -3,18 +3,26 @@ name = "omni-tui"
 version = "0.1.0"
 edition.workspace = true
 license.workspace = true
-description = "TUI dashboard for Omnitrix multiagent monitoring"
+description = "Terminal face for Omnitrix: renders the canonical omni-proto state stream (I3/K7)"
 
 [dependencies]
+# I3: durum modeli tek kaynaktan gelir; bu crate kendi tipini icat etmez.
+omni-proto = { workspace = true }
+# Akis cerceve adlari (snapshot/state/lagged/error) tek yerde tanimlidir; bu
+# yuz onlari yeniden tanimlamaz, kontrol duzleminden alir (B5). omni-webui de
+# ayni bagimliligi tasir — iki yuz ayni akisi tuketir (K7).
+omni-control = { workspace = true }
+# B1 duzeltmesi: TUI bagimliliklari deklare edilir (immediate-mode ratatui).
+ratatui = { workspace = true }
+crossterm = { workspace = true }
+# Komut istemlerinin metin editoru (undo/secim/unicode dogru).
+xai-ratatui-textarea = { workspace = true }
+# CommandOutbox kanali; TUI dongusu komut gonderirken bloklanmaz.
 tokio = { workspace = true }
-serde = { workspace = true }
+# ToolCallView.args onizlemesi.
 serde_json = { workspace = true }
 thiserror = { workspace = true }
 tracing = { workspace = true }
-ratatui = { workspace = true }
-crossterm = { workspace = true }
-futures = { workspace = true }
-anyhow = { workspace = true }
 
 [lints]
 workspace = true

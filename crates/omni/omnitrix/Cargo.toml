@@ -10,7 +10,15 @@ name = "omnitrix"
 path = "src/main.rs"
 
 [dependencies]
+# Kontrol duzlemi: omnitrix kendi API'sini kurmaz, omni-control'u servis eder (3.2/I3).
+omni-control = { workspace = true }
+# Tek yazar cekirdek; SnapshotSource/CommandSink adaptoru bunun uzerine oturur.
+omni-core = { workspace = true }
+# Kanonik durum tipleri (Bolum 6.1) — omnitrix kendi tipini icat etmez (I3).
+omni-proto = { workspace = true }
+omni-agent = { workspace = true }
 omni-router = { workspace = true }
+omni-tools = { workspace = true }
 omni-scheduler = { workspace = true }
 omni-tui = { workspace = true }
 omni-provider = { workspace = true }
@@ -30,10 +38,18 @@ thiserror = { workspace = true }
 anyhow = { workspace = true }
 toml = { workspace = true }
 axum = { workspace = true }
+# omni-control'un SnapshotSource/CommandSink imzalari BoxFuture dondurur.
+futures = { workspace = true }
 chrono = { workspace = true }
 dirs = { workspace = true }
 # `omnitrix task` alt-komutu WriterActor'a rusqlite::types::Value parametresi verir.
 rusqlite = { workspace = true }
+# `omnitrix run` alt-komutu: calisma dizinini Path::canonicalize YERINE
+# dunce::canonicalize ile cozer (clippy.toml).
+dunce = { workspace = true }
+# `omnitrix run` sampler yapilandirmasini (SamplerConfig/RetryPolicy/ApiBackend)
+# dogrudan kurar; tur dongusu omni-router'dadir.
+xai-grok-sampler = { workspace = true }
 
 
 [lints]
