@@ -43,12 +43,12 @@ async fn test_provider_fallback_on_429() {
         fallback_chain: vec![
             ProviderModel {
                 provider: "A".into(),
-                model: "gpt-4".into(),
+                model: "model-a".into(),
                 weight: None,
             },
             ProviderModel {
                 provider: "B".into(),
-                model: "gpt-4".into(),
+                model: "model-b".into(),
                 weight: None,
             },
         ],
@@ -58,7 +58,7 @@ async fn test_provider_fallback_on_429() {
 
     let selected = router.route(&policy).await.unwrap();
     assert_eq!(selected.provider, "B", "down A should fallback to B");
-    assert_eq!(selected.model, "gpt-4");
+    assert_eq!(selected.model, "model-b");
 
     mock_a.assert();
     mock_b.assert();
@@ -135,12 +135,12 @@ async fn test_full_fallback_chain_exhaustion() {
         fallback_chain: vec![
             ProviderModel {
                 provider: "A".into(),
-                model: "gpt-4".into(),
+                model: "model-a".into(),
                 weight: None,
             },
             ProviderModel {
                 provider: "B".into(),
-                model: "gpt-4".into(),
+                model: "model-b".into(),
                 weight: None,
             },
         ],
