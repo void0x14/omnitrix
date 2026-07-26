@@ -25,10 +25,17 @@ pub fn semali_db(dir: &Path) -> PathBuf {
 
     let conn = rusqlite::Connection::open(&db_path).expect("tohum icin baglanti");
     conn.execute_batch(
+        // Testler 1, 2 ve 5 numarali ajanlara olay yaziyor; `file_touches.agent_id`
+        // ve `agent_events.agent_id` -> `agents(id)` yabanci anahtari oldugu icin
+        // tohumlanmayan her kimlik "FOREIGN KEY constraint failed" verir.
         "INSERT INTO tasks (id, root_id, title, mode, status, depth)
              VALUES (1, 1, 'test gorevi', 'user_focused', 'running', 0);
-         INSERT INTO agents (id, task_id, persona, state)
-             VALUES (1, 1, 'test-persona', 'init');",
+         INSERT INTO agents (id, task_id, persona, state) VALUES
+             (1, 1, 'test-persona', 'init'),
+             (2, 1, 'test-persona', 'init'),
+             (3, 1, 'test-persona', 'init'),
+             (4, 1, 'test-persona', 'init'),
+             (5, 1, 'test-persona', 'init');",
     )
     .expect("tohum satirlari yazilmali");
 
