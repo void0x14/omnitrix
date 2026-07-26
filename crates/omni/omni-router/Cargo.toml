@@ -21,6 +21,8 @@ chrono = { workspace = true, features = ["serde"] }
 anyhow = { workspace = true }
 regex = { workspace = true }
 reqwest = { workspace = true }
+xai-grok-sampler = { workspace = true }
+xai-grok-sampling-types = { workspace = true }
 
 [dev-dependencies]
 mockito = { workspace = true }

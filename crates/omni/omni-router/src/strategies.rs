@@ -73,6 +73,8 @@ pub enum RouterError {
     WeightError(String),
     #[error("budget exceeded: {0}")]
     BudgetExceeded(String),
+    #[error("sampling failed: {0}")]
+    Sampling(#[from] xai_grok_sampling_types::SamplingError),
 }
 
 const MAX_RETRIES: usize = 3;

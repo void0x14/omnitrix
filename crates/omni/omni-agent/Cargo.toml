@@ -9,9 +9,7 @@ description = "Single-agent runtime wrapper (persona -> AgentDefinition) for Omn
 omni-tools = { workspace = true }
 xai-grok-agent = { workspace = true }
 xai-chat-state = { workspace = true }
-tokio = { workspace = true }
 thiserror = { workspace = true }
-tracing = { workspace = true }
 
 [lints]
 workspace = true
