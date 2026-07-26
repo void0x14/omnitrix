@@ -32,6 +32,8 @@ toml = { workspace = true }
 axum = { workspace = true }
 chrono = { workspace = true }
 dirs = { workspace = true }
+# `omnitrix task` alt-komutu WriterActor'a rusqlite::types::Value parametresi verir.
+rusqlite = { workspace = true }
 
 
 [lints]

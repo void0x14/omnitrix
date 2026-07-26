@@ -1,5 +1,6 @@
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::Instant;
 
 use omni_provider::detection::ProviderDetector;
 use omni_provider::health::HealthProbe;
@@ -12,7 +13,8 @@ use omni_storage::cas::CasBlobStore;
 use omni_storage::redb_store::RedbStore;
 use omni_storage::sqlite_schema::SchemaManager;
 use omni_storage::wal::WalReplay;
-use omni_storage::writer_actor::WriterActor;
+use omni_storage::writer_actor::{WriteOp, WriterActor};
+use tokio::sync::watch;
 
 /// `max_active_agents` profillerde hem sayi (low=2, high=50) hem de string
 /// (mid="auto") olarak yaziliyor; ikisini de tek bir `String` alanina indirger.
@@ -121,19 +123,121 @@ pub struct ProviderLayer {
     pub keyring: KeyManager,
 }
 
+// ---------------------------------------------------------------------------
+// 8.2 cold-start olcumu ve RSS raporu
+// ---------------------------------------------------------------------------
+
+/// `OMNITRIX_TRACE_STARTUP=1` iken binary-ici zaman damgasi acik demektir.
+pub fn startup_trace_enabled() -> bool {
+    std::env::var("OMNITRIX_TRACE_STARTUP")
+        .map(|v| v == "1")
+        .unwrap_or(false)
+}
+
+/// Faz 1 kapisi: RSS olculur. `/proc/self/statm` ikinci alani yerlesik (resident)
+/// sayfa sayisidir; sayfa boyu Linux/x86_64'te 4 KiB. `/proc` yoksa `None`.
+pub fn rss_kb() -> Option<u64> {
+    const PAGE_KB: u64 = 4;
+    let statm = std::fs::read_to_string("/proc/self/statm").ok()?;
+    let resident_pages: u64 = statm.split_whitespace().nth(1)?.parse().ok()?;
+    Some(resident_pages.saturating_mul(PAGE_KB))
+}
+
+/// 8.2 kapisi olcumu: surec baslangicindan (`t0`) bu ana kadar gecen sure.
+/// `println!` yerine dogrudan stderr'e yazilir; TUI stdout'u kullandigi icin
+/// olcum ciktisi ayri akista kalir. Yazma hatasi yutulur (I6: panic yok).
+pub fn trace_startup(t0: Instant, phase: &str) {
+    if !startup_trace_enabled() {
+        return;
+    }
+    use std::io::Write as _;
+    let elapsed_us = t0.elapsed().as_micros();
+    let elapsed_ms = (elapsed_us as f64) / 1000.0;
+    let rss = rss_kb().unwrap_or(0);
+    let mut err = std::io::stderr();
+    let _ = writeln!(
+        err,
+        "omnitrix startup: phase={phase} elapsed_us={elapsed_us} elapsed_ms={elapsed_ms:.3} rss_kb={rss}"
+    );
+    let _ = err.flush();
+}
+
+// ---------------------------------------------------------------------------
+// 8.1 crash-only kapanis
+// ---------------------------------------------------------------------------
+
+/// Terminali eski haline getirir. Hicbir hata yayilmaz: kapanis yolu her zaman
+/// ilerlemek zorunda (8.1).
+pub fn restore_terminal() {
+    use ratatui::crossterm::ExecutableCommand;
+    use ratatui::crossterm::terminal::{LeaveAlternateScreen, disable_raw_mode};
+    let _ = disable_raw_mode();
+    let _ = std::io::stdout().execute(LeaveAlternateScreen);
+}
+
+/// 8.1: normal kapanis ile SIGKILL ayni kod yolundadir. Flush yok, bekleme yok,
+/// graceful shutdown zinciri yok. Yapilan tek is terminali kullanilabilir birakmak;
+/// maliyet O(1), veri hacminden bagimsiz.
+pub fn instant_exit(code: i32) -> ! {
+    restore_terminal();
+    std::process::exit(code)
+}
+
+/// SIGINT gozcusu. Ham kip (raw mode) acikken Ctrl+C cogu terminalde sinyale
+/// donusmez; tus olayi olarak da yakalanir (bkz. `main.rs`). Iki yol da ayni
+/// `instant_exit` cagrisina duser.
+pub async fn watch_sigint() {
+    if tokio::signal::ctrl_c().await.is_ok() {
+        instant_exit(0);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Kurulum parcalari
+// ---------------------------------------------------------------------------
+
+/// Tracing abonesi. `fmt::init` basarisizlikta panikler; `try_init` kullanilir (I6).
 pub fn init() -> anyhow::Result<()> {
-    tracing_subscriber::fmt::init();
+    tracing_subscriber::fmt::try_init().map_err(|e| anyhow::anyhow!("tracing init: {e}"))?;
     Ok(())
+}
+
+/// TUI modunda stderr'e log yazmak alternatif ekrani bozar. Bu yuzden abone
+/// yalnizca `OMNITRIX_LOG_STDERR=1` iken kurulur; aksi halde `tracing` cagrilari
+/// sessiz no-op olur ve ilk frame temiz kalir (8.2).
+pub fn init_for_tui() {
+    let want = std::env::var("OMNITRIX_LOG_STDERR")
+        .map(|v| v == "1")
+        .unwrap_or(false);
+    if want {
+        let _ = init();
+    }
+}
+
+/// Veri dizini; yoksa olusturulur.
+pub fn data_dir() -> anyhow::Result<PathBuf> {
+    let dir = dirs::data_dir()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join("omnitrix");
+    std::fs::create_dir_all(&dir)?;
+    Ok(dir)
+}
+
+/// SQLite dosya yolu (WAL + write_journal burada).
+pub fn db_path() -> anyhow::Result<PathBuf> {
+    Ok(data_dir()?.join("omnitrix.sqlite"))
 }
 
 pub fn load_config() -> anyhow::Result<OmnitrixConfig> {
     let profile = std::env::var("OMNITRIX_PROFILE").unwrap_or_else(|_| "mid".into());
 
-    let config_dir = std::env::var("OMNITRIX_CONFIG_DIR").map(PathBuf::from).unwrap_or_else(|_| {
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../../config")
-    });
+    let config_dir = std::env::var("OMNITRIX_CONFIG_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../../config"));
 
-    let config_path = config_dir.join("profiles").join(format!("{}.toml", profile));
+    let config_path = config_dir
+        .join("profiles")
+        .join(format!("{}.toml", profile));
 
     let content = std::fs::read_to_string(&config_path)?;
     let config: OmnitrixConfig = toml::from_str(&content)?;
@@ -180,11 +284,7 @@ impl Default for ApiConfig {
 }
 
 pub fn init_storage(_config: &OmnitrixConfig) -> anyhow::Result<StorageLayer> {
-    let data_dir = dirs::data_dir()
-        .unwrap_or_else(|| PathBuf::from("."))
-        .join("omnitrix");
-
-    std::fs::create_dir_all(&data_dir)?;
+    let data_dir = data_dir()?;
     tracing::info!(path=%data_dir.display(), "storage directory initialized");
 
     let redb = RedbStore::new(&data_dir.join("hot.redb"))
@@ -194,12 +294,12 @@ pub fn init_storage(_config: &OmnitrixConfig) -> anyhow::Result<StorageLayer> {
     let sqlite = SchemaManager::new(&data_dir.join("omnitrix.sqlite"))
         .map_err(|e| anyhow::anyhow!("SchemaManager init: {e}"))?;
 
-    sqlite.run_migrations()
+    sqlite
+        .run_migrations()
         .map_err(|e| anyhow::anyhow!("Migration failed: {e}"))?;
 
     let wal_path = data_dir.join("omnitrix.sqlite");
-    let wal = WalReplay::new(&wal_path)
-        .map_err(|e| anyhow::anyhow!("WalReplay init: {e}"))?;
+    let wal = WalReplay::new(&wal_path).map_err(|e| anyhow::anyhow!("WalReplay init: {e}"))?;
     if let Ok(report) = wal.replay_pending()
         && (report.replayed > 0 || report.failed > 0)
     {
@@ -214,7 +314,12 @@ pub fn init_storage(_config: &OmnitrixConfig) -> anyhow::Result<StorageLayer> {
 
     let writer = Some(WriterActor::new(&data_dir.join("omnitrix.sqlite")));
 
-    Ok(StorageLayer { redb, sqlite, cas, writer })
+    Ok(StorageLayer {
+        redb,
+        sqlite,
+        cas,
+        writer,
+    })
 }
 
 pub fn init_provider(_config: &OmnitrixConfig) -> ProviderLayer {
@@ -226,7 +331,11 @@ pub fn init_provider(_config: &OmnitrixConfig) -> ProviderLayer {
             .join("omnitrix.sqlite"),
     ));
     let detector = ProviderDetector::new();
-    ProviderLayer { detector, health, keyring }
+    ProviderLayer {
+        detector,
+        health,
+        keyring,
+    }
 }
 
 pub fn init_router(health_probe: HealthProbe) -> Router {
@@ -234,7 +343,12 @@ pub fn init_router(health_probe: HealthProbe) -> Router {
 }
 
 pub fn init_scheduler(config: &OmnitrixConfig) -> Scheduler {
-    Scheduler::new(0, 64, config.runtime.max_depth, config.runtime.mem_high_watermark_mb)
+    Scheduler::new(
+        0,
+        64,
+        config.runtime.max_depth,
+        config.runtime.mem_high_watermark_mb,
+    )
 }
 
 pub fn init_api(config: &OmnitrixConfig) -> crate::api::ControlPlaneApi {
@@ -246,12 +360,166 @@ pub fn init_api(config: &OmnitrixConfig) -> crate::api::ControlPlaneApi {
     crate::api::ControlPlaneApi::new(addr)
 }
 
-pub async fn shutdown(context: &mut OmnitrixContext) {
-    tracing::info!("omnitrix shutting down...");
-    context.scheduler.shutdown().await;
-    if let Some(ref mut writer) = context.storage.writer {
-        writer.shutdown().await;
+// ---------------------------------------------------------------------------
+// 8.2 lazy-init: TUI'den SONRA, arka planda isinma
+// ---------------------------------------------------------------------------
+
+/// Arka plan isinmasinin kullaniciya gosterilen asamalari.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WarmupPhase {
+    /// Ilk frame cizildi, hicbir sey yuklenmedi.
+    Cold,
+    ConfigLoaded,
+    StorageReady,
+    ProviderReady,
+    Ready,
+    Failed,
+}
+
+impl WarmupPhase {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Cold => "cold",
+            Self::ConfigLoaded => "config",
+            Self::StorageReady => "storage",
+            Self::ProviderReady => "provider",
+            Self::Ready => "ready",
+            Self::Failed => "failed",
+        }
     }
-    context.provider.keyring.clear().await;
-    tracing::info!("omnitrix shutdown complete");
+}
+
+/// 8.2: ilk TUI frame'i hicbir provider'a baglanmadan cizilir; bu fonksiyon
+/// frame cizildikten SONRA `tokio::spawn` ile arka planda kosar. TUI onu beklemez.
+pub async fn warm_up(phase: &watch::Sender<WarmupPhase>) -> anyhow::Result<OmnitrixContext> {
+    let config = load_config()?;
+    let _ = phase.send(WarmupPhase::ConfigLoaded);
+
+    let storage = init_storage(&config)?;
+    let _ = phase.send(WarmupPhase::StorageReady);
+
+    let provider = init_provider(&config);
+    let health_probe = Arc::clone(&provider.health);
+    let _router = init_router((*provider.health).clone());
+    let _ = phase.send(WarmupPhase::ProviderReady);
+
+    let scheduler = init_scheduler(&config);
+    let interrupt_bus = Arc::new(InterruptBus::default());
+    let penalty_ledger = PenaltyLedger::new();
+
+    let api = init_api(&config);
+    tokio::spawn(async move {
+        if let Err(e) = api.serve().await {
+            tracing::warn!(%e, "kontrol duzlemi API durdu");
+        }
+    });
+
+    let _ = phase.send(WarmupPhase::Ready);
+
+    Ok(OmnitrixContext {
+        scheduler,
+        storage,
+        provider,
+        interrupt_bus,
+        penalty_ledger,
+        health_probe,
+        config,
+    })
+}
+
+/// Baglami surec omru boyunca canli tutar. 8.1 geregi duzenli bir kapanis
+/// zinciri yoktur: surec ya SIGINT'te aninda olur ya SIGKILL alir.
+pub async fn park_context(context: OmnitrixContext) {
+    let _held = context;
+    std::future::pending::<()>().await;
+}
+
+// ---------------------------------------------------------------------------
+// Alt-komut destegi (3.2 lazy-init entrypoint)
+// ---------------------------------------------------------------------------
+
+/// Idempotent niyet kimligi (I7). Zaman damgasi + PID cakismayi engeller.
+fn new_op_id(kind: &str) -> String {
+    let ts = chrono::Utc::now()
+        .timestamp_nanos_opt()
+        .unwrap_or_else(|| chrono::Utc::now().timestamp_millis());
+    format!("{kind}:{ts}:{}", std::process::id())
+}
+
+/// Tek yazar aktoru uzerinden SQL yurutur; yanit bekleyerek sirayi garanti eder.
+async fn writer_execute(
+    writer: &WriterActor,
+    sql: &str,
+    params: Vec<rusqlite::types::Value>,
+) -> anyhow::Result<usize> {
+    let (reply, rx) = tokio::sync::oneshot::channel();
+    writer
+        .write(WriteOp::Execute {
+            sql: sql.to_string(),
+            params,
+            reply,
+        })
+        .await
+        .map_err(|e| anyhow::anyhow!("yazici kanali kapali: {e}"))?;
+    rx.await
+        .map_err(|_| anyhow::anyhow!("yazici yaniti kayboldu"))?
+        .map_err(|e| anyhow::anyhow!("SQL yurutulemedi: {e}"))
+}
+
+/// `omnitrix task <metin>`: gorevi kalici olarak yazar.
+///
+/// I7 sirasi: once `write_journal`'a `applied=0` niyet kaydi, sonra yan etki
+/// (tasks satiri), en sonda `applied=1`. Yarida kesilirse acilistaki WAL replay
+/// niyeti tekrar oynatir; `op_id` UNIQUE oldugu icin tekrar guvenlidir.
+pub async fn record_task(title: &str) -> anyhow::Result<String> {
+    use rusqlite::types::Value;
+
+    let db = db_path()?;
+
+    // Semayi hazirla (ilk calistirmada tablolar olusur).
+    let schema = SchemaManager::new(&db).map_err(|e| anyhow::anyhow!("SchemaManager: {e}"))?;
+    schema
+        .run_migrations()
+        .map_err(|e| anyhow::anyhow!("migration: {e}"))?;
+    drop(schema);
+
+    let mut writer = WriterActor::new(&db);
+    let op_id = new_op_id("task.create");
+
+    writer_execute(
+        &writer,
+        "INSERT OR IGNORE INTO write_journal (op_id, op_kind, payload_ref, applied) \
+         VALUES (?1, 'task.create', ?2, 0)",
+        vec![Value::Text(op_id.clone()), Value::Text(title.to_string())],
+    )
+    .await?;
+
+    // `root_id` kendine referans verdiginden yeni id onceden hesaplanir:
+    // AUTOINCREMENT'in bir sonraki degeri = max(sqlite_sequence.seq, max(id)) + 1.
+    writer_execute(
+        &writer,
+        "INSERT INTO tasks (id, parent_id, root_id, title, mode, status, depth) \
+         SELECT nid, NULL, nid, ?1, 'interactive', 'queued', 0 FROM ( \
+             SELECT MAX( \
+                 COALESCE((SELECT MAX(id) FROM tasks), 0), \
+                 COALESCE((SELECT seq FROM sqlite_sequence WHERE name = 'tasks'), 0) \
+             ) + 1 AS nid \
+         )",
+        vec![Value::Text(title.to_string())],
+    )
+    .await?;
+
+    writer_execute(
+        &writer,
+        "UPDATE write_journal SET applied = 1 WHERE op_id = ?1",
+        vec![Value::Text(op_id.clone())],
+    )
+    .await?;
+
+    // Tek seferlik CLI yolu: surec hemen bitecegi icin aktorun diskle isini
+    // bitirmesi beklenir. Bu, TUI'nin SIGINT yolu DEGILDIR (8.1 orada gecerli).
+    writer.flush().await;
+    writer.shutdown().await;
+
+    Ok(op_id)
 }
