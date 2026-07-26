@@ -64,6 +64,7 @@ impl Plan {
     }
 }
 
+#[derive(Default)]
 pub struct Planner;
 
 impl Planner {

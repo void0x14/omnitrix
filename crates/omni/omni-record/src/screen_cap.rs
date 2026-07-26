@@ -50,8 +50,8 @@ impl ScreenCapture {
 
         let blob_ref = tokio::task::spawn_blocking(move || cas.store(&compressed, false))
             .await
-            .map_err(|e| CompressError::Io(std::io::Error::new(std::io::ErrorKind::Other, e.to_string())))?
-            .map_err(|e| CompressError::Io(std::io::Error::new(std::io::ErrorKind::Other, e.to_string())))?;
+            .map_err(|e| CompressError::Io(std::io::Error::other(e.to_string())))?
+            .map_err(|e| CompressError::Io(std::io::Error::other(e.to_string())))?;
 
         let meta = RecordingMeta {
             blob_ref: blob_ref.clone(),

@@ -76,6 +76,7 @@ fn extract_key_terms(claim: &str) -> Vec<String> {
         .collect()
 }
 
+#[derive(Default)]
 pub struct GroundingVerifier;
 
 impl GroundingVerifier {

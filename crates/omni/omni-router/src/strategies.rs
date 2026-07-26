@@ -85,6 +85,12 @@ pub struct Router {
     provider_configs: Arc<RwLock<HashMap<String, ProviderConfig>>>,
 }
 
+impl Default for Router {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Router {
     pub fn new() -> Self {
         Self {
@@ -110,32 +116,32 @@ impl Router {
     }
 
     pub fn check_budget(budget: &RoutingBudget, usage: &Usage) -> bool {
-        if let Some(max_tokens) = budget.max_tokens {
-            if usage.tokens_used >= max_tokens {
-                debug!(
-                    "budget check failed: tokens {} >= max {}",
-                    usage.tokens_used, max_tokens
-                );
-                return false;
-            }
+        if let Some(max_tokens) = budget.max_tokens
+            && usage.tokens_used >= max_tokens
+        {
+            debug!(
+                "budget check failed: tokens {} >= max {}",
+                usage.tokens_used, max_tokens
+            );
+            return false;
         }
-        if let Some(max_cost) = budget.max_cost {
-            if usage.cost_incurred >= max_cost {
-                debug!(
-                    "budget check failed: cost {} >= max {}",
-                    usage.cost_incurred, max_cost
-                );
-                return false;
-            }
+        if let Some(max_cost) = budget.max_cost
+            && usage.cost_incurred >= max_cost
+        {
+            debug!(
+                "budget check failed: cost {} >= max {}",
+                usage.cost_incurred, max_cost
+            );
+            return false;
         }
-        if let Some(max_latency_ms) = budget.max_latency_ms {
-            if usage.latency_ms >= max_latency_ms {
-                debug!(
-                    "budget check failed: latency {}ms >= max {}ms",
-                    usage.latency_ms, max_latency_ms
-                );
-                return false;
-            }
+        if let Some(max_latency_ms) = budget.max_latency_ms
+            && usage.latency_ms >= max_latency_ms
+        {
+            debug!(
+                "budget check failed: latency {}ms >= max {}ms",
+                usage.latency_ms, max_latency_ms
+            );
+            return false;
         }
         true
     }

@@ -48,6 +48,14 @@ pub struct HealthProbe {
     db_path: Option<PathBuf>,
 }
 
+impl Default for HealthProbe {
+    /// `new()` ile ayni: DB yolu yok (`db_path: None`), tablo olusturulmaz.
+    /// `new_with_db()` farkli davranir; varsayilan olarak kullanilmaz.
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl HealthProbe {
     pub fn new() -> Self {
         let (tx, _) = broadcast::channel(64);
@@ -183,7 +191,7 @@ impl HealthProbe {
                         });
 
                         if let Some(ref db) = db_path {
-                            Self::write_health_db(db, &provider_id, None, &new_status, Some(latency_ms), None);
+                            Self::write_health_db(db, provider_id, None, &new_status, Some(latency_ms), None);
                         }
                     } else {
                         state.status = new_status;

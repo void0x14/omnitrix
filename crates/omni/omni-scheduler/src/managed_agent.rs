@@ -13,6 +13,14 @@ use xai_grok_agent::Agent;
 use crate::budget::{Budget, BudgetTracker};
 use crate::persona::PersonaKind;
 
+/// One-shot channel end used to report a task's terminal result
+/// (`Ok(response)` on success, `Err(message)` on failure).
+type CompletionSender = oneshot::Sender<Result<String, String>>;
+
+/// Shared slot holding the completion sender of the currently spawned
+/// task. `None` while no task is in flight.
+type CompletionSlot = Arc<Mutex<Option<CompletionSender>>>;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ManagedAgentState {
     Idle,
@@ -38,7 +46,7 @@ pub struct ManagedAgent {
     agent_state: Arc<RwLock<ManagedAgentState>>,
     budget_tracker: Arc<RwLock<BudgetTracker>>,
     cancellation: CancellationToken,
-    completion_tx: Arc<Mutex<Option<oneshot::Sender<Result<String, String>>>>>,
+    completion_tx: CompletionSlot,
 }
 
 impl Clone for ManagedAgent {

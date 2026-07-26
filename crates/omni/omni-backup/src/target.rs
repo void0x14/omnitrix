@@ -97,13 +97,12 @@ impl BackupTarget for S3BackupTarget {
             .headers()
             .get(Self::CHECKSUM_HEADER)
             .and_then(|v| v.to_str().ok())
+            && echoed != hash
         {
-            if echoed != hash {
-                return Err(TargetError::ChecksumMismatch {
-                    expected: hash,
-                    actual: echoed.to_string(),
-                });
-            }
+            return Err(TargetError::ChecksumMismatch {
+                expected: hash,
+                actual: echoed.to_string(),
+            });
         }
 
         tracing::info!(destination, hash, "push completed");

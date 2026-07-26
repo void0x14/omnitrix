@@ -113,12 +113,11 @@ impl WriterActor {
                     let _ = done.send(());
                 }
 
-                if batch_count % WAL_CHECKPOINT_INTERVAL == 0 {
-                    if let Err(e) =
+                if batch_count.is_multiple_of(WAL_CHECKPOINT_INTERVAL)
+                    && let Err(e) =
                         conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);")
-                    {
-                        tracing::warn!(%e, "WriterActor: WAL checkpoint failed");
-                    }
+                {
+                    tracing::warn!(%e, "WriterActor: WAL checkpoint failed");
                 }
 
                 if has_shutdown {
@@ -189,14 +188,13 @@ impl WriterActor {
         let batch = Self::flatten_batch(raw_batch);
         let use_txn = batch.len() > 1;
 
-        if use_txn {
-            if let Err(e) = Self::retry_execute(|| conn.execute_batch("BEGIN IMMEDIATE"))
-            {
-                for op in batch {
-                    Self::send_error(op, StorageError::Internal(e.to_string()));
-                }
-                return;
+        if use_txn
+            && let Err(e) = Self::retry_execute(|| conn.execute_batch("BEGIN IMMEDIATE"))
+        {
+            for op in batch {
+                Self::send_error(op, StorageError::Internal(e.to_string()));
             }
+            return;
         }
 
         for op in batch {
@@ -261,11 +259,11 @@ impl WriterActor {
             }
         }
 
-        if use_txn {
-            if let Err(e) = Self::retry_execute(|| conn.execute_batch("COMMIT")) {
-                tracing::error!(%e, "WriterActor: COMMIT failed after retries");
-                let _ = conn.execute_batch("ROLLBACK");
-            }
+        if use_txn
+            && let Err(e) = Self::retry_execute(|| conn.execute_batch("COMMIT"))
+        {
+            tracing::error!(%e, "WriterActor: COMMIT failed after retries");
+            let _ = conn.execute_batch("ROLLBACK");
         }
     }
 

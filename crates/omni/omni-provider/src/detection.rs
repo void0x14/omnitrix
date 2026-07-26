@@ -89,6 +89,12 @@ pub struct ProviderDetector {
     client: reqwest::Client,
 }
 
+impl Default for ProviderDetector {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ProviderDetector {
     pub fn new() -> Self {
         let client = reqwest::Client::builder()

@@ -41,6 +41,12 @@ pub struct ModelIngestor {
     client: reqwest::Client,
 }
 
+impl Default for ModelIngestor {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ModelIngestor {
     pub fn new() -> Self {
         Self {
@@ -75,13 +81,12 @@ impl ModelIngestor {
             .await
             .map_err(|e| IngestionError::Parse(e.to_string()))?;
 
-        let models = match provider.kind {
+        match provider.kind {
             ProviderKind::OpenRouter => parse_openrouter_models(&body),
             ProviderKind::Google => parse_google_models(&body),
             ProviderKind::Anthropic => parse_anthropic_models(&body),
             _ => parse_openai_models(&body),
-        };
-        models
+        }
     }
 
     pub async fn refresh_all(
@@ -266,14 +271,14 @@ fn parse_openai_models(
             .and_then(|p| p.get("prompt"))
             .or_else(|| item.get("pricing").and_then(|p| p.get("input")))
             .or_else(|| item.get("input_price"))
-            .and_then(|v| price_to_f64(v));
+            .and_then(price_to_f64);
 
         let price_out = item
             .get("pricing")
             .and_then(|p| p.get("completion"))
             .or_else(|| item.get("pricing").and_then(|p| p.get("output")))
             .or_else(|| item.get("output_price"))
-            .and_then(|v| price_to_f64(v));
+            .and_then(price_to_f64);
 
         let capabilities = item
             .get("capabilities")
@@ -323,12 +328,12 @@ fn parse_openrouter_models(
         let price_in = item
             .get("pricing")
             .and_then(|p| p.get("prompt"))
-            .and_then(|v| price_to_f64(v));
+            .and_then(price_to_f64);
 
         let price_out = item
             .get("pricing")
             .and_then(|p| p.get("completion"))
-            .and_then(|v| price_to_f64(v));
+            .and_then(price_to_f64);
 
         let capabilities = item
             .get("architecture")

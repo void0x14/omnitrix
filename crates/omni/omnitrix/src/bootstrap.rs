@@ -14,6 +14,14 @@ use omni_storage::sqlite_schema::SchemaManager;
 use omni_storage::wal::WalReplay;
 use omni_storage::writer_actor::WriterActor;
 
+/// `max_active_agents` profillerde hem sayi (low=2, high=50) hem de string
+/// (mid="auto") olarak yaziliyor; ikisini de tek bir `String` alanina indirger.
+///
+/// `allow(dead_code)` yalnizca test kosumu icin: bin'in test harness'inda `main`
+/// giris noktasi olmadigindan serde'nin `deserialize_with` icin urettigi yardimci
+/// impl rustc'nin erisilebilirlik grafiginden dusuyor ve fonksiyon olu goruluyor.
+/// Gercek bin derlemesinde kullaniliyor, silinemez.
+#[cfg_attr(test, allow(dead_code))]
 fn de_number_or_string<'de, D>(d: D) -> Result<String, D::Error>
 where
     D: serde::Deserializer<'de>,
@@ -35,7 +43,7 @@ where
     d.deserialize_any(V)
 }
 
-#[derive(Debug, serde::Deserialize)]
+#[derive(Debug, Default, serde::Deserialize)]
 #[allow(dead_code)]
 pub struct OmnitrixConfig {
     pub runtime: RuntimeConfig,
@@ -71,7 +79,7 @@ pub struct RecordConfig {
     pub events: bool,
 }
 
-#[derive(Debug, serde::Deserialize)]
+#[derive(Debug, Default, serde::Deserialize)]
 #[allow(dead_code)]
 pub struct NotifyConfig {
     pub escalation: bool,
@@ -133,18 +141,6 @@ pub fn load_config() -> anyhow::Result<OmnitrixConfig> {
     Ok(config)
 }
 
-impl Default for OmnitrixConfig {
-    fn default() -> Self {
-        Self {
-            runtime: RuntimeConfig::default(),
-            router: RouterConfig::default(),
-            record: RecordConfig::default(),
-            notify: NotifyConfig::default(),
-            api: ApiConfig::default(),
-        }
-    }
-}
-
 impl Default for RuntimeConfig {
     fn default() -> Self {
         Self {
@@ -171,14 +167,6 @@ impl Default for RecordConfig {
             video: false,
             dom: false,
             events: true,
-        }
-    }
-}
-
-impl Default for NotifyConfig {
-    fn default() -> Self {
-        Self {
-            escalation: false,
         }
     }
 }
@@ -212,16 +200,16 @@ pub fn init_storage(_config: &OmnitrixConfig) -> anyhow::Result<StorageLayer> {
     let wal_path = data_dir.join("omnitrix.sqlite");
     let wal = WalReplay::new(&wal_path)
         .map_err(|e| anyhow::anyhow!("WalReplay init: {e}"))?;
-    if let Ok(report) = wal.replay_pending() {
-        if report.replayed > 0 || report.failed > 0 {
-            tracing::info!(
-                total = report.total_ops,
-                replayed = report.replayed,
-                skipped = report.skipped,
-                failed = report.failed,
-                "WAL replay complete"
-            );
-        }
+    if let Ok(report) = wal.replay_pending()
+        && (report.replayed > 0 || report.failed > 0)
+    {
+        tracing::info!(
+            total = report.total_ops,
+            replayed = report.replayed,
+            skipped = report.skipped,
+            failed = report.failed,
+            "WAL replay complete"
+        );
     }
 
     let writer = Some(WriterActor::new(&data_dir.join("omnitrix.sqlite")));

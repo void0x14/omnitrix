@@ -23,7 +23,7 @@ pub enum ToolCallStatus {
     Error(String),
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ExecutionOutput {
     pub results: Vec<String>,
     pub tool_calls: Vec<ToolCallRecord>,
@@ -151,23 +151,23 @@ impl Executor {
                         output.results.push(format!("{} completed", task_desc));
 
                         if let serde_json::Value::Object(ref map) = record.result {
-                            if let Some(content) = map.get("evidence") {
-                                if let Some(content_str) = content.as_str() {
-                                    evidence_pool.push(Evidence {
-                                        source: format!("tool:{}", tasks[idx].id),
-                                        content: content_str.to_string(),
-                                        tool_call_id: Some(tasks[idx].id.clone()),
-                                    });
-                                }
+                            if let Some(content) = map.get("evidence")
+                                && let Some(content_str) = content.as_str()
+                            {
+                                evidence_pool.push(Evidence {
+                                    source: format!("tool:{}", tasks[idx].id),
+                                    content: content_str.to_string(),
+                                    tool_call_id: Some(tasks[idx].id.clone()),
+                                });
                             }
-                            if let Some(content) = map.get("output") {
-                                if let Some(content_str) = content.as_str() {
-                                    evidence_pool.push(Evidence {
-                                        source: format!("tool:{}", tasks[idx].id),
-                                        content: content_str.to_string(),
-                                        tool_call_id: Some(tasks[idx].id.clone()),
-                                    });
-                                }
+                            if let Some(content) = map.get("output")
+                                && let Some(content_str) = content.as_str()
+                            {
+                                evidence_pool.push(Evidence {
+                                    source: format!("tool:{}", tasks[idx].id),
+                                    content: content_str.to_string(),
+                                    tool_call_id: Some(tasks[idx].id.clone()),
+                                });
                             }
                         }
                     }
@@ -190,10 +190,10 @@ impl Executor {
                 output.tool_calls.push(record);
             }
 
-            if output.tool_calls.last().map(|r| matches!(r.status, ToolCallStatus::Error(_))).unwrap_or(false) {
-                if !self.check_budget() {
-                    break;
-                }
+            if output.tool_calls.last().map(|r| matches!(r.status, ToolCallStatus::Error(_))).unwrap_or(false)
+                && !self.check_budget()
+            {
+                break;
             }
         }
 
@@ -275,16 +275,16 @@ impl Executor {
             latency_ms: self.usage.latency_ms + estimated.latency_ms,
         };
 
-        if let Some(budget) = &self.policy.budget {
-            if !Router::check_budget(budget, &estimated_usage) {
-                warn!("estimated cost for tool {} would exceed budget", task.id);
-                return ToolCallRecord {
-                    tool_name: task.id.clone(),
-                    arguments: serde_json::json!({"task_id": task.id}),
-                    result: serde_json::json!({"error": "budget exceeded"}),
-                    status: ToolCallStatus::Error("estimated cost exceeds remaining budget".into()),
-                };
-            }
+        if let Some(budget) = &self.policy.budget
+            && !Router::check_budget(budget, &estimated_usage)
+        {
+            warn!("estimated cost for tool {} would exceed budget", task.id);
+            return ToolCallRecord {
+                tool_name: task.id.clone(),
+                arguments: serde_json::json!({"task_id": task.id}),
+                result: serde_json::json!({"error": "budget exceeded"}),
+                status: ToolCallStatus::Error("estimated cost exceeds remaining budget".into()),
+            };
         }
 
         let arguments = serde_json::json!({

@@ -65,7 +65,7 @@ fn collect_blob_paths_recursive(dir: &Path, paths: &mut Vec<PathBuf>) -> Result<
         let path = entry.path();
         if path.is_dir() {
             collect_blob_paths_recursive(&path, paths)?;
-        } else if path.extension().map_or(false, |ext| ext == "zst") {
+        } else if path.extension().is_some_and(|ext| ext == "zst") {
             paths.push(path);
         }
     }
@@ -209,7 +209,7 @@ impl CasBlobStore {
             let modified = fs::metadata(path)
                 .and_then(|m| m.modified())
                 .ok();
-            let should_remove = modified.map_or(false, |t| t < cutoff);
+            let should_remove = modified.is_some_and(|t| t < cutoff);
             if should_remove {
                 if let Ok(meta) = fs::metadata(path) {
                     freed_bytes += meta.len();

@@ -89,7 +89,7 @@ async fn run() -> anyhow::Result<()> {
     let backend = CrosstermBackend::new(std::io::stdout());
     let mut terminal = Terminal::new(backend)?;
 
-    let mut dashboard = Dashboard {
+    let dashboard = Dashboard {
         agents: vec![
             AgentSummary {
                 id: "waiting".into(),
@@ -113,12 +113,12 @@ async fn run() -> anyhow::Result<()> {
             dashboard.render(frame, area);
         })?;
 
-        if event::poll(std::time::Duration::from_millis(200))? {
-            if let event::Event::Key(key) = event::read()? {
-                if key.kind == KeyEventKind::Press && key.code == KeyCode::Char('q') {
-                    break;
-                }
-            }
+        if event::poll(std::time::Duration::from_millis(200))?
+            && let event::Event::Key(key) = event::read()?
+            && key.kind == KeyEventKind::Press
+            && key.code == KeyCode::Char('q')
+        {
+            break;
         }
     }
 

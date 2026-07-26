@@ -27,7 +27,7 @@ const INITIAL_TRUST: f64 = 0.5;
 const _DECAY_DAYS: i64 = 1;
 const DECAY_RATE: f64 = 0.05;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct TrustStore {
     scores: HashMap<String, TrustScore>,
     history: Vec<Outcome>,
@@ -144,9 +144,9 @@ impl TrustStore {
     pub fn best_provider(&self) -> Option<(String, String, f64)> {
         self.scores
             .iter()
-            .filter_map(|(key, ts)| {
+            .map(|(key, ts)| {
                 let adjusted = self.apply_decay(ts);
-                Some((key.clone(), ts.provider.clone(), ts.model.clone(), adjusted))
+                (key.clone(), ts.provider.clone(), ts.model.clone(), adjusted)
             })
             .max_by(|(_, _, _, a), (_, _, _, b)| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal))
             .map(|(_, provider, model, score)| (provider, model, score))

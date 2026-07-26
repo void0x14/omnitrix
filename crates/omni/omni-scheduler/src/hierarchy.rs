@@ -32,10 +32,10 @@ impl HierarchyTree {
             return Err(HierarchyError::DuplicateNode(id));
         }
 
-        if let Some(pid) = parent_id {
-            if self.is_ancestor_of(id, pid) {
-                return Err(HierarchyError::CycleDetected { child: id, parent: pid });
-            }
+        if let Some(pid) = parent_id
+            && self.is_ancestor_of(id, pid)
+        {
+            return Err(HierarchyError::CycleDetected { child: id, parent: pid });
         }
 
         let depth = match parent_id {
@@ -60,10 +60,10 @@ impl HierarchyTree {
             depth,
         };
 
-        if let Some(pid) = parent_id {
-            if let Some(mut parent) = self.nodes.get_mut(&pid) {
-                parent.children.push(id);
-            }
+        if let Some(pid) = parent_id
+            && let Some(mut parent) = self.nodes.get_mut(&pid)
+        {
+            parent.children.push(id);
         }
 
         self.nodes.insert(id, node);
@@ -100,12 +100,11 @@ impl HierarchyTree {
     }
 
     pub fn remove_node(&self, id: &Uuid) {
-        if let Some((_, node)) = self.nodes.remove(id) {
-            if let Some(pid) = node.parent_id {
-                if let Some(mut parent) = self.nodes.get_mut(&pid) {
-                    parent.children.retain(|c| c != id);
-                }
-            }
+        if let Some((_, node)) = self.nodes.remove(id)
+            && let Some(pid) = node.parent_id
+            && let Some(mut parent) = self.nodes.get_mut(&pid)
+        {
+            parent.children.retain(|c| c != id);
         }
     }
 
@@ -163,13 +162,13 @@ impl HierarchyTree {
         }
 
         for node in self.nodes.iter() {
-            if let Some(pid) = node.parent_id {
-                if !self.nodes.contains_key(&pid) {
-                    errors.push(format!(
-                        "node {} references missing parent {}",
-                        node.id, pid
-                    ));
-                }
+            if let Some(pid) = node.parent_id
+                && !self.nodes.contains_key(&pid)
+            {
+                errors.push(format!(
+                    "node {} references missing parent {}",
+                    node.id, pid
+                ));
             }
 
             let expected_depth = self.compute_depth(node.id);
@@ -193,13 +192,13 @@ impl HierarchyTree {
                         "node {} lists missing child {}",
                         node.id, child_id
                     ));
-                } else if let Some(child) = self.nodes.get(child_id) {
-                    if child.parent_id != Some(node.id) {
-                        errors.push(format!(
-                            "node {} has child {} but child's parent is {:?}",
-                            node.id, child_id, child.parent_id
-                        ));
-                    }
+                } else if let Some(child) = self.nodes.get(child_id)
+                    && child.parent_id != Some(node.id)
+                {
+                    errors.push(format!(
+                        "node {} has child {} but child's parent is {:?}",
+                        node.id, child_id, child.parent_id
+                    ));
                 }
             }
         }

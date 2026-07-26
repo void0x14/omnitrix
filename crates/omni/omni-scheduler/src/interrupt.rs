@@ -117,10 +117,11 @@ impl InterruptBus {
     pub fn send(&self, interrupt: Interrupt) -> Result<(), broadcast::error::SendError<Interrupt>> {
         self.tx.send(interrupt.clone())?;
 
-        if let Some(ref hierarchy) = self.hierarchy {
-            if interrupt.level.propagates_to_children() && !interrupt.is_broadcast {
-                self.propagate_to_children(hierarchy, &interrupt);
-            }
+        if let Some(ref hierarchy) = self.hierarchy
+            && interrupt.level.propagates_to_children()
+            && !interrupt.is_broadcast
+        {
+            self.propagate_to_children(hierarchy, &interrupt);
         }
 
         Ok(())

@@ -154,4 +154,9 @@ async fn test_full_fallback_chain_exhaustion() {
         "expected AllFailed, got {:?}",
         result
     );
+
+    // expect_at_least(1) ancak assert() cagrilirsa dogrulanir: zincirin
+    // erken kesilmedigini, her iki saglayicinin da yoklandigini garanti eder.
+    mock_a.assert();
+    mock_b.assert();
 }
