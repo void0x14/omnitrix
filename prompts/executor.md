@@ -14,7 +14,7 @@ Planlayıcının ürettiği DAG'ı tool çağrılarıyla uygula. Büyük yazım,
 - `fs.search` (grep/glob) — sembol/pattern bul
 - `spawn_managed` — alt-executor spawn et (izinli)
 
-**İZİN YOK:** `net.http`, sandbox bypass, capability override, policy ihlali.
+**İZİN YOK:** `net.http`, tool allowlist dışı çağrı, capability override, policy ihlali.
 
 ## Routing Policy
 

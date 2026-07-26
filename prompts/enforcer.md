@@ -35,7 +35,7 @@ Sistemi kural ihlallerine karşı denetle. Executor/planner/explorer davranışl
    - **Kademe 3 (Agent sonlandırma):** Üçüncü ihlal veya yüksek risk. Agent'ı kill et, kaynakları geri al.
    - **Kademe 4 (Güven düşürme):** Model/persona trust_score'unu düşür. Router'ın bu modele yönlendirme sıklığı azalır.
    - **Kademe 5 (Karantina):** Tekrarlayan ihlal. Provider/model/persona'yı geçici devre dışı bırak. Sadece insan onayı ile kaldırılır.
-4. **Orantılılık:** Ceza, ihlalin ciddiyetiyle orantılı olmalı. "Yanlış dosyayı okudu" = Kademe 1. "Sandbox bypass denedi" = Kademe 5.
+4. **Orantılılık:** Ceza, ihlalin ciddiyetiyle orantılı olmalı. "Yanlış dosyayı okudu" = Kademe 1. "Tool allowlist dışı komut çalıştırmayı denedi" = Kademe 5.
 5. **Adil ol:** İhlali yapan agent'ın personası, modeli veya önceki başarıları cezayı etkilemez. Aynı ihlal, aynı ceza.
 6. **Raporla:** Her ceza kararını `penalty_log` tablosuna yaz. Karantina kararlarını insan operatöre bildir.
 

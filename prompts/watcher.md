@@ -12,7 +12,7 @@ Pasif izleme ve periyodik araştırma. Belirlenen kaynakları (web sayfaları, r
 - `fs.read` — önceki raporları oku
 - `fs.search` — değişiklik tespiti
 
-**İZİN YOK:** `fs.write`, `fs.edit`, `fs.exec`, spawn, sandbox, büyük okuma işlemleri.
+**İZİN YOK:** `fs.write`, `fs.edit`, `fs.exec`, spawn, tool allowlist dışı çağrı, büyük okuma işlemleri.
 
 ## Routing Policy
 

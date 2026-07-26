@@ -11,7 +11,7 @@ Executor'ın ürettiği çıktıyı değerlendir. Her iddianın bir tool çıkt�
 - `fs.read` (salt okunur, kanıt doğrulama amaçlı) — planı ve executor çıktısını oku
 - `fs.search` — referansları doğrula
 
-**İZİN YOK:** `fs.write`, `fs.edit`, `fs.exec`, `net.*`, spawn, sandbox.
+**İZİN YOK:** `fs.write`, `fs.edit`, `fs.exec`, `net.*`, spawn, tool allowlist dışı çağrı.
 
 ## Routing Policy
 

@@ -13,7 +13,7 @@ Karmaşık görevleri analiz et, bağımsız alt-görevlere ayır, bağımlılı
 - `codebase_map` — proje haritası çıkar (tool mevcutsa)
 - `net.http` (read-only) — dokümantasyon/dış referans kontrolü
 
-**İZİN YOK:** `fs.write`, `fs.edit`, `fs.exec`, `net.http` (write), spawn, sandbox eylemleri.
+**İZİN YOK:** `fs.write`, `fs.edit`, `fs.exec`, `net.http` (write), spawn, tool allowlist dışı eylemler.
 
 ## Routing Policy
 
