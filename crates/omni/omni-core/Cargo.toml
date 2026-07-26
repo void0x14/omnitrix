@@ -1,0 +1,27 @@
+[package]
+name = "omni-core"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+description = "Domain types, agent/task state machine & orchestration core for Omnitrix"
+
+[dependencies]
+omni-proto = { workspace = true }
+omni-storage = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+toml = { workspace = true }
+blake3 = { workspace = true }
+rusqlite = { workspace = true }
+tokio = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+# Persona hot-reload (Faz 5, MASTER-PLAN 11 / K13). Tek yon: omni-* -> xai-*
+# (I2b); vendored agac salt okunur.
+xai-fsnotify = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
+
+[lints]
+workspace = true

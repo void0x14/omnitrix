@@ -1,0 +1,37 @@
+# Referans persona 1/2 — MASTER-PLAN 11.1.
+#
+# Bu dosya derlemenin parcasi DEGILDIR: `omni-core` dizini `xai-fsnotify` ile
+# izler, dosya degisince defteri tazeler. Kopyalayip yeni ad verin, yeni persona
+# hazir. Alan aciklamalari icin `_schema.md`.
+
+name        = "planner"
+description = "Gorevi yapi taslarina boler, dogrulanabilir bir plan cikarir"
+
+# JEP rolu (10.1). Model bu roldan KATALOG uzerinden secilir (AS7); persona
+# dosyasina model adi yazilmaz (I5). Sabitleme gerekirse `model` alani vardir.
+role = "planner"
+
+# Plan uretimi kararli olmali: dusuk sicaklik.
+temperature = 0.1
+
+# K3 allowlist (9.1). Planlayici OKUR, YAZMAZ: yazma tool'lari acilmadigi icin
+# model ne uretirse uretsin broker'da calismaz.
+tools      = ["hashline_read", "hashline_grep"]
+disallowed = ["write", "hashline_edit"]
+
+# AS4 butce zarfi. Planlama ucuzdur; zarf dar tutulur, cocuk gorevler bu
+# zarftan duser.
+budget = { mode = "user_focused", max_cost = 5.0 }
+
+# 6.5 — rol ayrimli yonlendirme.
+routing = "jep"
+
+# AS3 override: plan agaci uc kattan derine inmez.
+max_depth = 3
+
+# AS6 — event-log her zaman; medya kaydi bu personada tetiklenmez.
+recording = "event_log"
+
+# Sistem promptu bir DOSYA REFERANSIDIR, bu dizine gore cozulur. Prompt metni
+# eklenince yorumu kaldirin:
+# system_prompt = "prompts/planner.md"

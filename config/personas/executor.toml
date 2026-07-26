@@ -1,0 +1,33 @@
+# Referans persona 2/2 — MASTER-PLAN 11.1.
+#
+# `planner`in cikardigi plani uygular. Dosya diskte durur; yeni surumu
+# kaydetmek yeterlidir, yeniden derleme YOKTUR (Faz 5 hot-reload).
+
+name        = "executor"
+description = "Plandaki adimlari uygular, degisiklikleri diske yazar"
+
+role = "executor"
+
+# Uygulama adimlari yaratici degil; sicaklik planlayicidan biraz yuksek ama
+# yine de dusuk.
+temperature = 0.2
+
+# K3 allowlist (9.1). Yazma yetkisi YALNIZCA bu personada acilir; liste disi
+# her tool broker'da reddedilir ve `capability_audit`e yazilir.
+tools = ["hashline_read", "hashline_grep", "write", "hashline_edit"]
+
+# Kabuk ve acil-kacis yolu persona duzeyinde kapalidir; acilmasi yargic
+# onayina baglidir (Faz 5 kapsami).
+disallowed = ["shell", "bash"]
+
+# AS4 — uygulama tarafi daha pahali; zarf planlayiciya gore genis.
+budget = { mode = "user_focused", max_cost = 20.0 }
+
+routing = "jep"
+
+# AS3 override: uygulayici alt gorev acabilir ama derinlesmez.
+max_depth = 2
+
+recording = "event_log"
+
+# system_prompt = "prompts/executor.md"
