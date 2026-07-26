@@ -1,0 +1,27 @@
+[package]
+name = "omni-research"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+description = "Provider-swappable research engine (surface/deep/ocean) for Omnitrix"
+
+[dependencies]
+omni-proto = { workspace = true }
+omni-storage = { workspace = true }
+# I2b: hazir MCP tasimasi (Firecrawl/Exa) buradan gelir; xai-* salt okunur.
+xai-grok-mcp = { workspace = true }
+async-trait = { workspace = true }
+chrono = { workspace = true }
+rusqlite = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+uuid = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
+
+[lints]
+workspace = true
