@@ -6,11 +6,14 @@ license.workspace = true
 description = "Tool brokering, diff-stream fs shim & tool wiring for Omnitrix"
 
 [dependencies]
+omni-storage = { workspace = true }
+dunce = { workspace = true }
 xai-tool-runtime = { workspace = true }
 xai-grok-tools = { workspace = true }
 xai-hunk-tracker = { workspace = true }
 xai-gix-status = { workspace = true }
 async-trait = { workspace = true }
+chrono = { workspace = true }
 tokio = { workspace = true }
 thiserror = { workspace = true }
 tracing = { workspace = true }
