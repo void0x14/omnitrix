@@ -7020,10 +7020,16 @@ dependencies = [
 name = "omni-agent"
 version = "0.1.0"
 dependencies = [
+ "async-trait",
  "omni-tools",
+ "serde",
+ "serde_json",
  "thiserror 2.0.18",
+ "tokio",
  "xai-chat-state",
  "xai-grok-agent",
+ "xai-grok-compaction",
+ "xai-token-estimation",
 ]
 
 [[package]]
@@ -7094,8 +7100,10 @@ name = "omni-core"
 version = "0.1.0"
 dependencies = [
  "blake3",
+ "fastrace",
  "omni-proto",
  "omni-storage",
+ "parking_lot",
  "rusqlite",
  "serde",
  "serde_json",
@@ -7105,6 +7113,7 @@ dependencies = [
  "toml",
  "tracing",
  "xai-fsnotify",
+ "xai-tracing",
 ]
 
 [[package]]
@@ -7254,12 +7263,16 @@ dependencies = [
  "thiserror 2.0.18",
  "tokio",
  "tokio-util",
+ "toml",
  "tracing",
  "uuid",
  "xai-chat-state",
  "xai-grok-agent",
  "xai-grok-compaction",
+ "xai-grok-sampler",
  "xai-grok-tools",
+ "xai-interjection-core",
+ "xai-prompt-queue",
  "xai-system-power",
  "xai-tool-runtime",
  "zstd",
@@ -7292,27 +7305,38 @@ dependencies = [
 name = "omni-tests"
 version = "0.1.0"
 dependencies = [
+ "async-trait",
  "axum",
  "chrono",
  "eventsource-stream",
  "futures",
  "mockito",
+ "omni-agent",
+ "omni-backup",
+ "omni-config",
  "omni-control",
+ "omni-core",
+ "omni-notify",
  "omni-proto",
  "omni-provider",
+ "omni-record",
+ "omni-research",
  "omni-router",
  "omni-scheduler",
  "omni-storage",
  "omni-tools",
+ "omni-webui",
  "reqwest 0.12.24",
  "rusqlite",
  "serde_json",
  "tempfile",
  "tokio",
  "tokio-tungstenite 0.27.0",
+ "tokio-util",
  "uuid",
  "xai-chat-state",
  "xai-grok-agent",
+ "xai-grok-sampler",
  "xai-grok-tools",
 ]
 
@@ -7321,16 +7345,26 @@ name = "omni-tools"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "base64",
  "chrono",
  "dunce",
  "omni-storage",
+ "schemars 1.0.4",
+ "serde",
+ "serde_json",
+ "tempfile",
  "thiserror 2.0.18",
  "tokio",
  "tracing",
+ "xai-codebase-graph",
+ "xai-computer-hub-core",
+ "xai-fast-worktree",
  "xai-gix-status",
  "xai-grok-tools",
  "xai-hunk-tracker",
+ "xai-tool-protocol",
  "xai-tool-runtime",
+ "xai-tool-types",
 ]
 
 [[package]]

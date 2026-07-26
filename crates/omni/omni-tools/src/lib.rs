@@ -5,12 +5,15 @@
 //! amaca hizmet eder — ajanin dis dunyaya dokundugu TEK yol bu crate'ten gecer.
 
 pub mod broker;
+pub mod computer;
 pub mod diff;
 pub mod error;
 pub mod fs_shim;
+pub mod learn;
 pub mod registry;
 pub mod shell;
 pub mod status;
+pub mod worktree;
 
 pub use error::ToolsError;
 

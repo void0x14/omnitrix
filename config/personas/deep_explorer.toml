@@ -1,0 +1,32 @@
+# Persona: deep_explorer — MASTER-PLAN 11.1 semasi.
+#
+# Derin kod analizi: bagimlilik grafigi, veri akisi, trait/interface hiyerarsisi.
+# Kalite > hiz. Kod DEGISTIRMEZ; yalnizca analiz raporu uretir.
+
+name        = "deep_explorer"
+description = "Bagimlilik grafigini ve veri akisini cikarir, mimari pattern ve kod kokularini kanitla raporlar"
+
+system_prompt = "../../prompts/deep_explorer.md"
+
+# Rol -> model katalogdan cozulur (AS7, I5). Derin analiz genis baglam ve guclu
+# muhakeme ister; `planner` baglamasi bu profili tasir.
+role = "planner"
+
+# Statik analiz kararli olmali: dusuk sicaklik.
+temperature = 0.1
+
+# K3 allowlist (9.1). Tam dosya okuma + regex arama yeter; ag kapalidir, analiz
+# yalnizca depo icerigi uzerinden yurur.
+tools      = ["hashline_read", "hashline_grep"]
+disallowed = ["write", "hashline_edit", "shell", "bash", "web_search", "web_fetch"]
+
+# AS4 — derin analiz cok cagri demektir; zarf explorer'a gore genis.
+budget = { mode = "user_focused", max_cost = 12.0 }
+
+# 6.5 — kalite oncelikli dagitim: agirlik guclu saglayiciya kayar.
+routing = "weighted"
+
+# AS3 override: analizi alt parcalara bolebilir ama derinlesmez.
+max_depth = 2
+
+recording = "event_log"

@@ -11,9 +11,15 @@ xai-chat-state = { workspace = true }
 # Faz 3: Bolum 2 `SubagentBackend` sozlesmesi ve tipleri (I2 tek yon: salt okuma).
 xai-grok-tools = { workspace = true }
 xai-tool-runtime = { workspace = true }
+# AS2 (Bolum 2): mid-stream abort. Interjection tamponu + sentetik kullanici
+# mesaji bicimlemesi burada; taseri kesen `SamplerHandle::cancel` sampler'da.
+xai-interjection-core = { workspace = true }
+xai-grok-sampler = { workspace = true }
 tokio = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
+# AS13 problem-sure kural tablosu (`duration.rs`) config/duration.toml'u okur.
+toml = { workspace = true }
 thiserror = { workspace = true }
 tracing = { workspace = true }
 uuid = { workspace = true }
@@ -29,6 +35,9 @@ tokio-util = { workspace = true }
 libc = { workspace = true }
 omni-storage = { workspace = true }
 omni-proto = { workspace = true }
+# 19.1: ajana calisirken mesaj enjekte — kuyruk satiri + birlestirme kurallari
+# tek yerden gelir (I2 tek yon: salt okuma).
+xai-prompt-queue = { workspace = true }
 xai-system-power = { workspace = true }
 # Kok Cargo.toml'da [workspace.dependencies] girdisi yok; depodaki diger
 # tuketiciler de (xai-chat-state, xai-grok-shell) path ile bagliyor.

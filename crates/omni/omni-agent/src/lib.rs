@@ -6,6 +6,7 @@
 //! Onemli: `Agent`'in `run`/`turn`/`step` metodu YOKTUR. O bir sistem promptu +
 //! `ToolBridge` + politika demetidir; tur dongusu omni-router'a aittir.
 
+pub mod compaction;
 pub mod definition;
 pub mod error;
 pub mod session;

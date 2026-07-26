@@ -1,0 +1,206 @@
+# MASTER-PLAN Bolum 1.3 zorlama noktasi: "CI + omni-bench".
+#
+# Kapilar (hepsi bloklayici, ihlal = kirmizi):
+#   invariants  bin/ci-gates.sh -> I1 / I2a / I2b / I4 / I5 / I7 / IP (+ I6 raporu)
+#   build       cargo check --workspace --all-targets
+#               cargo clippy --no-deps -- -D warnings (SADECE omni-* crate'leri)
+#               cargo test --workspace
+#   bench       cargo run -p omni-bench -> cold-start / shutdown / RSS esikleri (I1)
+#
+# Neden clippy paket listesi var: crates/common + crates/codegen VENDORED'dir
+# (I2), oradaki uyarilar duzeltilemez; -D warnings o agaca yayilamaz. Liste
+# bin/ci-gates.sh --list-crates ile crates/omni/*/Cargo.toml'dan turetilir —
+# tek kaynak orasi, burada elle kopya tutulmaz.
+#
+# Rust surumu rust-toolchain.toml'dan gelir (1.92.0); rustup shim'i otomatik
+# uygular, burada surum sabitlenmez ki iki dosya ayrisamasin.
+
+name: CI
+
+on:
+  push:
+    branches: [main, masterplan]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+  RUST_BACKTRACE: 1
+  # xai-proto-build once $PROTOC'a bakar; bin/protoc dotslash sarmalayicisi
+  # runner'da cozulemeyecegi icin sistem protoc'u dogrudan gosterilir.
+  PROTOC: /usr/bin/protoc
+
+jobs:
+  # --- Invariant taramalari: derleme beklemeden hizli sinyal ----------------
+  invariants:
+    name: invariants (I1/I2/I4/I5/I7/IP)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      # I2a vendored diff karsilastirmasi tam gecmis ister; sig kopya
+      # (fetch-depth 1) ile "Synced from monorepo" bazi bulunamaz.
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # I2a referansi: once upstream/main, olmazsa son senkron commit'i.
+      # upstream deposu ozel/erisimsiz olabilir — o durumda bu adim sessizce
+      # yedege duser ve OMNI_VENDOR_BASE'i ortama yazar. Depo degiskeni
+      # (vars.OMNI_VENDOR_BASE) verilmisse her seyi ezer.
+      - name: I2a vendored baz commit
+        shell: bash
+        # Depo degiskeni script'e dogrudan enterpole edilmez (kabuk enjeksiyonu);
+        # ortam degiskeni uzerinden okunur.
+        env:
+          VENDOR_BASE_VAR: ${{ vars.OMNI_VENDOR_BASE }}
+        run: |
+          set -euo pipefail
+          base="${VENDOR_BASE_VAR:-}"
+
+          if [[ -z "$base" ]]; then
+            git remote add upstream https://github.com/xai-org/grok-build.git 2>/dev/null || true
+            if git fetch --no-tags --depth=1 upstream main 2>/dev/null; then
+              base="$(git rev-parse FETCH_HEAD)"
+              echo "upstream/main bulundu: $base"
+            fi
+          else
+            echo "vars.OMNI_VENDOR_BASE kullaniliyor: $base"
+          fi
+
+          if [[ -z "$base" ]]; then
+            base="$(git log --format='%H %s' -n 200 \
+                    | awk '$0 ~ / Synced from monorepo$/ { print $1; exit }')"
+            echo "upstream yok; son senkron commit'i baz alindi: ${base:-<yok>}"
+          fi
+
+          if [[ -z "$base" ]]; then
+            echo "::error::I2a baz commit'i bulunamadi. Depo degiskeni" \
+                 "OMNI_VENDOR_BASE ile son 'Synced from monorepo' commit'ini verin."
+            exit 1
+          fi
+          echo "OMNI_VENDOR_BASE=$base" >> "$GITHUB_ENV"
+
+      - name: bin/ci-gates.sh
+        run: bash bin/ci-gates.sh
+
+  # --- Derleme + lint + test ------------------------------------------------
+  build:
+    name: check · clippy · test
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+
+      # Native bagimliliklar: protoc (xai-proto-build), cmake+clang
+      # (aws-lc-sys / clang-sys), alsa (ses), sqlite/ssl basliklari.
+      - name: sistem bagimliliklari
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            protobuf-compiler cmake clang libclang-dev \
+            pkg-config libssl-dev libasound2-dev
+
+      # Surum rust-toolchain.toml'dan (kanal 1.92.0, components = clippy+rustfmt):
+      # 'rustup show' dosyayi okuyup toolchain'i kurar. Burada surum yazilmaz.
+      - name: rust toolchain (rust-toolchain.toml)
+        run: |
+          rustup show active-toolchain || rustup toolchain install
+          rustup component add clippy
+          rustc --version
+          cargo --version
+          cargo clippy --version
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: omnitrix-ci
+
+      - name: cargo check --workspace --all-targets
+        run: cargo check --workspace --all-targets --locked
+
+      # -D warnings SADECE omni-* paketlerinde; --no-deps bagimliliklara
+      # (vendored xai-*) yayilmasini engeller (I2).
+      - name: cargo clippy -D warnings (omni-* crate'leri)
+        shell: bash
+        run: |
+          set -euo pipefail
+          pkg_args=()
+          while read -r crate; do
+            [[ -n "$crate" ]] && pkg_args+=(-p "$crate")
+          done < <(bash bin/ci-gates.sh --list-crates)
+          printf 'clippy paketleri: %s\n' "${pkg_args[*]}"
+          cargo clippy "${pkg_args[@]}" --all-targets --no-deps --locked -- -D warnings
+
+      - name: cargo test --workspace
+        run: cargo test --workspace --locked
+
+      # Faz 0 kapisi: ikili gercekten calisiyor mu.
+      - name: omnitrix --version
+        run: cargo run --locked -q -p omnitrix -- --version
+
+  # --- Faz kapisi olcumleri (I1: komut + metrik + esik) ---------------------
+  # Esik asilirsa omni-bench 1 ile doner ve is kirmizi olur.
+  bench:
+    name: omni-bench (cold-start · shutdown · RSS)
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    needs: [build, invariants]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: sistem bagimliliklari
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            protobuf-compiler cmake clang libclang-dev \
+            pkg-config libssl-dev libasound2-dev
+
+      - name: rust toolchain (rust-toolchain.toml)
+        run: |
+          rustup show active-toolchain || rustup toolchain install
+          rustc --version
+
+      # Olcum release ikilisiyle yapilir; debug artefaktlariyla ayni onbellek
+      # anahtarini paylasmaz.
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: omnitrix-bench-release
+
+      # Olcum DAIMA release profiliyle yapilir: debug ikilisi cold-start
+      # esigini anlamsizlastirir (benches/run.sh ile ayni kural).
+      - name: release ikilileri
+        run: cargo build --release --locked -p omnitrix -p omni-bench
+
+      # Esikler benches/thresholds.json'dan gelir (MASTER-PLAN 8.1/8.2:
+      # cold-start 100ms/400ms, shutdown 50ms, RSS tavani). Paylasimli
+      # runner gurultusu icin ornekleme sayisi depo degiskeniyle
+      # ayarlanabilir; ESIKLER degistirilmez.
+      - name: cargo run -p omni-bench (faz kapisi esikleri)
+        shell: bash
+        env:
+          OMNI_BENCH_EXTRA_ARGS: ${{ vars.OMNI_BENCH_EXTRA_ARGS }}
+        run: |
+          set -euo pipefail
+          # Kasitli kelime bolme: degisken ek bayrak listesi tasir.
+          # shellcheck disable=SC2086
+          cargo run --release --locked -q -p omni-bench -- \
+            --bin target/release/omnitrix \
+            --config-dir config \
+            --thresholds benches/thresholds.json \
+            --json bench-report.json \
+            ${OMNI_BENCH_EXTRA_ARGS:-}
+
+      - name: olcum raporu
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: omni-bench-report
+          path: bench-report.json
+          if-no-files-found: warn

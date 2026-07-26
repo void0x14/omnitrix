@@ -16,7 +16,10 @@
 
 #![forbid(unsafe_code)]
 
+pub mod observability;
+pub mod oracle;
 pub mod persona;
+pub mod selfhost;
 pub mod state;
 
 pub use omni_proto as proto;

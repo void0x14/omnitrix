@@ -1,0 +1,34 @@
+# Persona: quick_fix — MASTER-PLAN 11.1 semasi.
+#
+# Mikro-fix: import hatasi, tip uyusmazligi, kirik referans. 1-5 satirlik
+# degisiklikler. Buyuyen isi `executor`a devreder.
+
+name        = "quick_fix"
+description = "Kucuk hatalari minimal degisiklikle duzeltir, buyuyen isi executor'a devreder"
+
+system_prompt = "../../prompts/quick_fix.md"
+
+# Rol -> model katalogdan cozulur (AS7, I5). Diske yazan her persona gibi
+# uygulama roluyle baglanir.
+role = "executor"
+
+# Hedefli duzeltme; yaraticiliga yer yok.
+temperature = 0.1
+
+# K3 allowlist (9.1). Yazma yetkisi acik ama dar kullanilir: `hashline_edit`
+# hedefli duzeltme, `write` yalnizca yeni test dosyasi icin.
+tools = ["hashline_read", "hashline_grep", "hashline_edit", "write"]
+
+# Kabuk ve ag kapalidir: mikro-fix ne komut calistirir ne bagimlilik ekler.
+disallowed = ["shell", "bash", "web_search", "web_fetch"]
+
+# AS4 — degisiklik kucuk, cagri sayisi az; zarf executor'un cok altinda.
+budget = { mode = "user_focused", max_cost = 4.0 }
+
+# 6.5 — once hizli saglayici; cozemezse zincirde bir alta inilir.
+routing = "fallback"
+
+# AS3 override: mikro-fix alt gorev acmaz.
+max_depth = 1
+
+recording = "event_log"

@@ -15,3 +15,15 @@ events = true
 
 [notify]
 escalation = true
+
+# Gozlemlenebilirlik (AS9, Bolum 16). Yuksek RAM: tam ornekleme, uzun
+# retention, Prometheus sergilemesi acik. otlp_endpoint verilirse xai-tracing
+# uzerinden fastrace raportoru kurulur (verilmezse yerel defter yeter).
+[observability]
+enabled = true
+sampling_ratio = 1.0
+retention_secs = 3600
+max_series = 4096
+prometheus = true
+service_name = "omnitrix"
+# otlp_endpoint = "http://127.0.0.1:4317"

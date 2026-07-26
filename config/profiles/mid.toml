@@ -15,3 +15,14 @@ events = true
 
 [notify]
 escalation = false
+
+# Gozlemlenebilirlik (AS9, Bolum 16). Orta RAM: seyrek ornekleme, kisa
+# retention, Prometheus kapali. sampling_ratio 0.0..=1.0; retention_secs = 0
+# sinirsiz demektir; max_series = 0 tavansiz demektir.
+[observability]
+enabled = true
+sampling_ratio = 0.1
+retention_secs = 900
+max_series = 512
+prometheus = false
+service_name = "omnitrix"

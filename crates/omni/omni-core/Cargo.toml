@@ -16,6 +16,12 @@ rusqlite = { workspace = true }
 tokio = { workspace = true }
 thiserror = { workspace = true }
 tracing = { workspace = true }
+parking_lot = { workspace = true }
+# Gozlemlenebilirlik (AS9, Bolum 16): span/trace govdesi. `xai-tracing` kok
+# baglami + OTLP raportorunu verir, `fastrace` span tipini adlandirmak icin
+# dogrudan gerekir. Tek yon: omni-* -> xai-* (I2b).
+xai-tracing = { workspace = true }
+fastrace = { workspace = true }
 # Persona hot-reload (Faz 5, MASTER-PLAN 11 / K13). Tek yon: omni-* -> xai-*
 # (I2b); vendored agac salt okunur.
 xai-fsnotify = { workspace = true }

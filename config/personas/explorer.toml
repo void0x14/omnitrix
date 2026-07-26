@@ -1,0 +1,32 @@
+# Persona: explorer — MASTER-PLAN 11.1 semasi.
+#
+# Hizli kesif: dizin yapisi, kilit dosyalar, kullanilan pattern'ler. Genis ama
+# sig tarama yapar; derin analiz `deep_explorer`in isidir.
+
+name        = "explorer"
+description = "Codebase'i hizla tarar, dizin yapisini ve kilit dosyalari cikarip kisa ozet uretir"
+
+system_prompt = "../../prompts/explorer.md"
+
+# Rol -> model katalogdan cozulur (AS7, I5). Kesif ucuz ve hizli olmali;
+# `summary` rolu katalogda en dusuk gecikmeli baglamadir.
+role = "summary"
+
+# Ozetleme biraz esneklik ister ama uydurma istemez.
+temperature = 0.2
+
+# K3 allowlist (9.1). Salt okuma + arama; web dokumantasyonu icin okuma-yalnizca
+# ag araclari acik.
+tools      = ["hashline_read", "hashline_grep", "web_search", "web_fetch"]
+disallowed = ["write", "hashline_edit", "shell", "bash"]
+
+# AS4 — hiz kritik, tarama sig; zarf dar tutulur.
+budget = { mode = "user_focused", max_cost = 2.0 }
+
+# 6.5 — hiz oncelikli dagitim; canli anahtarlar arasinda sirayla gidilir.
+routing = "round_robin"
+
+# AS3 override: kesif tek katta biter, alt gorev acmaz.
+max_depth = 1
+
+recording = "event_log"

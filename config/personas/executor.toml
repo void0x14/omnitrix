@@ -30,4 +30,5 @@ max_depth = 2
 
 recording = "event_log"
 
-# system_prompt = "prompts/executor.md"
+# Sistem promptu DOSYA REFERANSIDIR, persona dizinine gore cozulur.
+system_prompt = "../../prompts/executor.md"

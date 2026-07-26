@@ -1,0 +1,33 @@
+# Persona: watcher — MASTER-PLAN 11.1 semasi.
+#
+# 7/24 pasif izleme: belirlenen kaynaklari periyodik kontrol eder, degisiklik
+# gorunce raporlar. Dusuk frekans, dusuk maliyet, uzun omur.
+
+name        = "watcher"
+description = "Kaynaklari periyodik izler, degisiklik ve firsat/tehdit tespitini dusuk maliyetle raporlar"
+
+system_prompt = "../../prompts/watcher.md"
+
+# Rol -> model katalogdan cozulur (AS7, I5). Izleme isi arama-agirlikli oldugu
+# icin `web_search` baglamasi kullanilir.
+role = "web_search"
+
+# Tespit isi; yorum degil. Sicaklik dusuk.
+temperature = 0.2
+
+# K3 allowlist (9.1). Okuma-yalnizca ag + onceki raporlari okuma. Yazma yoktur:
+# rapor bildirim yoluna cikar, diske persona yazmaz.
+tools      = ["hashline_read", "hashline_grep", "web_search", "web_fetch"]
+disallowed = ["write", "hashline_edit", "shell", "bash"]
+
+# AS4 — surekli calisan bir personada zarf SONLU tutulur; `autonomous` modu kok
+# butceyi sonsuza acar (7.4) ve pasif izleme bunu gerektirmez.
+budget = { mode = "user_focused", max_cost = 2.0 }
+
+# 6.5 — ucuz saglayici once denenir, hata olursa zincirde bir alta inilir.
+routing = "fallback"
+
+# AS3 override: izleyici alt gorev acmaz.
+max_depth = 1
+
+recording = "event_log"

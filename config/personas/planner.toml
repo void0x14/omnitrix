@@ -32,6 +32,6 @@ max_depth = 3
 # AS6 — event-log her zaman; medya kaydi bu personada tetiklenmez.
 recording = "event_log"
 
-# Sistem promptu bir DOSYA REFERANSIDIR, bu dizine gore cozulur. Prompt metni
-# eklenince yorumu kaldirin:
-# system_prompt = "prompts/planner.md"
+# Sistem promptu bir DOSYA REFERANSIDIR, bu dizine gore cozulur. Prompt defteri
+# depo kokunde durdugu icin iki seviye yukari cikilir.
+system_prompt = "../../prompts/planner.md"

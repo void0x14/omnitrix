@@ -18,6 +18,17 @@ tempfile = { workspace = true }
 tokio = { workspace = true }
 
 [dev-dependencies]
+omni-webui = { workspace = true }
+omni-config = { workspace = true }
+omni-backup = { workspace = true }
+omni-record = { workspace = true }
+omni-research = { workspace = true }
+omni-notify = { workspace = true }
+omni-core = { workspace = true }
+omni-agent = { workspace = true }
+xai-grok-sampler = { workspace = true }
+async-trait = { workspace = true }
+tokio-util = { workspace = true }
 omni-control = { workspace = true }
 omni-proto = { workspace = true }
 omni-tools = { workspace = true }
@@ -59,3 +70,15 @@ path = "../../../tests/ui_parity.rs"
 [[test]]
 name = "diff_visibility"
 path = "../../../tests/diff_visibility.rs"
+
+[[test]]
+name = "grounding_redteam"
+path = "../../../tests/grounding_redteam.rs"
+
+[[test]]
+name = "tool_allowlist_redteam"
+path = "../../../tests/tool_allowlist_redteam.rs"
+
+[[test]]
+name = "interrupt_granularity"
+path = "../../../tests/interrupt_granularity.rs"

@@ -19,6 +19,8 @@
 //! raporlanir; kapiya vurulan deger harici duvar saatidir (exec maliyetini de
 //! icerdigi icin daha muhafazakar).
 
+mod soak;
+
 use std::collections::BTreeMap;
 use std::fs::{File, OpenOptions};
 use std::io::{BufRead, BufReader, Seek, SeekFrom, Write};
@@ -1057,6 +1059,10 @@ fn main() {
 /// `Ok(true)` => tum kapilar yesil.
 fn run() -> anyhow::Result<bool> {
     let raw: Vec<String> = std::env::args().skip(1).collect();
+    // Alt-komut: soak 7/24 uzun-kosu (Bolum 20 kesisen kapi) — kendi ayristiricisi var.
+    if raw.first().is_some_and(|a| a == "soak") {
+        return soak::main_subcommand(&raw[1..]);
+    }
     let Some(args) = parse_args(raw)? else {
         return Ok(true);
     };

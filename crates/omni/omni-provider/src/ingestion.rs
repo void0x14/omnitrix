@@ -678,12 +678,12 @@ impl KeyFeeder {
         match self.probe_models(&provider, key).await {
             ProbeOutcome::Live { models } => {
                 // Ucuz yol: on-ek + canli /models dogrulamasi yeterli.
-                if self.strict {
-                    if let Some(model_id) = models.first().map(|m| m.name.clone()) {
-                        let (liveness, detail) =
-                            self.probe_completion(&provider, key, &model_id).await;
-                        return self.finalize(provider, liveness, VerifyTier::Completion, detail);
-                    }
+                if self.strict
+                    && let Some(model_id) = models.first().map(|m| m.name.clone())
+                {
+                    let (liveness, detail) =
+                        self.probe_completion(&provider, key, &model_id).await;
+                    return self.finalize(provider, liveness, VerifyTier::Completion, detail);
                 }
                 self.finalize(provider, Liveness::Live, VerifyTier::Models, "models ok".into())
             }
@@ -912,10 +912,10 @@ impl KeyFeeder {
                 Liveness::Live => {
                     report.live += 1;
                     // Canli anahtarin GERCEK degeri keyring'e; DB yalniz key_ref.
-                    if let Some(km) = key_manager {
-                        if let Err(e) = km.store_key(&key_ref, &raw.value).await {
-                            report.errors.push(format!("keyring store failed: {e}"));
-                        }
+                    if let Some(km) = key_manager
+                        && let Err(e) = km.store_key(&key_ref, &raw.value).await
+                    {
+                        report.errors.push(format!("keyring store failed: {e}"));
                     }
                 }
                 Liveness::Dead => {
@@ -1059,12 +1059,12 @@ fn read_raw_keys(source: &FeedSource) -> Result<Vec<RawKey>, IngestionError> {
             "unsafe table/column identifier in feed source".into(),
         ));
     }
-    if let Some(label) = &source.label_column {
-        if !is_safe_ident(label) {
-            return Err(IngestionError::Parse(
-                "unsafe label column identifier in feed source".into(),
-            ));
-        }
+    if let Some(label) = &source.label_column
+        && !is_safe_ident(label)
+    {
+        return Err(IngestionError::Parse(
+            "unsafe label column identifier in feed source".into(),
+        ));
     }
 
     let conn = Connection::open_with_flags(

@@ -1,0 +1,33 @@
+# Persona: enforcer — MASTER-PLAN 11.1 semasi.
+#
+# Kural ihlallerini tespit eder, interrupt kademelerini uygular, karantina
+# karari verir. Normal arac kullanmaz: denetim kayitlarini okur, karari
+# kontrol duzlemine yazar (`omni-control`), kod yoluna dokunmaz.
+
+name        = "enforcer"
+description = "Capability ihlallerini denetler, interrupt kademesi ve karantina kararini uygular"
+
+system_prompt = "../../prompts/enforcer.md"
+
+# Rol -> model katalogdan cozulur (AS7, I5). Ihlal karari yargi isidir.
+role = "judge"
+
+# Ceza karari kararli olmali: sicaklik tabanda.
+temperature = 0.0
+
+# K3 allowlist (9.1). Yalnizca denetim izini okur ve gecmis ihlalleri tarar.
+# Interrupt/karantina yetkisi bir MODEL ARACI DEGILDIR: karar kontrol duzlemi
+# API'sinden yurur, bu yuzden allowlist salt okunur kalir.
+tools      = ["hashline_read", "hashline_grep"]
+disallowed = ["write", "hashline_edit", "shell", "bash", "web_search", "web_fetch"]
+
+# AS4 — cikti kisadir (ihlal + kademe + gerekce); zarf dar.
+budget = { mode = "user_focused", max_cost = 3.0 }
+
+# 6.5 — rol ayrimli yonlendirme.
+routing = "jep"
+
+# AS3 override: denetci alt gorev acmaz.
+max_depth = 1
+
+recording = "event_log"

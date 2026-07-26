@@ -1,0 +1,37 @@
+# Persona: judge — MASTER-PLAN 11.1 semasi, 10.1 JEP rolu.
+#
+# Executor ciktisini rubric + zorunlu kanit alintisiyla puanlar (10.3 grounding).
+# Dosya diskte durur; derleme YOKTUR, kaydetmek yeterlidir (Faz 5 hot-reload).
+# Alan aciklamalari icin `_schema.md`.
+
+name        = "judge"
+description = "Executor ciktisini rubric ve zorunlu kanit alintisiyla puanlar, kanitsiz iddiayi reddeder"
+
+# Sistem promptu DOSYA REFERANSIDIR ve persona dizinine gore cozulur; prompt
+# defteri depo kokunde durdugu icin iki seviye yukari cikilir.
+system_prompt = "../../prompts/judge.md"
+
+# JEP rolu (10.1). Model bu roldan KATALOG uzerinden secilir (AS7); persona
+# dosyasina model adi yazilmaz (I5).
+role = "judge"
+
+# Yargi kararli olmali: sicaklik tabanda. Ayni kanit ayni puani vermeli.
+temperature = 0.0
+
+# K3 allowlist (9.1). Yargic SALT OKURDUR: kanit dogrulamak icin okur ve arar,
+# hicbir sey yazmaz. Liste disi cagri broker'da reddedilir ve `capability_audit`e
+# yazilir.
+tools      = ["hashline_read", "hashline_grep"]
+disallowed = ["write", "hashline_edit", "shell", "bash", "web_search", "web_fetch"]
+
+# AS4 — cikti kisadir (puan + gerekce); zarf dar.
+budget = { mode = "user_focused", max_cost = 3.0 }
+
+# 6.5 — rol ayrimli yonlendirme; judge modeli dogrudan secilir.
+routing = "jep"
+
+# AS3 override: yargic alt gorev acmaz, tek katta karar verir.
+max_depth = 1
+
+# AS6 — event-log her zaman acik; medya bu personada tetiklenmez.
+recording = "event_log"

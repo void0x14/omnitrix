@@ -15,3 +15,13 @@ events = true
 
 [notify]
 escalation = false
+
+# Gozlemlenebilirlik (AS9, Bolum 16). Low profilde tamamen KAPALI: K2 RAM
+# disiplini. Bu blokta enabled = true yazilsa bile omni-core kapali kabul eder.
+[observability]
+enabled = false
+sampling_ratio = 0.0
+retention_secs = 0
+max_series = 0
+prometheus = false
+service_name = "omnitrix"
