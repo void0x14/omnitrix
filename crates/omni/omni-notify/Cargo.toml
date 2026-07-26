@@ -14,6 +14,19 @@ thiserror = { workspace = true }
 tracing = { workspace = true }
 async-trait = { workspace = true }
 anyhow = { workspace = true }
+# Bolum 13: bildirim esigi omni-proto'daki NoticeLevel ile karsilastirilir,
+# Telegram komutlari omni-proto'daki Command'a cevrilir (I3 — tek durum kaynagi).
+omni-proto = { workspace = true }
+# Faz 6 "arama" kanali: dil katalogu + ses ucu ayarlari buradan gelir (I2b).
+# `default-features = false` -> mikrofon yakalama derlenmez; bildirim yolunda
+# ses *yakalama* yok, yalnizca dil/uc cozumlemesi var.
+# NOT: kok `[workspace.dependencies]` icinde `xai-grok-voice` girdisi yok
+# (crate yalnizca `members` listesinde). Kok Cargo.toml'a dokunmamak icin
+# burada path ile baglaniyor; kok girdi eklendiginde `workspace = true` olur.
+xai-grok-voice = { path = "../../codegen/xai-grok-voice", default-features = false }
+chrono = { workspace = true, features = ["serde"] }
+parking_lot = { workspace = true }
+zeroize = { workspace = true }
 
 [lints]
 workspace = true
