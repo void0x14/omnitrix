@@ -9,6 +9,7 @@ pub mod diff;
 pub mod error;
 pub mod fs_shim;
 pub mod registry;
+pub mod shell;
 pub mod status;
 
 pub use error::ToolsError;
