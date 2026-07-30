@@ -100,7 +100,8 @@ elif ! git rev-parse --verify --quiet "${VENDOR_BASE}^{commit}" >/dev/null; then
   # cikti + hata verir, kapi sahte yesile donerdi. Acikca kirmizi olsun.
   fail "I2a: baz commit cozulemedi: $VENDOR_BASE (fetch-depth 0 ve gecerli SHA gerekir)"
 else
-  if ! vendor_diff=$(git diff --name-only "$VENDOR_BASE" -- crates/common crates/codegen); then
+  if ! vendor_diff=$(git diff --name-only "$VENDOR_BASE" -- crates/common crates/codegen \
+    | grep -vE '^(crates/codegen/xai-grok-telemetry/|crates/codegen/xai-mixpanel/|crates/codegen/xai-grok-shell/src/(agent/config|auth/credential_provider|extensions/feedback)\.rs)'); then
     fail "I2a: vendored diff hesaplanamadi ($VENDOR_BASE)"
   elif [[ -n "$vendor_diff" ]]; then
     fail "I2a: xai-* vendored agac duzenlenmis ($VENDOR_BASE'e gore):"
@@ -262,6 +263,66 @@ for crate in "${OMNI_CRATES[@]}"; do
   i6_count=$((i6_count + n))
 done
 printf 'I6 (rapor): uretim yolunda unwrap/expect/panic! toplam = %s\n' "$i6_count"
+
+# --- I8: no-telemetry gate — telemetri fonksiyonlari kapali mi? -----------
+i8_fail=0
+
+# 1. Config::is_telemetry_enabled() -> false
+if grep -rnE 'is_telemetry_enabled.*->.*true' \
+  crates/codegen/xai-grok-telemetry/src/ \
+  crates/codegen/xai-grok-shell/src/agent/config.rs 2>/dev/null \
+  | grep -v '/tests/\|#\[cfg(test)\]' | grep -q .; then
+  fail "I8: is_telemetry_enabled true donuyor (telemetri acilabilir)"
+  i8_fail=1
+fi
+
+# 2. is_session_metrics_enabled() -> false (xai-grok-telemetry/src/)
+if grep -rnE 'is_session_metrics_enabled.*->.*true' \
+  crates/codegen/xai-grok-telemetry/src/ 2>/dev/null \
+  | grep -v '/tests/\|#\[cfg(test)\]' | grep -q .; then
+  fail "I8: is_session_metrics_enabled true donuyor"
+  i8_fail=1
+fi
+
+# 3. Config::is_trace_upload_enabled() -> false
+if grep -rnE 'is_trace_upload_enabled.*->.*true' \
+  crates/codegen/xai-grok-shell/src/agent/config.rs 2>/dev/null \
+  | grep -v '/tests/\|#\[cfg(test)\]' | grep -q .; then
+  fail "I8: is_trace_upload_enabled true donuyor"
+  i8_fail=1
+fi
+
+# 4. Config::is_feedback_enabled() -> false
+if grep -rnE 'is_feedback_enabled.*->.*true' \
+  crates/codegen/xai-grok-shell/src/agent/config.rs 2>/dev/null \
+  | grep -v '/tests/\|#\[cfg(test)\]' | grep -q .; then
+  fail "I8: is_feedback_enabled true donuyor"
+  i8_fail=1
+fi
+
+# 5. is_error_reporting_disabled_sync() -> true (disabled = true, false is bad)
+if grep -rnE 'is_error_reporting_disabled_sync.*->.*false' \
+  crates/codegen/xai-grok-shell/src/agent/config.rs 2>/dev/null \
+  | grep -v '/tests/\|#\[cfg(test)\]' | grep -q .; then
+  fail "I8: is_error_reporting_disabled_sync false donuyor (error reporting acilabilir)"
+  i8_fail=1
+fi
+
+# 6. is_telemetry_explicitly_disabled_sync() -> true (disabled = true)
+if grep -rnE 'is_telemetry_explicitly_disabled_sync.*->.*false' \
+  crates/codegen/xai-grok-shell/src/agent/config.rs 2>/dev/null \
+  | grep -v '/tests/\|#\[cfg(test)\]' | grep -q .; then
+  fail "I8: is_telemetry_explicitly_disabled_sync false donuyor (OTLP acilabilir)"
+  i8_fail=1
+fi
+
+if [[ $i8_fail -eq 0 ]]; then
+  pass "I8: tum telemetri fonksiyonlari kapali (no-telemetry gate yesil)"
+fi
+
+if [[ $i8_fail -ne 0 ]]; then
+  FAILED=1
+fi
 
 # --- Derleme kapilari (opsiyonel, --build) ---------------------------------
 if [[ $RUN_BUILD -eq 1 ]]; then
