@@ -1,0 +1,126 @@
+diff --git a/crates/codegen/xai-grok-shell/src/agent/config.rs b/crates/codegen/xai-grok-shell/src/agent/config.rs
+index 00cb92b..7eaa614 100644
+--- a/crates/codegen/xai-grok-shell/src/agent/config.rs
++++ b/crates/codegen/xai-grok-shell/src/agent/config.rs
+@@ -2042,7 +2042,8 @@ impl Config {
+         false
+     }
+     pub fn is_feedback_enabled(&self) -> bool {
+-        self.resolve_feedback().value
++        // **no-telemetry fork:** feedback submission to SpaceXAI permanently off.
++        false
+     }
+     pub fn is_session_recap_enabled(&self) -> bool {
+         self.resolve_session_recap().value
+@@ -2127,16 +2128,16 @@ impl Config {
+         )
+     }
+     pub(crate) fn resolve_feedback(&self) -> Resolved<bool> {
+-        let ff = self
+-            .remote_settings
+-            .as_ref()
+-            .and_then(|s| s.feedback_enabled);
+-        BoolFlag::env("GROK_FEEDBACK_ENABLED")
+-            .requirement(self.requirements.feedback.pinned())
+-            .config(self.features.feedback)
+-            .feature_flag(ff)
+-            .default(true)
+-            .resolve()
++        // **no-telemetry fork:** ignore env/config/remote/requirements. Feedback
++        // posts to SpaceXAI cli-chat-proxy cannot be re-enabled in this tree.
++        let _ = (
++            self.remote_settings
++                .as_ref()
++                .and_then(|s| s.feedback_enabled),
++            self.requirements.feedback.pinned(),
++            self.features.feedback,
++        );
++        Resolved::new(false, ConfigSource::Default)
+     }
+     pub(crate) fn resolve_two_pass_compaction(&self) -> Resolved<bool> {
+         let ff = self
+@@ -7793,13 +7794,13 @@ reasoning_effort = "low"
+     }
+     #[test]
+     #[serial]
+-    fn resolve_feedback_defaults_to_true_when_unset() {
+-        unsafe { std::env::remove_var("GROK_FEEDBACK_ENABLED") };
+-        unsafe { std::env::remove_var("GROK_TELEMETRY_ENABLED") };
++    fn resolve_feedback_always_false_in_no_telemetry_fork() {
++        unsafe { std::env::set_var("GROK_FEEDBACK_ENABLED", "true") };
+         let cfg = Config::default();
+         let r = cfg.resolve_feedback();
+-        assert!(r.value, "feedback should be true by default");
++        assert!(!r.value, "feedback must stay off even with env opt-in");
+         assert_eq!(r.source, ConfigSource::Default);
++        unsafe { std::env::remove_var("GROK_FEEDBACK_ENABLED") };
+     }
+     #[test]
+     #[serial]
+@@ -8020,7 +8021,7 @@ reasoning_effort = "low"
+     }
+     #[test]
+     #[serial]
+-    fn resolve_feedback_env_overrides_all() {
++    fn resolve_feedback_ignores_env_in_no_telemetry_fork() {
+         unsafe { std::env::set_var("GROK_FEEDBACK_ENABLED", "true") };
+         let mut cfg = Config::default();
+         cfg.features.feedback = Some(false);
+@@ -8029,13 +8030,13 @@ reasoning_effort = "low"
+             ..Default::default()
+         });
+         let r = cfg.resolve_feedback();
+-        assert_eq!(r.source, ConfigSource::Env);
+-        assert!(r.value);
++        assert_eq!(r.source, ConfigSource::Default);
++        assert!(!r.value, "env opt-in must not re-enable feedback");
+         unsafe { std::env::remove_var("GROK_FEEDBACK_ENABLED") };
+     }
+     #[test]
+     #[serial]
+-    fn resolve_feedback_config_overrides_remote_settings() {
++    fn resolve_feedback_ignores_config_in_no_telemetry_fork() {
+         unsafe { std::env::remove_var("GROK_FEEDBACK_ENABLED") };
+         let mut cfg = Config::default();
+         cfg.features.feedback = Some(true);
+@@ -8044,12 +8045,12 @@ reasoning_effort = "low"
+             ..Default::default()
+         });
+         let r = cfg.resolve_feedback();
+-        assert_eq!(r.source, ConfigSource::Config);
+-        assert!(r.value);
++        assert_eq!(r.source, ConfigSource::Default);
++        assert!(!r.value, "config opt-in must not re-enable feedback");
+     }
+     #[test]
+     #[serial]
+-    fn resolve_feedback_remote_settings_used_when_no_local() {
++    fn resolve_feedback_ignores_remote_settings_in_no_telemetry_fork() {
+         unsafe { std::env::remove_var("GROK_FEEDBACK_ENABLED") };
+         let cfg = Config {
+             remote_settings: Some(crate::util::config::RemoteSettings {
+@@ -8059,8 +8060,8 @@ reasoning_effort = "low"
+             ..Default::default()
+         };
+         let r = cfg.resolve_feedback();
+-        assert_eq!(r.source, ConfigSource::Remote);
+-        assert!(r.value);
++        assert_eq!(r.source, ConfigSource::Default);
++        assert!(!r.value, "remote settings must not re-enable feedback");
+     }
+     #[test]
+     #[serial]
+diff --git a/crates/codegen/xai-grok-shell/src/extensions/feedback.rs b/crates/codegen/xai-grok-shell/src/extensions/feedback.rs
+index 23ac58e..5b4f5e0 100644
+--- a/crates/codegen/xai-grok-shell/src/extensions/feedback.rs
++++ b/crates/codegen/xai-grok-shell/src/extensions/feedback.rs
+@@ -82,8 +82,7 @@ async fn handle_btw(agent: &MvpAgent, args: &acp::ExtRequest) -> ExtResult {
+ async fn handle_feedback(agent: &MvpAgent, args: &acp::ExtRequest) -> ExtResult {
+     if !agent.cfg.borrow().is_feedback_enabled() {
+         return Err(acp::Error::internal_error().data(
+-            "Feedback is disabled. To enable, set GROK_FEEDBACK_ENABLED=true or \
+-             [features] feedback = true in config.toml.",
++            "Feedback is permanently disabled in this no-telemetry fork.",
+         ));
+     }
+ 

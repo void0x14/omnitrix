@@ -400,7 +400,8 @@ pub fn build_default_otel_layer_config() -> xai_grok_telemetry::otel_layer::Otel
         extra_headers: endpoints.resolve_otlp_headers(),
         export_interval: endpoints.resolve_otlp_export_interval(),
         timeout: endpoints.resolve_otlp_timeout(),
-        enabled: endpoints.resolve_traces_export_enabled()
+        // **no-telemetry fork:** never export spans to SpaceXAI cli-chat-proxy.
+        enabled: false && endpoints.resolve_traces_export_enabled()
             && !crate::agent::config::is_telemetry_explicitly_disabled_sync(),
     };
     let token_header_value = grok_com_config.token_header.clone();

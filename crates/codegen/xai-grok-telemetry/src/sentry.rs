@@ -1,3 +1,7 @@
+// Helpers below are retained from upstream so rebases stay clean; this fork
+// never initializes a live Sentry client.
+#![allow(dead_code, unused_imports)]
+
 use std::borrow::Cow;
 use std::sync::Arc;
 use std::sync::OnceLock;
@@ -29,49 +33,22 @@ static CONFIG: OnceLock<Config> = OnceLock::new();
 /// Init Sentry + apply the process-wide scope tags. Call once at process
 /// start; the returned guard must outlive the process. No-op guard when
 /// `config.disabled`.
+///
+/// **no-telemetry fork:** always returns a no-op guard. Never contacts Sentry,
+/// regardless of `SENTRY_DSN` / `config.disabled`.
 pub fn init(config: Config) -> ClientInitGuard {
-    let config = CONFIG.get_or_init(|| config);
-
-    if config.disabled {
-        return sentry::init(ClientOptions::default());
-    }
-
-    let dsn = std::env::var("SENTRY_DSN")
-        .ok()
-        .or_else(|| option_env!("SENTRY_DSN").map(|s| s.to_string()))
-        .unwrap_or_default();
-
-    let scrubber = Scrubber::from_env();
-
-    let guard = sentry::init((
-        dsn.as_str(),
-        ClientOptions {
-            release: Some(config.release.into()),
-            send_default_pii: false,
-            server_name: Some("".into()),
-            attach_stacktrace: true,
-            traces_sample_rate: TRACES_SAMPLE_RATE,
-            environment: Some(environment().into()),
-            before_send: Some(Arc::new(move |event| before_send(event, &scrubber))),
-            ..Default::default()
-        },
-    ));
-
-    sentry::configure_scope(|scope| {
-        scope.set_tag("client", config.client);
-        scope.set_tag("client_version", config.client_version);
-        scope.set_tag("os", std::env::consts::OS);
-        scope.set_tag("arch", std::env::consts::ARCH);
+    let _ = CONFIG.get_or_init(|| Config {
+        disabled: true,
+        ..config
     });
-
-    guard
+    sentry::init(ClientOptions::default())
 }
 
 /// Flush in-flight events. Call before `std::process::exit` in signal handlers.
+///
+/// **no-telemetry fork:** no-op (Sentry is never initialized).
 pub fn flush_on_shutdown() {
-    if let Some(client) = sentry::Hub::current().client() {
-        client.flush(Some(FLUSH_TIMEOUT));
-    }
+    // Intentionally empty — SpaceXAI phone-home stripped in this fork.
 }
 
 // ─── Internals ─────────────────────────────────────────────────────────────

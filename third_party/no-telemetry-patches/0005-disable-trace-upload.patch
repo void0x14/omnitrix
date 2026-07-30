@@ -1,0 +1,149 @@
+diff --git a/crates/codegen/xai-grok-shell/src/agent/config.rs b/crates/codegen/xai-grok-shell/src/agent/config.rs
+index b9f2728..00cb92b 100644
+--- a/crates/codegen/xai-grok-shell/src/agent/config.rs
++++ b/crates/codegen/xai-grok-shell/src/agent/config.rs
+@@ -2038,7 +2038,8 @@ impl Config {
+         false
+     }
+     pub fn is_trace_upload_enabled(&self) -> bool {
+-        self.resolve_trace_upload().value
++        // **no-telemetry fork:** never upload session/trace artifacts to SpaceXAI GCS.
++        false
+     }
+     pub fn is_feedback_enabled(&self) -> bool {
+         self.resolve_feedback().value
+@@ -2064,20 +2065,16 @@ impl Config {
+         Resolved::new(TelemetryMode::Disabled, ConfigSource::Default)
+     }
+     pub(crate) fn resolve_trace_upload(&self) -> Resolved<bool> {
+-        let mode = self.resolve_telemetry_mode();
+-        let ff = if mode.value.is_disabled() {
+-            None
+-        } else {
++        // **no-telemetry fork:** never enable trace/session artifact upload.
++        let _ = (
++            self.resolve_telemetry_mode(),
+             self.remote_settings
+                 .as_ref()
+-                .and_then(|s| s.trace_upload_enabled)
+-        };
+-        BoolFlag::env("GROK_TELEMETRY_TRACE_UPLOAD")
+-            .requirement(self.requirements.trace_upload.pinned())
+-            .config(self.telemetry.trace_upload)
+-            .feature_flag(ff)
+-            .default(mode.value.is_enabled())
+-            .resolve()
++                .and_then(|s| s.trace_upload_enabled),
++            self.requirements.trace_upload.pinned(),
++            self.telemetry.trace_upload,
++        );
++        Resolved::new(false, ConfigSource::Default)
+     }
+     /// Resolve jemalloc heap-profile config from stored remote settings + gates.
+     pub fn resolve_jemalloc_heap_profile(
+@@ -8082,7 +8079,7 @@ reasoning_effort = "low"
+     }
+     #[test]
+     #[serial]
+-    fn resolve_trace_upload_explicit_config_wins_over_telemetry_off() {
++    fn resolve_trace_upload_ignores_explicit_opt_ins_in_no_telemetry_fork() {
+         unsafe { std::env::remove_var("GROK_TELEMETRY_ENABLED") };
+         unsafe { std::env::remove_var("GROK_TELEMETRY_TRACE_UPLOAD") };
+         let mut cfg = Config::default();
+@@ -8090,15 +8087,15 @@ reasoning_effort = "low"
+         cfg.telemetry.trace_upload = Some(true);
+         let r = cfg.resolve_trace_upload();
+         assert!(
+-            r.value,
+-            "explicit trace_upload config wins over telemetry off"
++            !r.value,
++            "explicit trace_upload config must not re-enable uploads"
+         );
+-        assert_eq!(r.source, ConfigSource::Config);
++        assert_eq!(r.source, ConfigSource::Default);
+         cfg.telemetry.trace_upload = None;
+         cfg.requirements
+             .trace_upload
+             .pin(true, crate::config::RequirementSource::Unknown);
+-        assert!(cfg.resolve_trace_upload().value);
++        assert!(!cfg.resolve_trace_upload().value);
+     }
+     #[test]
+     #[serial]
+@@ -8119,13 +8116,15 @@ reasoning_effort = "low"
+         assert_eq!(d["has_remote_settings"], serde_json::json!(true));
+         cfg.telemetry.trace_upload = Some(true);
+         let d = cfg.trace_upload_decision_debug();
+-        assert_eq!(d["trace_upload"], serde_json::json!(true));
+-        assert_eq!(d["trace_upload_source"], serde_json::json!("config"));
++        // **no-telemetry fork:** raw inputs are still reported, but the
++        // resolved decision is pinned to disabled.
++        assert_eq!(d["trace_upload"], serde_json::json!(false));
++        assert_eq!(d["trace_upload_source"], serde_json::json!("default"));
+         assert_eq!(d["in_cfg_telemetry_trace_upload"], serde_json::json!(true));
+     }
+     #[test]
+     #[serial]
+-    fn resolve_trace_upload_honors_config_when_telemetry_on() {
++    fn resolve_trace_upload_stays_off_even_with_telemetry_on() {
+         unsafe { std::env::remove_var("GROK_TELEMETRY_ENABLED") };
+         unsafe { std::env::remove_var("GROK_TELEMETRY_TRACE_UPLOAD") };
+         let mut cfg = Config::default();
+@@ -8133,10 +8132,10 @@ reasoning_effort = "low"
+         cfg.telemetry.trace_upload = Some(false);
+         let r = cfg.resolve_trace_upload();
+         assert!(!r.value);
+-        assert_eq!(r.source, ConfigSource::Config);
++        assert_eq!(r.source, ConfigSource::Default);
+         cfg.telemetry.trace_upload = None;
+         let r = cfg.resolve_trace_upload();
+-        assert!(r.value, "defaults on when telemetry fully enabled");
++        assert!(!r.value, "never defaults on in the no-telemetry fork");
+     }
+     #[test]
+     #[serial]
+diff --git a/crates/codegen/xai-grok-telemetry/src/config.rs b/crates/codegen/xai-grok-telemetry/src/config.rs
+index 867d58e..562346c 100644
+--- a/crates/codegen/xai-grok-telemetry/src/config.rs
++++ b/crates/codegen/xai-grok-telemetry/src/config.rs
+@@ -140,7 +140,7 @@ impl Default for TelemetryConfig {
+             events_api_key: None,
+             mixpanel_token: None,
+             mixpanel_enabled: false,
+-            trace_upload: None,
++            trace_upload: Some(false),
+             otel_enabled: Some(false),
+             otel_metrics_exporter: None,
+             otel_logs_exporter: None,
+@@ -154,21 +154,20 @@ impl Default for TelemetryConfig {
+ impl TelemetryConfig {
+     pub fn apply_env_overrides(&mut self) {
+         // **no-telemetry fork:** ignore env overrides that would re-enable
+-        // SpaceXAI product analytics / Mixpanel.
++        // SpaceXAI product analytics / Mixpanel / trace upload.
+         self.normalize();
+         self.events_url = None;
+         self.events_api_key = None;
+         self.mixpanel_token = None;
+         self.mixpanel_enabled = false;
++        self.trace_upload = Some(false);
+         let _ = (
+             Self::env_override("GROK_TELEMETRY_EVENTS_URL"),
+             Self::env_override("GROK_TELEMETRY_EVENTS_API_KEY"),
+             Self::env_override("GROK_TELEMETRY_MIXPANEL_TOKEN"),
+             env_bool("GROK_TELEMETRY_MIXPANEL_ENABLED"),
++            env_bool("GROK_TELEMETRY_TRACE_UPLOAD"),
+         );
+-        if let Some(value) = env_bool("GROK_TELEMETRY_TRACE_UPLOAD") {
+-            self.trace_upload = Some(value);
+-        }
+     }
+     fn normalize(&mut self) {
+         self.events_url = Self::normalize_optional_string(self.events_url.take());
+@@ -227,5 +226,6 @@ mod tests {
+         assert_eq!(cfg.events_url, None);
+         assert_eq!(cfg.events_api_key, None);
+         assert_eq!(cfg.mixpanel_token, None);
++        assert_eq!(cfg.trace_upload, Some(false));
+     }
+ }

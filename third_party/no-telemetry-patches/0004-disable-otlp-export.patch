@@ -1,0 +1,114 @@
+diff --git a/crates/codegen/xai-grok-shell/src/agent/config.rs b/crates/codegen/xai-grok-shell/src/agent/config.rs
+index eadf673..b9f2728 100644
+--- a/crates/codegen/xai-grok-shell/src/agent/config.rs
++++ b/crates/codegen/xai-grok-shell/src/agent/config.rs
+@@ -2890,11 +2890,12 @@ pub fn is_telemetry_disabled_sync() -> bool {
+ /// *explicitly* off; absence is not disabled (`.default(true)`) so remote-only
+ /// enablement still builds the OTLP exporter (the runtime gate then governs it).
+ pub fn is_telemetry_explicitly_disabled_sync() -> bool {
+-    !SyncBoolFlag::new(telemetry_enabled_from_toml)
+-        .disable_env("DISABLE_TELEMETRY")
+-        .enable_env(grok_telemetry_env_enabled)
+-        .default(true)
+-        .resolve()
++    // **no-telemetry fork:** always treat product telemetry as disabled.
++    let _ = (
++        telemetry_enabled_from_toml,
++        grok_telemetry_env_enabled as fn() -> Option<bool>,
++    );
++    true
+ }
+ /// Sync sibling of [`is_telemetry_disabled_sync`] scoped to Sentry. Inherits
+ /// from telemetry when no Sentry-specific signal is set.
+@@ -10366,12 +10367,13 @@ telemetry = "garbage"
+     }
+     #[test]
+     #[serial]
+-    fn is_telemetry_explicitly_disabled_sync_env_signals() {
++    fn is_telemetry_explicitly_disabled_sync_ignores_env_in_no_telemetry_fork() {
+         unsafe { std::env::set_var("GROK_TELEMETRY_ENABLED", "0") };
+         unsafe { std::env::remove_var("DISABLE_TELEMETRY") };
+         assert!(is_telemetry_explicitly_disabled_sync());
++        // Env opt-in must not re-arm the OTLP exporter in this fork.
+         unsafe { std::env::set_var("GROK_TELEMETRY_ENABLED", "1") };
+-        assert!(!is_telemetry_explicitly_disabled_sync());
++        assert!(is_telemetry_explicitly_disabled_sync());
+         unsafe { std::env::remove_var("GROK_TELEMETRY_ENABLED") };
+         unsafe { std::env::set_var("DISABLE_TELEMETRY", "1") };
+         assert!(is_telemetry_explicitly_disabled_sync());
+diff --git a/crates/codegen/xai-grok-shell/src/auth/credential_provider.rs b/crates/codegen/xai-grok-shell/src/auth/credential_provider.rs
+index 339870a..a116d9b 100644
+--- a/crates/codegen/xai-grok-shell/src/auth/credential_provider.rs
++++ b/crates/codegen/xai-grok-shell/src/auth/credential_provider.rs
+@@ -382,7 +382,8 @@ pub fn build_default_otel_layer_config() -> xai_grok_telemetry::otel_layer::Otel
+         extra_headers: endpoints.resolve_otlp_headers(),
+         export_interval: endpoints.resolve_otlp_export_interval(),
+         timeout: endpoints.resolve_otlp_timeout(),
+-        enabled: endpoints.resolve_traces_export_enabled()
++        // **no-telemetry fork:** never export spans to SpaceXAI cli-chat-proxy.
++        enabled: false && endpoints.resolve_traces_export_enabled()
+             && !crate::agent::config::is_telemetry_explicitly_disabled_sync(),
+     };
+     let token_header_value = grok_com_config.token_header.clone();
+diff --git a/crates/codegen/xai-grok-telemetry/src/config.rs b/crates/codegen/xai-grok-telemetry/src/config.rs
+index 0e55dfb..867d58e 100644
+--- a/crates/codegen/xai-grok-telemetry/src/config.rs
++++ b/crates/codegen/xai-grok-telemetry/src/config.rs
+@@ -141,13 +141,13 @@ impl Default for TelemetryConfig {
+             mixpanel_token: None,
+             mixpanel_enabled: false,
+             trace_upload: None,
+-            otel_enabled: None,
++            otel_enabled: Some(false),
+             otel_metrics_exporter: None,
+             otel_logs_exporter: None,
+             otel_endpoint: None,
+             otel_protocol: None,
+-            otel_log_user_prompts: None,
+-            otel_log_tool_details: None,
++            otel_log_user_prompts: Some(false),
++            otel_log_tool_details: Some(false),
+         }
+     }
+ }
+diff --git a/crates/codegen/xai-grok-telemetry/src/instrumentation.rs b/crates/codegen/xai-grok-telemetry/src/instrumentation.rs
+index 3d2283f..0dedf70 100644
+--- a/crates/codegen/xai-grok-telemetry/src/instrumentation.rs
++++ b/crates/codegen/xai-grok-telemetry/src/instrumentation.rs
+@@ -54,11 +54,17 @@ fn mode() -> InstrumentationMode {
+         };
+ 
+         if let Some(mode) = env_mode {
+-            return mode;
++            // **no-telemetry fork:** never allow the Server (OTLP → xAI) mode.
++            // Local log/chrome instrumentation remains available for debugging.
++            return match mode {
++                InstrumentationMode::Server => InstrumentationMode::Disabled,
++                other => other,
++            };
+         }
+ 
+-        // Send instrumentation to the configured OpenTelemetry endpoint by default
+-        InstrumentationMode::Server
++        // **no-telemetry fork:** default off. Upstream defaults to Server (OTLP
++        // export to SpaceXAI). Local Log/Chrome still available via GROK_INSTRUMENTATION.
++        InstrumentationMode::Disabled
+     })
+ }
+ 
+diff --git a/crates/codegen/xai-grok-telemetry/src/otel_layer/mod.rs b/crates/codegen/xai-grok-telemetry/src/otel_layer/mod.rs
+index fb8c3ad..f8a4871 100644
+--- a/crates/codegen/xai-grok-telemetry/src/otel_layer/mod.rs
++++ b/crates/codegen/xai-grok-telemetry/src/otel_layer/mod.rs
+@@ -105,7 +105,10 @@ where
+         .with_context_activation(false)
+         .with_filter(otel_filter)
+ }
+-fn build_tracer_provider(client: OtelClientInfo, config: OtelLayerConfig) -> SdkTracerProvider {
++fn build_tracer_provider(client: OtelClientInfo, mut config: OtelLayerConfig) -> SdkTracerProvider {
++    // **no-telemetry fork:** never enable OTLP export to SpaceXAI, even if the
++    // instrumentation mode is Server and endpoints resolve as enabled.
++    config.exporter.enabled = false;
+     match instrumentation::current_mode() {
+         instrumentation::InstrumentationMode::Server => build_server_provider(client, config),
+         _ => SdkTracerProvider::builder().build(),

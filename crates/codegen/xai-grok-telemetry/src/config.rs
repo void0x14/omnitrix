@@ -127,51 +127,47 @@ fn build_env_default(value: Option<&'static str>) -> Option<String> {
 }
 impl Default for TelemetryConfig {
     fn default() -> Self {
-        let (baked_url, baked_key, baked_token, baked_enabled) = internal_defaults();
-        let build_url = build_env_default(option_env!("GROK_TELEMETRY_BUILD_EVENTS_URL"));
-        let build_key = build_env_default(option_env!("GROK_TELEMETRY_BUILD_EVENTS_API_KEY"));
-        let build_token = build_env_default(option_env!("GROK_TELEMETRY_BUILD_MIXPANEL_TOKEN"));
-        let mixpanel_enabled = baked_enabled || build_token.is_some();
-        let (events_url, events_api_key, mixpanel_token) = (
-            build_url.or(baked_url),
-            build_key.or(baked_key),
-            build_token.or(baked_token),
+        // **no-telemetry fork:** never bake build-time Mixpanel / events endpoints.
+        let _ = (
+            internal_defaults(),
+            build_env_default(option_env!("GROK_TELEMETRY_BUILD_EVENTS_URL")),
+            build_env_default(option_env!("GROK_TELEMETRY_BUILD_EVENTS_API_KEY")),
+            build_env_default(option_env!("GROK_TELEMETRY_BUILD_MIXPANEL_TOKEN")),
         );
         Self {
-            enabled: None,
-            events_url,
-            events_api_key,
-            mixpanel_token,
-            mixpanel_enabled,
-            trace_upload: None,
-            otel_enabled: None,
+            enabled: Some(false),
+            events_url: None,
+            events_api_key: None,
+            mixpanel_token: None,
+            mixpanel_enabled: false,
+            trace_upload: Some(false),
+            otel_enabled: Some(false),
             otel_metrics_exporter: None,
             otel_logs_exporter: None,
             otel_endpoint: None,
             otel_protocol: None,
-            otel_log_user_prompts: None,
-            otel_log_tool_details: None,
+            otel_log_user_prompts: Some(false),
+            otel_log_tool_details: Some(false),
         }
     }
 }
 impl TelemetryConfig {
     pub fn apply_env_overrides(&mut self) {
+        // **no-telemetry fork:** ignore env overrides that would re-enable
+        // SpaceXAI product analytics / Mixpanel / trace upload.
         self.normalize();
-        if let Some(value) = Self::env_override("GROK_TELEMETRY_EVENTS_URL") {
-            self.events_url = value;
-        }
-        if let Some(value) = Self::env_override("GROK_TELEMETRY_EVENTS_API_KEY") {
-            self.events_api_key = value;
-        }
-        if let Some(value) = Self::env_override("GROK_TELEMETRY_MIXPANEL_TOKEN") {
-            self.mixpanel_token = value;
-        }
-        if let Some(value) = env_bool("GROK_TELEMETRY_MIXPANEL_ENABLED") {
-            self.mixpanel_enabled = value;
-        }
-        if let Some(value) = env_bool("GROK_TELEMETRY_TRACE_UPLOAD") {
-            self.trace_upload = Some(value);
-        }
+        self.events_url = None;
+        self.events_api_key = None;
+        self.mixpanel_token = None;
+        self.mixpanel_enabled = false;
+        self.trace_upload = Some(false);
+        let _ = (
+            Self::env_override("GROK_TELEMETRY_EVENTS_URL"),
+            Self::env_override("GROK_TELEMETRY_EVENTS_API_KEY"),
+            Self::env_override("GROK_TELEMETRY_MIXPANEL_TOKEN"),
+            env_bool("GROK_TELEMETRY_MIXPANEL_ENABLED"),
+            env_bool("GROK_TELEMETRY_TRACE_UPLOAD"),
+        );
     }
     fn normalize(&mut self) {
         self.events_url = Self::normalize_optional_string(self.events_url.take());
@@ -224,14 +220,12 @@ mod tests {
         assert_eq!(build_env_default(Some(" key ")), Some("key".to_owned()));
     }
     #[test]
-    fn default_is_build_env_layer_when_feature_off() {
+    fn default_is_fully_disabled_in_no_telemetry_fork() {
         let cfg = TelemetryConfig::default();
-        let url = build_env_default(option_env!("GROK_TELEMETRY_BUILD_EVENTS_URL"));
-        let key = build_env_default(option_env!("GROK_TELEMETRY_BUILD_EVENTS_API_KEY"));
-        let token = build_env_default(option_env!("GROK_TELEMETRY_BUILD_MIXPANEL_TOKEN"));
-        assert_eq!(cfg.mixpanel_enabled, token.is_some());
-        assert_eq!(cfg.events_url, url);
-        assert_eq!(cfg.events_api_key, key);
-        assert_eq!(cfg.mixpanel_token, token);
+        assert_eq!(cfg.mixpanel_enabled, false);
+        assert_eq!(cfg.events_url, None);
+        assert_eq!(cfg.events_api_key, None);
+        assert_eq!(cfg.mixpanel_token, None);
+        assert_eq!(cfg.trace_upload, Some(false));
     }
 }

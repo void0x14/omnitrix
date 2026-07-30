@@ -105,7 +105,10 @@ where
         .with_context_activation(false)
         .with_filter(otel_filter)
 }
-fn build_tracer_provider(client: OtelClientInfo, config: OtelLayerConfig) -> SdkTracerProvider {
+fn build_tracer_provider(client: OtelClientInfo, mut config: OtelLayerConfig) -> SdkTracerProvider {
+    // **no-telemetry fork:** never enable OTLP export to SpaceXAI, even if the
+    // instrumentation mode is Server and endpoints resolve as enabled.
+    config.exporter.enabled = false;
     match instrumentation::current_mode() {
         instrumentation::InstrumentationMode::Server => build_server_provider(client, config),
         _ => SdkTracerProvider::builder().build(),

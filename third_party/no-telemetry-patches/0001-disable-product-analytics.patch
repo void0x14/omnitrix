@@ -1,0 +1,437 @@
+diff --git a/crates/codegen/xai-grok-shell/src/agent/config.rs b/crates/codegen/xai-grok-shell/src/agent/config.rs
+index d311d0e..10386b3 100644
+--- a/crates/codegen/xai-grok-shell/src/agent/config.rs
++++ b/crates/codegen/xai-grok-shell/src/agent/config.rs
+@@ -2034,7 +2034,8 @@ impl Config {
+         }
+     }
+     pub fn is_telemetry_enabled(&self) -> bool {
+-        self.resolve_telemetry_mode().value.is_enabled()
++        // **no-telemetry fork:** product analytics permanently off.
++        false
+     }
+     pub fn is_trace_upload_enabled(&self) -> bool {
+         self.resolve_trace_upload().value
+@@ -2052,25 +2053,14 @@ impl Config {
+         self.resolve_two_pass_compaction().value
+     }
+     pub(crate) fn resolve_telemetry_mode(&self) -> Resolved<TelemetryMode> {
+-        if let Some(mode) = self.requirements.telemetry.pinned() {
+-            return Resolved::new(mode, ConfigSource::Requirement);
+-        }
+-        if let Some(mode) = env_telemetry_mode("GROK_TELEMETRY_ENABLED") {
+-            return Resolved::new(mode, ConfigSource::Env);
+-        }
+-        if let Some(mode) = self.features.telemetry {
+-            return Resolved::new(mode, ConfigSource::Config);
+-        }
+-        if let Some(rs) = self.remote_settings.as_ref() {
+-            if let Some(mode_str) = rs.telemetry_mode.as_deref()
+-                && let Some(mode) = TelemetryMode::parse(mode_str)
+-            {
+-                return Resolved::new(mode, ConfigSource::Remote);
+-            }
+-            if let Some(val) = rs.telemetry_enabled {
+-                return Resolved::new(TelemetryMode::from(val), ConfigSource::Remote);
+-            }
+-        }
++        // **no-telemetry fork:** ignore env/config/remote/requirements. SpaceXAI
++        // product telemetry cannot be re-enabled in this tree.
++        let _ = (
++            self.requirements.telemetry.pinned(),
++            env_telemetry_mode("GROK_TELEMETRY_ENABLED"),
++            self.features.telemetry,
++            self.remote_settings.as_ref(),
++        );
+         Resolved::new(TelemetryMode::Disabled, ConfigSource::Default)
+     }
+     pub(crate) fn resolve_trace_upload(&self) -> Resolved<bool> {
+diff --git a/crates/codegen/xai-grok-telemetry/src/client.rs b/crates/codegen/xai-grok-telemetry/src/client.rs
+index c2cd3a7..39f6b43 100644
+--- a/crates/codegen/xai-grok-telemetry/src/client.rs
++++ b/crates/codegen/xai-grok-telemetry/src/client.rs
+@@ -9,7 +9,6 @@
+ use std::sync::{Arc, Mutex, OnceLock};
+ 
+ use chrono::{Local, SecondsFormat};
+-use serde_json::json;
+ use xai_mixpanel::Mixpanel;
+ 
+ use crate::config::{TelemetryConfig, TelemetryMode, deployment_id_from_key};
+@@ -25,6 +24,10 @@ pub type Metadata = serde_json::Map<String, serde_json::Value>;
+ /// lockstep with [`EmitterOrigin::event_prefix`] via [`EmitterOrigin::ALL`],
+ /// so shell events keep their historical stripped value and workspace events
+ /// collapse to the same bare suffix.
++///
++/// Unused while [`track`] is a no-op in this fork; retained for unit tests and
++/// so upstream diffs stay small on rebase.
++#[cfg_attr(not(test), allow(dead_code))]
+ fn event_value(event_name: &str) -> &str {
+     for origin in EmitterOrigin::ALL {
+         if let Some(suffix) = event_name.strip_prefix(origin.event_prefix()) {
+@@ -35,6 +38,7 @@ fn event_value(event_name: &str) -> &str {
+ }
+ 
+ #[derive(Clone)]
++#[allow(dead_code)] // fields unused while emission is stripped; kept for API parity
+ pub struct TelemetryClient {
+     mode: TelemetryMode,
+     events_url: Option<String>,
+@@ -131,20 +135,19 @@ static TELEMETRY_CLIENT: OnceLock<Mutex<Option<TelemetryClient>>> = OnceLock::ne
+ 
+ /// Returns `true` when telemetry mode is `Enabled`.
+ /// Used by `log_event` — product analytics events only fire in `Enabled` mode.
++///
++/// **no-telemetry fork:** always `false`. SpaceXAI product analytics cannot be
++/// re-enabled via config, env, or remote settings in this tree.
+ pub fn is_enabled() -> bool {
+-    TELEMETRY_CLIENT
+-        .get()
+-        .and_then(|m| m.lock().ok())
+-        .is_some_and(|g| g.as_ref().is_some_and(|c| c.mode.is_enabled()))
++    false
+ }
+ 
+ /// Returns `true` when telemetry mode is `Enabled` or `SessionMetrics`.
+ /// Used by `session_metrics` — lifecycle events fire in both modes.
++///
++/// **no-telemetry fork:** always `false`.
+ pub fn is_session_metrics_enabled() -> bool {
+-    TELEMETRY_CLIENT
+-        .get()
+-        .and_then(|m| m.lock().ok())
+-        .is_some_and(|g| g.as_ref().is_some_and(|c| c.mode.session_metrics_enabled()))
++    false
+ }
+ 
+ pub struct UserContext {
+@@ -169,131 +172,23 @@ impl UserContext {
+ }
+ 
+ /// Core telemetry emitter. Routes to product events + Mixpanel.
+-pub async fn track(event_name: &str, request_id: &str, ctx: &UserContext, mut metadata: Metadata) {
+-    let lock = TELEMETRY_CLIENT.get_or_init(|| Mutex::new(None));
+-    let client = {
+-        let guard = lock.lock().unwrap_or_else(|err| err.into_inner());
+-        match guard.clone() {
+-            Some(c) => c,
+-            None => return,
+-        }
+-    };
+-
+-    let agent_id = crate::id::agent_id();
+-    let user_id = client.user_id.as_deref().unwrap_or(&agent_id);
+-    metadata.insert("agent_id".into(), json!(agent_id));
+-    if let Some(ref team_id) = client.team_id {
+-        metadata.insert("team_id".into(), json!(team_id));
+-    }
+-    if let Some(ref deployment_id) = client.deployment_id {
+-        metadata.insert("deployment_id".into(), json!(deployment_id));
+-    }
+-    metadata.insert("shell_version".into(), json!(client.shell_version));
+-    if let Some(ref client_type) = client.client_type {
+-        metadata.insert("client_type".into(), json!(client_type));
+-    }
+-    if let Some(ref client_version) = client.client_version {
+-        metadata.insert("client_version".into(), json!(client_version));
+-    }
+-    if let Some(ref subscription_tier) = client.subscription_tier {
+-        metadata.insert("subscription_tier".into(), json!(subscription_tier));
+-    }
+-
+-    // Product events path
+-    if let (Some(url), Some(api_key)) = (&client.events_url, &client.events_api_key) {
+-        let body = json!({
+-            "viewer_context": {
+-                "request_id": request_id,
+-                "user_attributes": {
+-                    "user_id": user_id,
+-                    "user_type": "LoggedIn",
+-                    "country": ctx.country,
+-                    "language": ctx.language,
+-                    "locale": "English",
+-                },
+-                "device_attributes": {
+-                    "app_name": "Grok Code",
+-                },
+-            },
+-            "api_key": api_key,
+-            "events": [{
+-                "event_name": event_name,
+-                "event_value": event_value(event_name),
+-                "event_metadata": metadata.clone(),
+-                "timestamp": ctx.timestamp,
+-            }]
+-        });
+-        let _ = client
+-            .http_client
+-            .post(url)
+-            .header("x-api-key", api_key.as_str())
+-            .timeout(std::time::Duration::from_secs(10))
+-            .json(&body)
+-            .send()
+-            .await;
+-    }
+-
+-    // Mixpanel path
+-    if let Some(ref mixpanel) = client.mixpanel {
+-        let time_secs = chrono::Utc::now().timestamp();
+-        let insert_id = format!("{event_name}:{request_id}:{time_secs}");
+-
+-        // Convert serde_json::Map to HashMap for mixpanel
+-        let mut props: std::collections::HashMap<String, serde_json::Value> =
+-            metadata.into_iter().collect();
+-        props.insert("distinct_id".into(), json!(user_id));
+-        props.insert("time".into(), json!(time_secs));
+-        props.insert("$insert_id".into(), json!(insert_id));
+-        props.insert("app_name".into(), json!("Grok Code"));
+-        props.insert("user_type".into(), json!("LoggedIn"));
+-        props.insert("country".into(), json!(ctx.country));
+-        props.insert("language".into(), json!(ctx.language));
+-        props.insert("locale".into(), json!("English"));
+-
+-        let _ = mixpanel.track(event_name, Some(props)).await;
+-    }
++///
++/// **no-telemetry fork:** permanently no-op. Never posts to SpaceXAI product
++/// events or Mixpanel, regardless of client state.
++pub async fn track(
++    _event_name: &str,
++    _request_id: &str,
++    _ctx: &UserContext,
++    _metadata: Metadata,
++) {
++    // Intentionally empty — SpaceXAI phone-home stripped in this fork.
+ }
+ 
+ /// Sync the user's Mixpanel profile once per init. Fire-and-forget.
++///
++/// **no-telemetry fork:** permanently no-op.
+ pub fn sync_profile() {
+-    let lock = TELEMETRY_CLIENT.get_or_init(|| Mutex::new(None));
+-    let client = {
+-        let guard = lock.lock().unwrap_or_else(|err| err.into_inner());
+-        match guard.clone() {
+-            Some(c) => c,
+-            None => return,
+-        }
+-    };
+-
+-    let Some(mixpanel) = client.mixpanel.clone() else {
+-        return;
+-    };
+-
+-    let agent_id = crate::id::agent_id();
+-    let user_id = client.user_id.as_deref().unwrap_or(&agent_id).to_owned();
+-
+-    tokio::spawn(async move {
+-        let mut props = std::collections::HashMap::new();
+-        props.insert("agent_id".into(), json!(agent_id));
+-        props.insert("shell_version".into(), json!(client.shell_version));
+-        props.insert("app_name".into(), json!("Grok Code"));
+-        if let Some(ref client_type) = client.client_type {
+-            props.insert("client_type".into(), json!(client_type));
+-        }
+-        if let Some(ref client_version) = client.client_version {
+-            props.insert("client_version".into(), json!(client_version));
+-        }
+-        if let Some(ref deployment_id) = client.deployment_id {
+-            props.insert("deployment_id".into(), json!(deployment_id));
+-        }
+-        if let Some(ref team_id) = client.team_id {
+-            props.insert("team_id".into(), json!(team_id));
+-        }
+-        if let Some(ref subscription_tier) = client.subscription_tier {
+-            props.insert("subscription_tier".into(), json!(subscription_tier));
+-        }
+-        let _ = mixpanel.engage(&user_id, props).await;
+-    });
++    // Intentionally empty — SpaceXAI phone-home stripped in this fork.
+ }
+ 
+ /// Initialize telemetry client. Safe to call multiple times.
+@@ -308,71 +203,39 @@ pub fn sync_profile() {
+ /// shell's `shared_client()`) so the shared TLS-warmed pool is reused for
+ /// telemetry posts.
+ pub fn init(
+-    config: TelemetryConfig,
+-    mode: TelemetryMode,
+-    user_id: Option<String>,
+-    team_id: Option<String>,
+-    deployment_key: Option<String>,
+-    origin_client: Option<OriginClientInfo>,
+-    shell_version: String,
+-    subscription_tier: Option<String>,
+-    http_client: reqwest::Client,
++    _config: TelemetryConfig,
++    _mode: TelemetryMode,
++    _user_id: Option<String>,
++    _team_id: Option<String>,
++    _deployment_key: Option<String>,
++    _origin_client: Option<OriginClientInfo>,
++    _shell_version: String,
++    _subscription_tier: Option<String>,
++    _http_client: reqwest::Client,
+ ) {
++    // **no-telemetry fork:** never install a product-analytics client.
+     let lock = TELEMETRY_CLIENT.get_or_init(|| Mutex::new(None));
+     let mut guard = lock.lock().unwrap_or_else(|err| err.into_inner());
+-    *guard = if mode.is_disabled() {
+-        None
+-    } else {
+-        Some(TelemetryClient::from_config(
+-            config,
+-            mode,
+-            user_id,
+-            team_id,
+-            deployment_key,
+-            origin_client,
+-            shell_version,
+-            subscription_tier,
+-            http_client,
+-        ))
+-    };
+-    drop(guard);
+-    sync_profile();
++    *guard = None;
+ }
+ 
+ /// Re-initialize the telemetry client if it was not created at startup
+ /// (e.g. because auth was not yet available). No-op when the client
+ /// is already set, so safe to call unconditionally after auth succeeds.
++///
++/// **no-telemetry fork:** permanently no-op.
+ pub fn init_if_needed(
+-    config: TelemetryConfig,
+-    mode: TelemetryMode,
+-    user_id: Option<String>,
+-    team_id: Option<String>,
+-    deployment_key: Option<String>,
+-    origin_client: Option<OriginClientInfo>,
+-    shell_version: String,
+-    subscription_tier: Option<String>,
+-    http_client: reqwest::Client,
++    _config: TelemetryConfig,
++    _mode: TelemetryMode,
++    _user_id: Option<String>,
++    _team_id: Option<String>,
++    _deployment_key: Option<String>,
++    _origin_client: Option<OriginClientInfo>,
++    _shell_version: String,
++    _subscription_tier: Option<String>,
++    _http_client: reqwest::Client,
+ ) {
+-    if mode.is_disabled() {
+-        return;
+-    }
+-    let lock = TELEMETRY_CLIENT.get_or_init(|| Mutex::new(None));
+-    let mut guard = lock.lock().unwrap_or_else(|err| err.into_inner());
+-    if guard.is_none() {
+-        *guard = Some(TelemetryClient::from_config(
+-            config,
+-            mode,
+-            user_id,
+-            team_id,
+-            deployment_key,
+-            origin_client,
+-            shell_version,
+-            subscription_tier,
+-            http_client,
+-        ));
+-        drop(guard);
+-        sync_profile();
+-    }
++    // Intentionally empty — SpaceXAI phone-home stripped in this fork.
+ }
+ 
+ #[cfg(test)]
+diff --git a/crates/codegen/xai-grok-telemetry/src/config.rs b/crates/codegen/xai-grok-telemetry/src/config.rs
+index b99c7c8..0e55dfb 100644
+--- a/crates/codegen/xai-grok-telemetry/src/config.rs
++++ b/crates/codegen/xai-grok-telemetry/src/config.rs
+@@ -127,22 +127,19 @@ fn build_env_default(value: Option<&'static str>) -> Option<String> {
+ }
+ impl Default for TelemetryConfig {
+     fn default() -> Self {
+-        let (baked_url, baked_key, baked_token, baked_enabled) = internal_defaults();
+-        let build_url = build_env_default(option_env!("GROK_TELEMETRY_BUILD_EVENTS_URL"));
+-        let build_key = build_env_default(option_env!("GROK_TELEMETRY_BUILD_EVENTS_API_KEY"));
+-        let build_token = build_env_default(option_env!("GROK_TELEMETRY_BUILD_MIXPANEL_TOKEN"));
+-        let mixpanel_enabled = baked_enabled || build_token.is_some();
+-        let (events_url, events_api_key, mixpanel_token) = (
+-            build_url.or(baked_url),
+-            build_key.or(baked_key),
+-            build_token.or(baked_token),
++        // **no-telemetry fork:** never bake build-time Mixpanel / events endpoints.
++        let _ = (
++            internal_defaults(),
++            build_env_default(option_env!("GROK_TELEMETRY_BUILD_EVENTS_URL")),
++            build_env_default(option_env!("GROK_TELEMETRY_BUILD_EVENTS_API_KEY")),
++            build_env_default(option_env!("GROK_TELEMETRY_BUILD_MIXPANEL_TOKEN")),
+         );
+         Self {
+-            enabled: None,
+-            events_url,
+-            events_api_key,
+-            mixpanel_token,
+-            mixpanel_enabled,
++            enabled: Some(false),
++            events_url: None,
++            events_api_key: None,
++            mixpanel_token: None,
++            mixpanel_enabled: false,
+             trace_upload: None,
+             otel_enabled: None,
+             otel_metrics_exporter: None,
+@@ -156,19 +153,19 @@ impl Default for TelemetryConfig {
+ }
+ impl TelemetryConfig {
+     pub fn apply_env_overrides(&mut self) {
++        // **no-telemetry fork:** ignore env overrides that would re-enable
++        // SpaceXAI product analytics / Mixpanel.
+         self.normalize();
+-        if let Some(value) = Self::env_override("GROK_TELEMETRY_EVENTS_URL") {
+-            self.events_url = value;
+-        }
+-        if let Some(value) = Self::env_override("GROK_TELEMETRY_EVENTS_API_KEY") {
+-            self.events_api_key = value;
+-        }
+-        if let Some(value) = Self::env_override("GROK_TELEMETRY_MIXPANEL_TOKEN") {
+-            self.mixpanel_token = value;
+-        }
+-        if let Some(value) = env_bool("GROK_TELEMETRY_MIXPANEL_ENABLED") {
+-            self.mixpanel_enabled = value;
+-        }
++        self.events_url = None;
++        self.events_api_key = None;
++        self.mixpanel_token = None;
++        self.mixpanel_enabled = false;
++        let _ = (
++            Self::env_override("GROK_TELEMETRY_EVENTS_URL"),
++            Self::env_override("GROK_TELEMETRY_EVENTS_API_KEY"),
++            Self::env_override("GROK_TELEMETRY_MIXPANEL_TOKEN"),
++            env_bool("GROK_TELEMETRY_MIXPANEL_ENABLED"),
++        );
+         if let Some(value) = env_bool("GROK_TELEMETRY_TRACE_UPLOAD") {
+             self.trace_upload = Some(value);
+         }
+@@ -224,14 +221,11 @@ mod tests {
+         assert_eq!(build_env_default(Some(" key ")), Some("key".to_owned()));
+     }
+     #[test]
+-    fn default_is_build_env_layer_when_feature_off() {
++    fn default_is_fully_disabled_in_no_telemetry_fork() {
+         let cfg = TelemetryConfig::default();
+-        let url = build_env_default(option_env!("GROK_TELEMETRY_BUILD_EVENTS_URL"));
+-        let key = build_env_default(option_env!("GROK_TELEMETRY_BUILD_EVENTS_API_KEY"));
+-        let token = build_env_default(option_env!("GROK_TELEMETRY_BUILD_MIXPANEL_TOKEN"));
+-        assert_eq!(cfg.mixpanel_enabled, token.is_some());
+-        assert_eq!(cfg.events_url, url);
+-        assert_eq!(cfg.events_api_key, key);
+-        assert_eq!(cfg.mixpanel_token, token);
++        assert_eq!(cfg.mixpanel_enabled, false);
++        assert_eq!(cfg.events_url, None);
++        assert_eq!(cfg.events_api_key, None);
++        assert_eq!(cfg.mixpanel_token, None);
+     }
+ }

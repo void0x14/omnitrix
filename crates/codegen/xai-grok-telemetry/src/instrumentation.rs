@@ -54,11 +54,17 @@ fn mode() -> InstrumentationMode {
         };
 
         if let Some(mode) = env_mode {
-            return mode;
+            // **no-telemetry fork:** never allow the Server (OTLP → xAI) mode.
+            // Local log/chrome instrumentation remains available for debugging.
+            return match mode {
+                InstrumentationMode::Server => InstrumentationMode::Disabled,
+                other => other,
+            };
         }
 
-        // Send instrumentation to the configured OpenTelemetry endpoint by default
-        InstrumentationMode::Server
+        // **no-telemetry fork:** default off. Upstream defaults to Server (OTLP
+        // export to SpaceXAI). Local Log/Chrome still available via GROK_INSTRUMENTATION.
+        InstrumentationMode::Disabled
     })
 }
 
