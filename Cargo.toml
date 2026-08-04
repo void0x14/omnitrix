@@ -365,6 +365,7 @@ xai-mixpanel = { path = "crates/codegen/xai-mixpanel" }
 xai-prompt-queue = { path = "crates/codegen/xai-prompt-queue" }
 xai-proto-build = { path = "crates/build/xai-proto-build" }
 xai-ratatui-inline = { path = "crates/codegen/xai-ratatui-inline" }
+xai-grok-pager = { path = "crates/codegen/xai-grok-pager" }
 xai-grok-pager-render = { path = "crates/codegen/xai-grok-pager-render" }
 xai-ratatui-textarea = { path = "crates/codegen/xai-ratatui-textarea" }
 xai-sqlite-journal = { path = "crates/codegen/xai-sqlite-journal" }

@@ -2,28 +2,13 @@ mod api;
 mod bootstrap;
 mod run;
 
-use std::io::{Stdout, Write as _};
-use std::time::{Duration, Instant};
+use std::io::Write as _;
+use std::time::Instant;
 
 use omni_provider::detection::{ProviderDetector, ProviderKind};
 use omni_provider::keyring::KeyManager;
-use ratatui::{
-    Terminal,
-    backend::CrosstermBackend,
-    crossterm::{
-        ExecutableCommand,
-        event::{self, Event, KeyCode, KeyEventKind, KeyModifiers},
-        terminal::{EnterAlternateScreen, enable_raw_mode},
-    },
-};
-
-use bootstrap::WarmupPhase;
-use omni_tui::dashboard::Dashboard;
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
-
-/// TUI olay dongusunun tus bekleme suresi. Yeniden cizim bu araliktadir.
-const TICK_MS: u64 = 120;
 
 fn print_help() {
     println!(
@@ -187,82 +172,39 @@ async fn cmd_task(rest: Vec<String>) -> anyhow::Result<()> {
 // TUI (8.2 lazy-init + 8.1 crash-only)
 // ---------------------------------------------------------------------------
 
-type Tui = Terminal<CrosstermBackend<Stdout>>;
-
-/// Ilk frame'i cizmeden once yapilanlar YALNIZCA terminal kurulumudur:
-/// config okunmaz, storage acilmaz, provider'a baglanilmaz, ajan yuklenmez.
-/// Isinma ilk frame'den SONRA arka planda baslar ve TUI onu beklemez (8.2).
+/// Omnitrix TUI'sini Grok Builder pager'i uzerinden baslatir.
+///
+/// Pager terminali kendi kurar, kendi olay dongusunu calistirir ve kendi
+/// kapanisini yapar. Omnitrix yalnizca tokio runtime'i saglar ve gerekli
+/// yapilandirma parcalarini iletir.
+///
+/// Genisletme noktasi: `xai_grok_pager::minimal_hook::install(...)` ile
+/// omni-tui dashboard'i pager'in minimal (scrollback-native) moduna
+/// eklenebilir.
 fn run_tui(t0: Instant) -> anyhow::Result<()> {
     bootstrap::init_for_tui();
-
-    enable_raw_mode()?;
-    std::io::stdout().execute(EnterAlternateScreen)?;
-    let backend = CrosstermBackend::new(std::io::stdout());
-    let mut terminal = Terminal::new(backend)?;
-
-    let mut phase = WarmupPhase::Cold;
-    draw(&mut terminal, phase)?;
     bootstrap::trace_startup(t0, "first_frame");
 
-    // Runtime ilk frame'den SONRA kurulur; is parcacigi havuzunun maliyeti
-    // cold-start olcumune girmez.
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()?;
 
-    let (phase_tx, mut phase_rx) = tokio::sync::watch::channel(WarmupPhase::Cold);
+    bootstrap::trace_startup(t0, "runtime_ready");
 
-    runtime.spawn(async move {
-        match bootstrap::warm_up(&phase_tx).await {
-            Ok(context) => bootstrap::park_context(context).await,
-            Err(e) => {
-                tracing::error!(%e, "isinma basarisiz");
-                let _ = phase_tx.send(WarmupPhase::Failed);
-                // Gonderici canli kalmali, aksi halde alici son degeri okuyamaz.
-                std::future::pending::<()>().await;
-            }
-        }
-    });
-    runtime.spawn(bootstrap::watch_sigint());
-
-    bootstrap::trace_startup(t0, "warmup_spawned");
-
-    loop {
-        let latest = *phase_rx.borrow_and_update();
-        if latest != phase {
-            phase = latest;
-            draw(&mut terminal, phase)?;
-        }
-
-        if event::poll(Duration::from_millis(TICK_MS))? {
-            if let Event::Key(key) = event::read()?
-                && key.kind == KeyEventKind::Press
-            {
-                let ctrl_c = key.modifiers.contains(KeyModifiers::CONTROL)
-                    && matches!(key.code, KeyCode::Char('c' | 'C'));
-                if ctrl_c || key.code == KeyCode::Char('q') {
-                    // 8.1: flush yok, bekleme yok, kapanis O(1).
-                    bootstrap::instant_exit(0);
-                }
-            }
-        } else {
-            draw(&mut terminal, phase)?;
-        }
-    }
-}
-
-/// Isinma bitene kadar cizilen cerceve. Pano bos bir `UiState` ile baslar ve
-/// yalnizca durum satirini + olculen RSS'i tasir; ajan/gorev satirlari
-/// `SystemSnapshot` geldiginde (omni-control akisi) dolar (Bolum 6.2).
-fn draw(terminal: &mut Tui, phase: WarmupPhase) -> anyhow::Result<()> {
-    let rss = bootstrap::rss_kb().unwrap_or(0);
-    let mut dashboard = Dashboard::new();
-    dashboard.set_status(phase.label());
-    dashboard.set_local_rss_kb(rss);
-
-    terminal.draw(|frame| {
-        let area = frame.area();
-        dashboard.render(frame, area);
+    let should_update = runtime.block_on(async {
+        // Pager, gucsuz argumanlarla baslatilir; butun TUI yasam dongusu
+        // onun icindedir. parse_cli() su anki surec argumanlarini okur ve
+        // binary adini "grok" olarak kabul eder.
+        xai_grok_pager::app::run(
+            xai_grok_pager::app::PagerArgs::parse_cli(),
+            None,
+        )
+        .await
     })?;
+
+    if should_update {
+        tracing::info!("guncelleme alindi — yeniden baslatma gerekiyor");
+    }
+
     Ok(())
 }

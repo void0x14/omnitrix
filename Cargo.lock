@@ -7434,6 +7434,7 @@ dependencies = [
  "toml",
  "tracing",
  "tracing-subscriber",
+ "xai-grok-pager",
  "xai-grok-sampler",
 ]
 

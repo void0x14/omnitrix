@@ -49,6 +49,7 @@ rusqlite = { workspace = true }
 dunce = { workspace = true }
 # `omnitrix run` sampler yapilandirmasini (SamplerConfig/RetryPolicy/ApiBackend)
 # dogrudan kurar; tur dongusu omni-router'dadir.
+xai-grok-pager = { workspace = true }
 xai-grok-sampler = { workspace = true }
 
 
