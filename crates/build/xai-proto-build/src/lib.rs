@@ -106,10 +106,10 @@ impl XaiProtoBuilder {
         let includes = Vec::from_iter(includes);
 
         if let Some(protoc) = protoc {
-            println!(
-                "cargo:rerun-if-changed={}",
-                protoc.to_str().context("protoc path not UTF-8")?
-            );
+            let protoc = protoc.to_str().context("protoc path not UTF-8")?;
+            if fs::exists(protoc)? {
+                println!("cargo:rerun-if-changed={protoc}");
+            }
         }
 
         // Can only process one input file when using --dependency_out=FILE.
