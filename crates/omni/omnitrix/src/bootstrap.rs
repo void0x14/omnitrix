@@ -160,6 +160,11 @@ pub fn rss_kb() -> Option<u64> {
 /// 8.2 kapisi olcumu: surec baslangicindan (`t0`) bu ana kadar gecen sure.
 /// `println!` yerine dogrudan stderr'e yazilir; TUI stdout'u kullandigi icin
 /// olcum ciktisi ayri akista kalir. Yazma hatasi yutulur (I6: panic yok).
+///
+/// Pager `app::run` fd2'yi `/dev/null`'a yonlendirir (xai_tty_utils); terminale
+/// ulasmak icin pager'in kendi stderr kanali kullanilir (`with_locked_stderr`
+/// yonlendirme yapildiysa dup'lanmis terminal fd'sine, yoksa normal stderr'e
+/// duser — CLI alt-komutlarinda davranis degismez).
 pub fn trace_startup(t0: Instant, phase: &str) {
     if !startup_trace_enabled() {
         return;
@@ -168,12 +173,13 @@ pub fn trace_startup(t0: Instant, phase: &str) {
     let elapsed_us = t0.elapsed().as_micros();
     let elapsed_ms = (elapsed_us as f64) / 1000.0;
     let rss = rss_kb().unwrap_or(0);
-    let mut err = std::io::stderr();
-    let _ = writeln!(
-        err,
-        "omnitrix startup: phase={phase} elapsed_us={elapsed_us} elapsed_ms={elapsed_ms:.3} rss_kb={rss}"
-    );
-    let _ = err.flush();
+    xai_grok_shared::stderr::with_locked_stderr(|err| {
+        let _ = writeln!(
+            err,
+            "omnitrix startup: phase={phase} elapsed_us={elapsed_us} elapsed_ms={elapsed_ms:.3} rss_kb={rss}"
+        );
+        let _ = err.flush();
+    });
 }
 
 // ---------------------------------------------------------------------------

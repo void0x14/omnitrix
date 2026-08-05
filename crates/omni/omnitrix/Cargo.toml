@@ -20,7 +20,6 @@ omni-agent = { workspace = true }
 omni-router = { workspace = true }
 omni-tools = { workspace = true }
 omni-scheduler = { workspace = true }
-omni-tui = { workspace = true }
 omni-provider = { workspace = true }
 omni-storage = { workspace = true }
 omni-notify = { workspace = true }
@@ -51,6 +50,9 @@ dunce = { workspace = true }
 # dogrudan kurar; tur dongusu omni-router'dadir.
 xai-grok-pager = { workspace = true }
 xai-grok-sampler = { workspace = true }
+# `trace_startup` pager'in `/dev/null` stderr yonlendirmesini asip terminale
+# yazmak icin pager'in kendi stderr kanalini kullanir (Task 1.1).
+xai-grok-shared = { workspace = true }
 
 
 [lints]
