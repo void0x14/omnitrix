@@ -41,6 +41,7 @@ pub mod models;
 pub mod notifications;
 #[allow(unused_imports, unused_macros)]
 pub mod obf;
+pub mod omni_bridge;
 pub mod plugin_cmd;
 pub mod project_picker;
 pub mod pty_wrap;
