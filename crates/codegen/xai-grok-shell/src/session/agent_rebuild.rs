@@ -82,6 +82,17 @@ pub(crate) struct AgentRebuildSpec {
     pub working_directory: PathBuf,
     pub terminal_backend: Arc<dyn TerminalBackend>,
     pub fs_backend: Arc<dyn AsyncFileSystem>,
+    /// Omnitrix diff akisinin gonderici ucu (plan 9.3). `Some` ise
+    /// `build_agent_inner` `fs_backend`'i `DiffShimFs` ile sarar; `None`
+    /// (birim testleri) ise ciktilen `fs_backend` aynen kullanilir.
+    pub diff_touch_sink: Option<omni_tools::fs_shim::TouchSink>,
+    /// Diff akisinin alici ucu. Spec bir `Arc` oldugu surece CANLI tutulur;
+    /// duserse shim dokunuslari sessizce birakir (I6: akis hatasi dosya
+    /// islemini dusurmez). Tuketim (TUI/olay-log) sonraki gorevlerde olur.
+    pub diff_touch_stream: Option<omni_tools::fs_shim::TouchStream>,
+    /// Icerik atiflarinin yazilacagi CAS deposu (omnitrix data_dir/cas).
+    /// `None` ise shim atifsiz calisir: akis + sayim yine surer.
+    pub diff_cas: Option<omni_storage::cas::CasBlobStore>,
     pub tools_notification_handle: ToolNotificationHandle,
     pub bridge_state_path: PathBuf,
     pub session_env: Arc<HashMap<String, String>>,
@@ -181,6 +192,9 @@ impl AgentRebuildSpec {
             working_directory,
             terminal_backend,
             fs_backend,
+            diff_touch_sink,
+            diff_touch_stream,
+            diff_cas,
             tools_notification_handle,
             bridge_state_path,
             session_env,
@@ -232,6 +246,26 @@ impl AgentRebuildSpec {
             parent_scheduler_handle,
         } = self.as_ref();
         let _ = mcp_state;
+        // Alici ucu spec Arc'i icinde canli kalir; dokunuslar bu yuzden
+        // akista birikir ve daha sonra TUI/olay-log tarafindan tuketilir.
+        let _ = diff_touch_stream;
+        // Omnitrix FS-shim (plan 9.3): her yazim/silme once alt katmana
+        // devredilir, sonra akisa yayinlanir ve icerik CAS'a yazilir.
+        // Sink yoksa (birim testleri) shim atlanir — davranis degismez.
+        let fs_backend: Arc<dyn AsyncFileSystem> = match diff_touch_sink.clone() {
+            Some(sink) => {
+                let shim = omni_tools::fs_shim::DiffShimFs::new(
+                    fs_backend.clone(),
+                    working_directory.clone(),
+                    sink,
+                );
+                match diff_cas.clone() {
+                    Some(cas) => Arc::new(shim.with_cas(cas)),
+                    None => Arc::new(shim),
+                }
+            }
+            None => fs_backend.clone(),
+        };
         #[allow(unused_variables)]
         let is_cursor_template =
             crate::session::is_cursor_system_template(&definition.system_prompt);
@@ -256,7 +290,7 @@ impl AgentRebuildSpec {
         .with_app_builder_deployer_config(app_builder_deployer_config.clone())
         .with_web_fetch_config(web_fetch_config.clone())
         .with_write_file_enabled(*write_file_enabled)
-        .with_fs(fs_backend.clone())
+        .with_fs(fs_backend)
         .with_subagents_enabled(*subagents_enabled)
         .with_subagent_toggle(subagent_toggle.clone())
         .with_background_workflows_enabled(*background_workflows_enabled)
@@ -402,6 +436,9 @@ pub(crate) fn test_rebuild_spec_default() -> Arc<AgentRebuildSpec> {
             ),
         ),
         fs_backend: Arc::new(xai_grok_tools::computer::local::LocalFs),
+        diff_touch_sink: None,
+        diff_touch_stream: None,
+        diff_cas: None,
         tools_notification_handle: ToolNotificationHandle::noop(),
         bridge_state_path: std::env::temp_dir().join("test_tool_state.json"),
         session_env: Arc::new(HashMap::new()),

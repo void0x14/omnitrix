@@ -729,6 +729,31 @@ pub(crate) async fn spawn_session_actor(
         };
     let bridge_state_path =
         crate::session::persistence::session_dir(&session_info).join("tool_state.json");
+    // Omnitrix diff akisi (plan 9.3): gonderici + alici oturum boyunca AYNI
+    // kalir, boylece model degisimindeki rebuild'ler de ayni akisa yazar.
+    // CAS deposu veri dizininde acilir; dizin yoksa kendisi olusturur.
+    // Acilamazsa akis yine calisir — yalnizca icerik atiflari bos kalir (I6).
+    let (diff_touch_sink, diff_touch_stream) = omni_tools::fs_shim::touch_channel();
+    let diff_cas: Option<omni_storage::cas::CasBlobStore> = match dirs::data_dir() {
+        Some(data_dir) => {
+            let cas_path = data_dir.join("omnitrix").join("cas");
+            match omni_storage::cas::CasBlobStore::new(&cas_path) {
+                Ok(cas) => Some(cas),
+                Err(err) => {
+                    tracing::warn!(
+                        path = %cas_path.display(),
+                        error = %err,
+                        "omnitrix CAS acilamadi; diff akisi atifsiz calisir"
+                    );
+                    None
+                }
+            }
+        }
+        None => {
+            tracing::warn!("kullanici veri dizini cozulemedi; diff akisi atifsiz calisir");
+            None
+        }
+    };
     let initial_agent_type = Some(agent_definition.name.clone());
     let harness_metrics = if telemetry_enabled || xai_grok_telemetry::external::is_active() {
         let plugin_names = plugin_registry
@@ -961,6 +986,9 @@ pub(crate) async fn spawn_session_actor(
         working_directory: tool_context.cwd.as_path().to_path_buf(),
         terminal_backend: terminal_backend.clone(),
         fs_backend: fs_backend.clone(),
+        diff_touch_sink: Some(diff_touch_sink),
+        diff_touch_stream: Some(diff_touch_stream),
+        diff_cas,
         tools_notification_handle: tools_notification_handle.clone(),
         bridge_state_path: bridge_state_path.clone(),
         session_env: tool_context.session_env.clone(),

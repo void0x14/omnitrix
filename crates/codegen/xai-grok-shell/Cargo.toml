@@ -18,6 +18,10 @@ anyhow = { workspace = true }
 xai-grok-announcements = { workspace = true }
 xai-prompt-queue = { workspace = true }
 xai-grok-version = { workspace = true }
+# Omnitrix: diff gorunurlugu (plan 9.3) — FS-shim + CAS. Ajanin butun dosya
+# dokunuslari once alt katmana devredilir, sonra diff akisina + CAS'a yazilir.
+omni-tools = { workspace = true }
+omni-storage = { workspace = true }
 
 async-openai = { workspace = true }
 async-trait = { workspace = true }
