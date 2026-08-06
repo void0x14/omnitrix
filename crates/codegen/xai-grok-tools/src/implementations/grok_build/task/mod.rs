@@ -5,6 +5,16 @@
 //! coordinator mailbox. All hosts use the same backend and coordinator actor;
 //! only their child runners differ.
 //!
+//! Two backends are available:
+//!
+//! - [`backend::ChannelBackend`] — plain passthrough to the coordinator
+//!   mailbox.
+//! - [`omni_scheduler_backend::OmniSchedulerBackend`] — the same mailbox plus
+//!   the omni-scheduler resource governor (RAM/concurrency admission with a
+//!   priority queue, RSS high-watermark, and a depth/fan-out hierarchy
+//!   ceiling). Ported verbatim from `omni-scheduler` with no `omni-*`
+//!   dependency.
+//!
 //! ## Resources
 //!
 //! - `SubagentBackendResource` — backend for spawn/query/cancel (required)
@@ -15,6 +25,7 @@
 
 pub mod backend;
 pub mod coordinator;
+pub mod omni_scheduler_backend;
 mod coordinator_state;
 pub use coordinator_state::{cap_completion_output, completion_summary};
 pub mod types;
