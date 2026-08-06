@@ -429,17 +429,6 @@ opt-level = 0
 lto = false
 incremental = true
 
-# Test profili: debug bilgisi olmadan + tek codegen unit'i yok — test binary'si
-# hem kucuk hem link'i hizli. panic=unwind test harness'i zorunlu kilar
-# (cargo test, dev'deki abort'u ezer).
-[profile.test]
-panic = "unwind"
-split-debuginfo = "off"
-debug = false
-codegen-units = 256
-opt-level = 0
-incremental = true
-
 [profile.bench]
 debug = true
 
