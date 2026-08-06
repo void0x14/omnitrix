@@ -248,6 +248,7 @@ impl ShellToolsetConfig {
             compaction_at_tokens: None,
             doom_loop_recovery: None,
             header_injector: None,
+            fallback: None,
         };
         let mut toolset = base.unwrap_or_else(|| Self {
             bash: BashToolConfig::default(),

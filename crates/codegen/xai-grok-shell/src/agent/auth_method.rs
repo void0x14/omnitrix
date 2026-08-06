@@ -42,6 +42,89 @@ pub fn has_xai_api_key_env() -> bool {
     read_xai_api_key_env().is_ok()
 }
 
+/// Provider kinds detectable from an API key prefix.
+///
+/// Omnitrix eritme: moved from `omni-provider::detection::ProviderKind` so all
+/// key/provider handling lives inside grok's own auth layer — there is no
+/// separate keyring layer anymore. `Custom(String)` from the original enum is
+/// dropped because detection never produces it and `ProviderKind` must stay
+/// `Copy`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum ProviderKind {
+    OpenAI,
+    Anthropic,
+    Google,
+    Xai,
+    OpenRouter,
+    DeepSeek,
+}
+
+impl ProviderKind {
+    /// All detectable providers, in stable order.
+    pub const ALL: &[ProviderKind] = &[
+        ProviderKind::OpenAI,
+        ProviderKind::Anthropic,
+        ProviderKind::Google,
+        ProviderKind::Xai,
+        ProviderKind::OpenRouter,
+        ProviderKind::DeepSeek,
+    ];
+
+    pub fn name(&self) -> &'static str {
+        match self {
+            Self::OpenAI => "OpenAI",
+            Self::Anthropic => "Anthropic",
+            Self::Google => "Google",
+            Self::Xai => "xAI",
+            Self::OpenRouter => "OpenRouter",
+            Self::DeepSeek => "DeepSeek",
+        }
+    }
+
+    pub fn default_base_url(&self) -> &'static str {
+        match self {
+            Self::OpenAI => "https://api.openai.com/v1",
+            Self::Anthropic => "https://api.anthropic.com/v1",
+            Self::Google => "https://generativelanguage.googleapis.com/v1beta",
+            Self::Xai => "https://api.x.ai/v1",
+            Self::OpenRouter => "https://openrouter.ai/api/v1",
+            Self::DeepSeek => "https://api.deepseek.com/v1",
+        }
+    }
+
+    /// Detect the provider from the API key prefix. Logic carried verbatim from
+    /// `omni-provider::detection::ProviderKind::detect_from_key`.
+    pub fn detect_from_key(api_key: &str) -> Option<Self> {
+        if api_key.starts_with("sk-ant-") {
+            return Some(Self::Anthropic);
+        }
+        if api_key.starts_with("sk-or-") {
+            return Some(Self::OpenRouter);
+        }
+        if api_key.starts_with("sk-proj-") {
+            return Some(Self::OpenAI);
+        }
+        if api_key.starts_with("xai-") {
+            return Some(Self::Xai);
+        }
+        if api_key.starts_with("AIza") {
+            return Some(Self::Google);
+        }
+        if api_key.starts_with("sk-") && api_key.len() >= 51 {
+            return Some(Self::OpenAI);
+        }
+        None
+    }
+}
+
+/// Detect the provider kind from an API key prefix.
+///
+/// Free-function alias for [`ProviderKind::detect_from_key`]; kept for call
+/// sites that prefer a function over a method.
+pub fn detect_provider_from_key(key: &str) -> Option<ProviderKind> {
+    ProviderKind::detect_from_key(key)
+}
+
 /// Whether `xai.api_key` should be advertised (and pushed FIRST) when building
 /// the `auth_methods` list at `initialize()` time.
 ///
@@ -553,6 +636,107 @@ mod tests {
     }
 
     use xai_grok_test_support::EnvGuard;
+
+    // ── ProviderKind (Omnitrix eritme: omni-provider detection.rs) ────────
+
+    /// Key prefixes map to the same providers as `omni-provider`'s original
+    /// `detect_from_key` (verbatim carry-over).
+    #[test]
+    fn provider_kind_detects_known_prefixes() {
+        assert_eq!(
+            ProviderKind::detect_from_key("sk-ant-api03-abcdef1234567890"),
+            Some(ProviderKind::Anthropic),
+        );
+        assert_eq!(
+            ProviderKind::detect_from_key("sk-or-v1-abcdef1234567890"),
+            Some(ProviderKind::OpenRouter),
+        );
+        assert_eq!(
+            ProviderKind::detect_from_key("sk-proj-abcdef1234567890"),
+            Some(ProviderKind::OpenAI),
+        );
+        assert_eq!(
+            ProviderKind::detect_from_key("xai-abcdef1234567890"),
+            Some(ProviderKind::Xai),
+        );
+        assert_eq!(
+            ProviderKind::detect_from_key("AIzaSyD1xJ8jN0example_key_0123456789"),
+            Some(ProviderKind::Google),
+        );
+    }
+
+    /// `sk-` with 51+ characters falls back to OpenAI (verbatim from
+    /// omni-provider); shorter `sk-` keys are undetectable.
+    #[test]
+    fn provider_kind_sk_fallback_requires_length_51() {
+        let long: String = format!("sk-{}", "a".repeat(48));
+        assert_eq!(long.len(), 51);
+        assert_eq!(ProviderKind::detect_from_key(&long), Some(ProviderKind::OpenAI));
+        assert_eq!(ProviderKind::detect_from_key("sk-short"), None);
+        assert_eq!(ProviderKind::detect_from_key(""), None);
+        assert_eq!(ProviderKind::detect_from_key("unknown-prefix-123"), None);
+    }
+
+    /// Free-function alias agrees with the method.
+    #[test]
+    fn detect_provider_from_key_aliases_method() {
+        assert_eq!(
+            detect_provider_from_key("sk-proj-abc"),
+            ProviderKind::detect_from_key("sk-proj-abc"),
+        );
+        assert_eq!(
+            detect_provider_from_key("xai-abc"),
+            Some(ProviderKind::Xai),
+        );
+        assert_eq!(detect_provider_from_key("zzz"), None);
+    }
+
+    /// Names and default base URLs match omni-provider's constants.
+    #[test]
+    fn provider_kind_names_and_default_base_urls() {
+        assert_eq!(ProviderKind::Xai.name(), "xAI");
+        assert_eq!(ProviderKind::OpenAI.name(), "OpenAI");
+        assert_eq!(ProviderKind::Anthropic.name(), "Anthropic");
+        assert_eq!(ProviderKind::Google.name(), "Google");
+        assert_eq!(ProviderKind::OpenRouter.name(), "OpenRouter");
+        assert_eq!(ProviderKind::DeepSeek.name(), "DeepSeek");
+        assert_eq!(
+            ProviderKind::Xai.default_base_url(),
+            "https://api.x.ai/v1",
+        );
+        assert_eq!(
+            ProviderKind::OpenAI.default_base_url(),
+            "https://api.openai.com/v1",
+        );
+        assert_eq!(
+            ProviderKind::Anthropic.default_base_url(),
+            "https://api.anthropic.com/v1",
+        );
+        assert_eq!(
+            ProviderKind::Google.default_base_url(),
+            "https://generativelanguage.googleapis.com/v1beta",
+        );
+        assert_eq!(
+            ProviderKind::OpenRouter.default_base_url(),
+            "https://openrouter.ai/api/v1",
+        );
+        assert_eq!(
+            ProviderKind::DeepSeek.default_base_url(),
+            "https://api.deepseek.com/v1",
+        );
+    }
+
+    /// `ALL` lists every variant exactly once.
+    #[test]
+    fn provider_kind_all_lists_every_variant() {
+        use std::collections::HashSet;
+        let kinds: HashSet<ProviderKind> = ProviderKind::ALL.iter().copied().collect();
+        assert_eq!(kinds.len(), ProviderKind::ALL.len());
+        for kind in ProviderKind::ALL {
+            assert!(kinds.contains(kind), "{kind:?} missing from ALL");
+        }
+        assert_eq!(kinds.len(), 6);
+    }
 
     // ── Helpers ─────────────────────────────────────────────────────────
 

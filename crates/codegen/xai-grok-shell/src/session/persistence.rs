@@ -1,5 +1,5 @@
 use chrono::{DateTime, Utc};
-use std::io;
+use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -112,6 +112,386 @@ pub struct UserFeedbackEntry {
 /// Helper for `#[serde(skip_serializing_if)]` on bool fields.
 pub(crate) fn is_false(v: &bool) -> bool {
     !v
+}
+
+// ---------------------------------------------------------------------------
+// Agent-step event log (`events.jsonl`)
+//
+// Omnitrix'in ayrı omni-storage katmanının eritilmesi: `EventWriter`'ın
+// `record_message` / `record_tool_call` / `record_file_touch` API'si, ayrı
+// SQLite/CAS deposu yerine GROK'un kendi oturum kalıcılığına (her oturumun
+// `session_dir` altındaki append-only `events.jsonl`) yazılır. Satır şekli
+// (`ts` + `type` etiketli gövde) `xai_file_utils::events::EventWriter` ile
+// aynı dosyada yan yana yaşayacak şekilde seçilmiştir; buradaki kayıt
+// tipleri (`message` / `tool_call` / `file_touch`) mevcut tiplerle çakışmaz.
+// I6: unwrap/expect/panic yok — hatalar `Result` ile akar.
+// ---------------------------------------------------------------------------
+
+/// `events.jsonl` içindeki dosya adı.
+pub const SESSION_EVENTS_FILE: &str = "events.jsonl";
+
+/// Oturum olay günlüğünün (append-only) hata tipi.
+#[derive(Debug)]
+pub enum PersistenceError {
+    /// Dosya açma / yazma hatası. `operation`: `"open"` | `"write"`.
+    Io {
+        operation: &'static str,
+        path: PathBuf,
+        source: io::Error,
+    },
+    /// Kayıt gövdesi serileştirilemedi.
+    Serialization {
+        path: PathBuf,
+        source: serde_json::Error,
+    },
+}
+
+impl std::fmt::Display for PersistenceError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Io {
+                operation,
+                path,
+                source,
+            } => write!(f, "failed to {operation} {}: {source}", path.display()),
+            Self::Serialization { path, source } => {
+                write!(f, "failed to serialize event for {}: {source}", path.display())
+            }
+        }
+    }
+}
+
+impl std::error::Error for PersistenceError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Io { source, .. } => Some(source),
+            Self::Serialization { source, .. } => Some(source),
+        }
+    }
+}
+
+/// Bir ajan adımı; `events.jsonl`'deki tek satırın `type`-etiketli gövdesi.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum SessionEventRecord {
+    /// Bir mesaj (`role`: `"user"` | `"assistant"`).
+    Message { role: String, text: String },
+    /// Bir tool çağrısı; `args` ham argüman JSON'idir.
+    ToolCall { name: String, args: String },
+    /// Çalışma dizinindeki bir dosya dokunuşu. CAS katmanı olmadığı için
+    /// `pre_ref` / `post_ref` şu an her zaman `None`'dur; yalnız yol kaydedilir.
+    FileTouch {
+        path: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        pre_ref: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        post_ref: Option<String>,
+    },
+}
+
+/// `session_dir/events.jsonl` için append-only yazıcı.
+///
+/// Her kayıt tek bir `open(append) → write → close` ile yazılır; `O_APPEND`
+/// tek `write` syscall'ını atomik yaptığı için `xai_file_utils` yazıcısıyla
+/// aynı dosyayı paylaşmak yarış üretmez (satırlar birbirine karışmaz).
+#[derive(Debug, Clone, Copy, Default)]
+pub struct SessionEventRecorder;
+
+impl SessionEventRecorder {
+    pub fn new() -> Self {
+        Self
+    }
+
+    /// Bir mesajı (user/assistant) oturum olay günlüğüne ekler.
+    pub fn record_message(
+        &self,
+        session_dir: &Path,
+        role: &str,
+        text: &str,
+    ) -> Result<(), PersistenceError> {
+        Self::append_record(
+            session_dir,
+            &SessionEventRecord::Message {
+                role: role.to_owned(),
+                text: text.to_owned(),
+            },
+        )
+    }
+
+    /// Bir tool çağrısını oturum olay günlüğüne ekler.
+    pub fn record_tool_call(
+        &self,
+        session_dir: &Path,
+        name: &str,
+        args_json: &str,
+    ) -> Result<(), PersistenceError> {
+        Self::append_record(
+            session_dir,
+            &SessionEventRecord::ToolCall {
+                name: name.to_owned(),
+                args: args_json.to_owned(),
+            },
+        )
+    }
+
+    /// Bir dosya dokunuşunu oturum olay günlüğüne ekler.
+    pub fn record_file_touch(
+        &self,
+        session_dir: &Path,
+        path: &str,
+        pre_ref: Option<&str>,
+        post_ref: Option<&str>,
+    ) -> Result<(), PersistenceError> {
+        Self::append_record(
+            session_dir,
+            &SessionEventRecord::FileTouch {
+                path: path.to_owned(),
+                pre_ref: pre_ref.map(str::to_owned),
+                post_ref: post_ref.map(str::to_owned),
+            },
+        )
+    }
+
+    fn append_record(
+        session_dir: &Path,
+        record: &SessionEventRecord,
+    ) -> Result<(), PersistenceError> {
+        let path = session_dir.join(SESSION_EVENTS_FILE);
+        let mut body = serde_json::to_value(record).map_err(|source| {
+            PersistenceError::Serialization {
+                path: path.clone(),
+                source,
+            }
+        })?;
+        let object = body.as_object_mut().ok_or_else(|| {
+            PersistenceError::Serialization {
+                path: path.clone(),
+                source: serde_json::Error::io(io::Error::other("record body is not a JSON object")),
+            }
+        })?;
+        object.insert(
+            "ts".to_owned(),
+            serde_json::Value::String(
+                Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
+            ),
+        );
+        let mut line = serde_json::to_vec(&body).map_err(|source| {
+            PersistenceError::Serialization {
+                path: path.clone(),
+                source,
+            }
+        })?;
+        line.push(b'\n');
+
+        let mut file = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&path)
+            .map_err(|source| PersistenceError::Io {
+                operation: "open",
+                path: path.clone(),
+                source,
+            })?;
+        file.write_all(&line)
+            .map_err(|source| PersistenceError::Io {
+                operation: "write",
+                path: path.clone(),
+                source,
+            })?;
+        Ok(())
+    }
+}
+
+/// Best-effort kayıt: hook noktaları bunu çağırır; hatalar yalnız
+/// `tracing::warn` ile loglanır ve canlı oturum akışını asla bozmaz.
+pub(crate) fn record_session_event_best_effort(session_dir: &Path, record: SessionEventRecord) {
+    if let Err(error) = SessionEventRecorder::append_record(session_dir, &record) {
+        tracing::warn!(path = %session_dir.display(), %error, "failed to record session event");
+    }
+}
+
+#[cfg(test)]
+mod session_event_recorder_tests {
+    use super::*;
+    use tempfile::TempDir;
+
+    fn read_lines(session_dir: &Path) -> io::Result<Vec<String>> {
+        let text = std::fs::read_to_string(session_dir.join(SESSION_EVENTS_FILE))?;
+        Ok(text.lines().filter(|l| !l.is_empty()).map(str::to_owned).collect())
+    }
+
+    fn parse(line: &str) -> Result<serde_json::Value, PersistenceError> {
+        serde_json::from_str(line).map_err(|source| PersistenceError::Serialization {
+            path: PathBuf::from(SESSION_EVENTS_FILE),
+            source,
+        })
+    }
+
+    #[test]
+    fn all_three_record_types_append_as_single_json_lines() -> Result<(), PersistenceError> {
+        let dir = TempDir::new().map_err(|source| PersistenceError::Io {
+            operation: "create_tempdir",
+            path: PathBuf::from("<temp>"),
+            source,
+        })?;
+        let session_dir = dir.path().join("sessions").join("s1");
+        std::fs::create_dir_all(&session_dir).map_err(|source| PersistenceError::Io {
+            operation: "create_dir",
+            path: session_dir.clone(),
+            source,
+        })?;
+
+        let recorder = SessionEventRecorder::new();
+        recorder.record_message(&session_dir, "user", "merhaba")?;
+        recorder.record_tool_call(&session_dir, "edit", r#"{"file_path":"a.rs"}"#)?;
+        recorder.record_file_touch(&session_dir, "a.rs", None, None)?;
+        recorder.record_message(&session_dir, "assistant", "tamam")?;
+
+        let lines = read_lines(&session_dir).map_err(|source| PersistenceError::Io {
+            operation: "read",
+            path: session_dir.join(SESSION_EVENTS_FILE),
+            source,
+        })?;
+        assert_eq!(lines.len(), 4, "her kayıt tam olarak bir satır olmalı");
+
+        let kinds: Vec<String> = lines
+            .iter()
+            .map(|line| {
+                let value = parse(line)?;
+                assert!(value["ts"].as_str().is_some(), "satırda ts olmalı: {line}");
+                Ok(value["type"].as_str().unwrap_or_default().to_owned())
+            })
+            .collect::<Result<Vec<_>, PersistenceError>>()?;
+        assert_eq!(
+            kinds,
+            ["message", "tool_call", "file_touch", "message"],
+            "tipler serileşme sırasında korunmalı"
+        );
+
+        let message = parse(&lines[0])?;
+        assert_eq!(message["role"], "user");
+        assert_eq!(message["text"], "merhaba");
+        let tool = parse(&lines[1])?;
+        assert_eq!(tool["name"], "edit");
+        assert_eq!(tool["args"], r#"{"file_path":"a.rs"}"#);
+        let touch = parse(&lines[2])?;
+        assert_eq!(touch["path"], "a.rs");
+        assert!(touch.get("pre_ref").is_none());
+        assert!(touch.get("post_ref").is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn later_writes_append_without_truncating() -> Result<(), PersistenceError> {
+        let dir = TempDir::new().map_err(|source| PersistenceError::Io {
+            operation: "create_tempdir",
+            path: PathBuf::from("<temp>"),
+            source,
+        })?;
+        let session_dir = dir.path().join("s2");
+        std::fs::create_dir_all(&session_dir).map_err(|source| PersistenceError::Io {
+            operation: "create_dir",
+            path: session_dir.clone(),
+            source,
+        })?;
+
+        let recorder = SessionEventRecorder::new();
+        recorder.record_message(&session_dir, "user", "birinci")?;
+        recorder.record_message(&session_dir, "user", "ikinci")?;
+
+        let after_two = read_lines(&session_dir).map_err(|source| PersistenceError::Io {
+            operation: "read",
+            path: session_dir.join(SESSION_EVENTS_FILE),
+            source,
+        })?;
+        assert_eq!(after_two.len(), 2);
+
+        recorder.record_tool_call(&session_dir, "bash", "{}")?;
+        let after_three = read_lines(&session_dir).map_err(|source| PersistenceError::Io {
+            operation: "read",
+            path: session_dir.join(SESSION_EVENTS_FILE),
+            source,
+        })?;
+        assert_eq!(after_three.len(), 3, "append: önceki satırlar korunmalı");
+        assert_eq!(after_three[..2], after_two[..2]);
+        Ok(())
+    }
+
+    #[test]
+    fn embedded_newlines_stay_within_one_json_line() -> Result<(), PersistenceError> {
+        let dir = TempDir::new().map_err(|source| PersistenceError::Io {
+            operation: "create_tempdir",
+            path: PathBuf::from("<temp>"),
+            source,
+        })?;
+        let session_dir = dir.path().join("s3");
+        std::fs::create_dir_all(&session_dir).map_err(|source| PersistenceError::Io {
+            operation: "create_dir",
+            path: session_dir.clone(),
+            source,
+        })?;
+
+        SessionEventRecorder::new().record_message(&session_dir, "assistant", "satır1\nsatır2")?;
+        let lines = read_lines(&session_dir).map_err(|source| PersistenceError::Io {
+            operation: "read",
+            path: session_dir.join(SESSION_EVENTS_FILE),
+            source,
+        })?;
+        assert_eq!(lines.len(), 1, "JSON kaçışı sayesinde tek satır kalmalı");
+        let value = parse(&lines[0])?;
+        assert_eq!(value["text"], "satır1\nsatır2");
+        Ok(())
+    }
+
+    #[test]
+    fn missing_session_dir_returns_io_error() -> Result<(), PersistenceError> {
+        let dir = TempDir::new().map_err(|source| PersistenceError::Io {
+            operation: "create_tempdir",
+            path: PathBuf::from("<temp>"),
+            source,
+        })?;
+        let missing = dir.path().join("var-olmayan-dizin");
+        let result = SessionEventRecorder::new().record_message(&missing, "user", "x");
+        assert!(
+            matches!(
+                result,
+                Err(PersistenceError::Io {
+                    operation: "open",
+                    ..
+                })
+            ),
+            "eksik dizinde açma hatası dönmeli, sonuç: {result:?}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn pre_post_refs_round_trip_when_present() -> Result<(), PersistenceError> {
+        let dir = TempDir::new().map_err(|source| PersistenceError::Io {
+            operation: "create_tempdir",
+            path: PathBuf::from("<temp>"),
+            source,
+        })?;
+        let session_dir = dir.path().join("s4");
+        std::fs::create_dir_all(&session_dir).map_err(|source| PersistenceError::Io {
+            operation: "create_dir",
+            path: session_dir.clone(),
+            source,
+        })?;
+
+        SessionEventRecorder::new()
+            .record_file_touch(&session_dir, "b.rs", Some("pre-hash"), Some("post-hash"))?;
+        let lines = read_lines(&session_dir).map_err(|source| PersistenceError::Io {
+            operation: "read",
+            path: session_dir.join(SESSION_EVENTS_FILE),
+            source,
+        })?;
+        assert_eq!(lines.len(), 1);
+        let value = parse(&lines[0])?;
+        assert_eq!(value["pre_ref"], "pre-hash");
+        assert_eq!(value["post_ref"], "post-hash");
+        Ok(())
+    }
 }
 
 #[cfg(test)]

@@ -13,7 +13,7 @@ use xai_grok_sampling_types::{
 };
 
 use crate::attribution::SharedAttributionCallback;
-use crate::retry::{DEFAULT_MAX_RETRIES, RATE_LIMIT_RETRY_THRESHOLD};
+use crate::retry::{DEFAULT_MAX_RETRIES, FallbackConfig, RATE_LIMIT_RETRY_THRESHOLD};
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
 #[serde(rename_all = "snake_case")]
@@ -131,6 +131,12 @@ pub struct SamplerConfig {
     /// Per-request header injector (e.g. OTel traceparent). Called in `post()`.
     #[serde(skip)]
     pub header_injector: Option<SharedHeaderInjector>,
+
+    /// Multi-key fallback chain (omni-router `Fallback` strategy) for
+    /// this request. Takes precedence over `RetryPolicy::fallback`.
+    /// `None` (default) = single-key behavior, exactly as before.
+    #[serde(default)]
+    pub fallback: Option<FallbackConfig>,
 }
 
 impl Default for SamplerConfig {
@@ -167,6 +173,7 @@ impl Default for SamplerConfig {
             compaction_at_tokens: None,
             doom_loop_recovery: None,
             header_injector: None,
+            fallback: None,
         }
     }
 }
@@ -195,6 +202,12 @@ pub struct RetryPolicy {
     pub rate_limit_retry_threshold: u32,
     #[serde(default)]
     pub retry_only_before_output: bool,
+    /// Optional multi-key fallback chain (omni-router `Fallback`
+    /// strategy embedded into the sampler's retry machinery). `None`
+    /// (default) = single-key behavior, exactly as before. A per-request
+    /// `SamplerConfig::fallback` overrides this.
+    #[serde(default)]
+    pub fallback: Option<FallbackConfig>,
 }
 
 impl Default for RetryPolicy {
@@ -203,6 +216,7 @@ impl Default for RetryPolicy {
             max_retries: DEFAULT_MAX_RETRIES,
             rate_limit_retry_threshold: RATE_LIMIT_RETRY_THRESHOLD,
             retry_only_before_output: false,
+            fallback: None,
         }
     }
 }
@@ -227,6 +241,49 @@ mod tests {
         assert_eq!(
             policy.rate_limit_retry_threshold,
             RATE_LIMIT_RETRY_THRESHOLD
+        );
+        assert!(policy.fallback.is_none());
+    }
+
+    /// Fallback defaults to `None` on both knobs: single-key behavior.
+    #[test]
+    fn fallback_defaults_to_none_on_both_knobs() {
+        assert!(RetryPolicy::default().fallback.is_none());
+        assert!(SamplerConfig::default().fallback.is_none());
+    }
+
+    /// A `RetryPolicy` serialized before `fallback` existed must keep
+    /// deserializing (backward compatibility).
+    #[test]
+    fn retry_policy_without_fallback_field_deserializes_to_none() {
+        let mut stripped = serde_json::to_value(RetryPolicy::default()).unwrap();
+        stripped.as_object_mut().unwrap().remove("fallback");
+        let policy: RetryPolicy = serde_json::from_value(stripped).unwrap();
+        assert!(policy.fallback.is_none());
+    }
+
+    /// `SamplerConfig.fallback` round-trips through serde.
+    #[test]
+    fn sampler_config_fallback_round_trips() {
+        let config = SamplerConfig {
+            fallback: Some(crate::retry::FallbackConfig {
+                enabled: true,
+                key_chain: vec!["key-2".into()],
+                base_urls: vec!["https://secondary.example".into()],
+                models: vec!["model-2".into()],
+                circuit_breaker_threshold: 3,
+            }),
+            ..Default::default()
+        };
+        let round_tripped: SamplerConfig =
+            serde_json::from_value(serde_json::to_value(&config).unwrap()).unwrap();
+        assert_eq!(
+            round_tripped.fallback.as_ref().unwrap().key_chain,
+            vec!["key-2"]
+        );
+        assert_eq!(
+            round_tripped.fallback.as_ref().unwrap().base_urls,
+            vec!["https://secondary.example"]
         );
     }
 

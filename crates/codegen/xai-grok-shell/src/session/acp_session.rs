@@ -1086,6 +1086,15 @@ pub(crate) struct TraceConfigTemplate {
     pub(crate) upload_method: crate::session::repo_changes::UploadMethod,
 }
 impl SessionActor {
+    /// Session dizinindeki append-only ajan-adım günlüğünün (`events.jsonl`)
+    /// hedef dizini. Omni-storage eritmesi: ajan adımları ayrı depo yerine
+    /// GROK'un kendi oturum kalıcılığına yazılır.
+    pub(crate) fn session_events_dir(&self) -> std::path::PathBuf {
+        crate::session::persistence::session_dir(&crate::session::info::Info {
+            id: self.session_info.id.clone(),
+            cwd: self.session_info.cwd.clone(),
+        })
+    }
     /// Get the signals handle for tracking session events.
     fn signals_handle(&self) -> SessionSignalsHandle {
         self.feedback_manager.signals_handle()

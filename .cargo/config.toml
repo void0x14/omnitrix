@@ -3,6 +3,9 @@
 # Yerel gelistirme ayari; CI'da CARGO_BUILD_JOBS ile ezilebilir.
 [build]
 jobs = 4
+# sccache: kalici derleme cache'i. Ilk derlemeden sonra hicbir dependency
+# yeniden derlenmez — tekrar derlemeler saniyelere iner (~/0.5GB cache).
+rustc-wrapper = "sccache"
 
 # link-arg
 # https://pyo3.rs/v0.17.1/building_and_distribution.html#macos
@@ -38,7 +41,8 @@ rustflags = [
 ]
 
 [target.x86_64-unknown-linux-gnu]
-rustflags = ["-C", "force-unwind-tables=yes"]
+# mold: cok cekirdekli paralel link — lld/gnu-ld'ye gore 5-10x hizli.
+rustflags = ["-C", "force-unwind-tables=yes", "-C", "link-arg=-fuse-ld=mold"]
 
 [target.aarch64-unknown-linux-gnu]
 rustflags = ["-C", "target-cpu=neoverse-v2", "-C", "force-unwind-tables=yes"]

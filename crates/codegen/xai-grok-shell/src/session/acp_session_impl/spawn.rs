@@ -1253,6 +1253,7 @@ pub(crate) async fn spawn_session_actor(
         max_retries: max_retries.unwrap_or(5),
         rate_limit_retry_threshold: 2,
         retry_only_before_output,
+        fallback: None,
     };
     let (sampler_event_tx, sampler_event_rx) =
         tokio::sync::mpsc::unbounded_channel::<xai_grok_sampler::SamplingEvent>();

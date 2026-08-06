@@ -502,6 +502,30 @@ impl SessionActor {
                 .take()
                 .expect("dispatch index should match an approved slot exactly once");
             self.signals_handle().record_tool_call(&prepared.tool_name);
+            crate::session::persistence::record_session_event_best_effort(
+                &self.session_events_dir(),
+                crate::session::persistence::SessionEventRecord::ToolCall {
+                    name: prepared.tool_name.clone(),
+                    args: prepared.raw_arguments.clone(),
+                },
+            );
+            let tool_touch_ok = match &result {
+                Ok(tool_result) => !tool_result.output.is_error(),
+                Err(_) => false,
+            };
+            if tool_touch_ok
+                && !prepared.is_read_only
+                && let Some(path) = lock_path_for_args(&prepared.parsed_args)
+            {
+                crate::session::persistence::record_session_event_best_effort(
+                    &self.session_events_dir(),
+                    crate::session::persistence::SessionEventRecord::FileTouch {
+                        path: path.to_owned(),
+                        pre_ref: None,
+                        post_ref: None,
+                    },
+                );
+            }
             let tool_start = self.events.tool_started(prepared.tool_name.clone());
             let mut post_tool_use_result: Option<serde_json::Value> = None;
             if let Some((server, _)) =

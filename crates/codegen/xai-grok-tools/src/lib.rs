@@ -27,6 +27,7 @@ pub mod notification;
 pub mod persistence;
 pub mod registry;
 pub mod reminders;
+pub mod research_tool;
 pub mod retry;
 pub mod tool_taxonomy;
 pub mod types;

@@ -1,4 +1,4 @@
-use crate::agent::auth_method::ModelByok;
+use crate::agent::auth_method::{ModelByok, ProviderKind};
 use crate::agent::model_providers::{
     ModelProviderConfig, auth_config_issues, model_provider_auth_name, parse_model_providers,
 };
@@ -4799,11 +4799,119 @@ pub fn resolve_credentials(model: &ModelEntry, session_key: Option<&str>) -> Res
         auth_type = ?auth_type,
         "resolved credentials"
     );
-    ResolvedCredentials {
+    let credentials = ResolvedCredentials {
         api_key,
         base_url,
         auth_type,
         auth_scheme,
+    };
+    // Omnitrix eritme wiring: when an API key was resolved for a third-party
+    // endpoint, probe its liveness (once per key+endpoint per process) and
+    // warn if dead — never aborts the flow, grok's own behavior is preserved.
+    if credentials.auth_type == xai_chat_state::AuthType::ApiKey
+        && let Some(key) = credentials.api_key.as_deref()
+    {
+        warn_if_resolved_key_not_live(&info.model, &credentials.base_url, key);
+    }
+    credentials
+}
+/// Probe whether `key` is live against `base_url` by issuing a GET to
+/// `{base_url}/models` with the provider-appropriate auth header.
+///
+/// Omnitrix eritme: the liveness-check logic from
+/// `omni-provider::detection::ProviderDetector::validate` /
+/// `omni-provider::health` moved here so grok's own auth flow owns key
+/// handling — there is no separate keyring/provider layer anymore.
+///
+/// - Blank/whitespace `key` or `base_url` → `false` (nothing to probe).
+/// - Auth header follows [`ProviderKind::detect_from_key`]: Anthropic uses
+///   `x-api-key`, Google uses `x-goog-api-key`, everything else (including
+///   undetectable keys) uses `Authorization: Bearer`.
+/// - Any transport error, timeout (3s), or non-2xx response → `false`.
+/// - Never panics. Callers MUST NOT abort the auth flow on `false` — this is
+///   a warning signal only.
+pub fn verify_key_live(base_url: &str, key: &str) -> bool {
+    if key.trim().is_empty() || base_url.trim().is_empty() {
+        return false;
+    }
+    // `reqwest::blocking` kuruldugu thread icinde kendi runtime'ini kurar ve
+    // drop'ta kapatir. Bir tokio context'i icinden (resolve_credentials gibi
+    // senkron sarmalayicilar bile tur basinda runtime icinde calisir)
+    // dogrudan kullanilirsa "Cannot drop a runtime in a blocking context"
+    // panigine yol acar (I6: uretim yolunda panic yok). Bu yuzden istek
+    // ayri bir scope thread'inde yapilir; caller thread'i bekler.
+    let base_url_owned = base_url.to_owned();
+    let key_owned = key.to_owned();
+    std::thread::scope(|s| {
+        let handle = s.spawn(move || {
+            let url = format!("{}/models", base_url_owned.trim_end_matches('/'));
+            let client = match reqwest::blocking::Client::builder()
+                .timeout(std::time::Duration::from_secs(3))
+                .build()
+            {
+                Ok(client) => client,
+                Err(_) => return false,
+            };
+            let mut req = client.get(&url);
+            req = match ProviderKind::detect_from_key(&key_owned) {
+                Some(ProviderKind::Anthropic) => req.header("x-api-key", &key_owned),
+                Some(ProviderKind::Google) => req.header("x-goog-api-key", &key_owned),
+                _ => req.header("Authorization", format!("Bearer {key_owned}")),
+            };
+            match req.send() {
+                Ok(resp) => resp.status().is_success(),
+                Err(_) => false,
+            }
+        });
+        handle.join().unwrap_or(false)
+    })
+}
+/// Once-per-process memo of liveness probes already performed for a
+/// `(base_url, api_key)` pair, so per-turn `resolve_credentials` calls never
+/// re-probe (and never add network latency to the hot path).
+static LIVE_KEY_PROBE_MEMO: std::sync::OnceLock<
+    std::sync::Mutex<std::collections::HashSet<(String, String)>>,
+> = std::sync::OnceLock::new();
+/// Warn (once per key+endpoint per process) when a resolved API key is not
+/// live. Never aborts the auth flow: grok's own request behavior is
+/// unchanged, this only surfaces a warning for dead keys.
+///
+/// First-party xAI endpoints are skipped — grok's own auth flow already
+/// governs those; the probe targets third-party/BYOK keys (the
+/// omni-provider intent). Keys that already had a probe in this process are
+/// skipped by the memo, so the network probe fires at most once per
+/// key+endpoint per process.
+fn warn_if_resolved_key_not_live(model: &str, base_url: &str, key: &str) {
+    if key.trim().is_empty() || crate::util::is_xai_api_url(base_url) {
+        return;
+    }
+    let memo = LIVE_KEY_PROBE_MEMO.get_or_init(|| {
+        std::sync::Mutex::new(std::collections::HashSet::new())
+    });
+    let probe_key = (base_url.to_owned(), key.to_owned());
+    {
+        let guard = match memo.lock() {
+            Ok(guard) => guard,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        if guard.contains(&probe_key) {
+            return;
+        }
+    }
+    let live = verify_key_live(base_url, key);
+    {
+        let mut guard = match memo.lock() {
+            Ok(guard) => guard,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        guard.insert(probe_key);
+    }
+    if !live {
+        tracing::warn!(
+            model,
+            base_url,
+            "resolved API key failed liveness check; requests may fail with this key",
+        );
     }
 }
 /// `disable_api_key_auth` at the credential seam: swap a first-party xAI API
@@ -5151,6 +5259,7 @@ pub fn sampling_config_for_model(
         compaction_at_tokens: info.compaction_at_tokens,
         doom_loop_recovery: None,
         header_injector: None,
+        fallback: None,
     }
 }
 /// Fold URL-derived headers into `extra_headers`.
@@ -12645,5 +12754,42 @@ default = "grok-4.5"
             Some(true),
             true,
         );
+    }
+
+    // ── verify_key_live (Omnitrix eritme: omni-provider detection/health) ─
+
+    /// Blank or whitespace keys are rejected without any network I/O.
+    #[test]
+    fn verify_key_live_rejects_blank_key_without_network() {
+        assert!(!verify_key_live("https://api.example.com/v1", ""));
+        assert!(!verify_key_live("https://api.example.com/v1", "   "));
+        assert!(!verify_key_live("https://api.example.com/v1", "\t"));
+        assert!(!verify_key_live("", "sk-proj-abcdef"));
+        assert!(!verify_key_live("   ", "xai-abcdef"));
+    }
+
+    /// An unreachable endpoint (loopback discard port: immediate connection
+    /// refused, no egress) yields `false`, for every auth-header branch the
+    /// header selection can take (provider-detected and unknown keys).
+    #[test]
+    fn verify_key_live_returns_false_on_unreachable_endpoint() {
+        assert!(!verify_key_live("http://127.0.0.1:1/v1", "sk-ant-api03-test"));
+        assert!(!verify_key_live("http://127.0.0.1:1/v1", "AIzaSyA-test-key"));
+        assert!(!verify_key_live("http://127.0.0.1:1/v1", "sk-proj-test-key"));
+        assert!(!verify_key_live("http://127.0.0.1:1/v1", "undetectable-key"));
+    }
+
+    /// Liveness warning wiring skips first-party xAI endpoints without ever
+    /// touching the network — the probe is reserved for third-party BYOK keys.
+    #[test]
+    fn warn_if_resolved_key_not_live_skips_first_party_endpoints() {
+        // `crate::util::is_xai_api_url` covers api.x.ai and the cli-chat-proxy;
+        // these must return without probing (no network, no panic).
+        warn_if_resolved_key_not_live(
+            "grok-build",
+            "https://api.x.ai/v1",
+            "xai-not-really-a-key",
+        );
+        warn_if_resolved_key_not_live("grok-build", "https://api.x.ai/v1", "");
     }
 }

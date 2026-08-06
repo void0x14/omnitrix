@@ -531,6 +531,7 @@ impl SessionActor {
             compaction_at_tokens: self.compaction_at_tokens.get(),
             doom_loop_recovery: self.doom_loop_recovery,
             header_injector: Some(std::sync::Arc::new(TraceContextInjector)),
+            fallback: None,
         }
     }
     /// Install auto-mode permission classifier with a live LLM side-query
@@ -1378,6 +1379,17 @@ impl SessionActor {
         self.signals_handle().record_assistant_message();
         if let ConversationItem::Assistant(ref a) = assistant_item {
             tracing::info!(model_id = ?a.model_id, "DEBUG record_assistant_response model_id");
+        }
+        if let ConversationItem::Assistant(ref a) = assistant_item
+            && !a.content.is_empty()
+        {
+            crate::session::persistence::record_session_event_best_effort(
+                &self.session_events_dir(),
+                crate::session::persistence::SessionEventRecord::Message {
+                    role: "assistant".to_owned(),
+                    text: a.content.to_string(),
+                },
+            );
         }
         if let ConversationItem::Assistant(ref a) = assistant_item
             && let Some(first_call) = a.tool_calls.first()

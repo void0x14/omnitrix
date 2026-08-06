@@ -32,8 +32,25 @@
 //! (4xx except 429 = false, 5xx + 429 = true), so no behavior changes
 //! on merge. The header enables future CCP-side refinements (e.g.
 //! marking content-caused 500s as non-retryable) without client updates.
+//!
+//! # Multi-key fallback (omni-router `Fallback` strategy)
+//!
+//! [`FallbackConfig`] embeds `omni-router`'s `RoutingStrategy::Fallback`
+//! (key error / quota-exhausted -> move to the next working key) into
+//! the sampler. When a hop ends in a key-scoped failure — auth
+//! rejection, rate limit / quota exhaustion, or another permanent
+//! (non-retryable) error — [`FallbackWalk`] hands the request to the
+//! next key / base URL / model in the chain. A per-key circuit breaker
+//! skips a key for the rest of the walk once it has accumulated
+//! `circuit_breaker_threshold` failures; when every key is tripped the
+//! walk reports [`FallbackStep::ChainExhausted`] and the caller
+//! surfaces the ORIGINAL (first) error. With `fallback: None` (the
+//! default) every request behaves exactly as before: single-key retry
+//! with no fallback chain.
 
 use std::time::Duration;
+
+use serde::{Deserialize, Serialize};
 
 use xai_grok_sampling_types::SamplingError;
 
@@ -132,6 +149,257 @@ pub enum RetryDecision {
     /// Fatal: no further retries possible. Surface to the caller as the
     /// final outcome of the sampling request.
     Fatal(SamplingError),
+}
+
+/// Multi-key fallback configuration.
+///
+/// Mirrors `omni-router`'s `RoutingStrategy::Fallback`: when a request
+/// fails with a key-scoped error (auth, rate limit / quota exhaustion,
+/// or another permanent failure), the sampler retries it with the next
+/// key in the chain instead of failing the turn.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct FallbackConfig {
+    /// Master switch. When `false` the chain is never consulted and
+    /// every request uses the primary key exactly as before.
+    pub enabled: bool,
+    /// API keys tried AFTER the primary one, in order. The primary key
+    /// comes from `SamplerConfig::api_key`; entries here are the
+    /// fallbacks. Empty = single-key behavior (no fallback).
+    pub key_chain: Vec<String>,
+    /// Base URL per entry of `key_chain` (same order). A missing or
+    /// empty entry falls back to the primary base URL.
+    #[serde(default)]
+    pub base_urls: Vec<String>,
+    /// Model per entry of `key_chain` (same order). A missing or empty
+    /// entry keeps the primary model.
+    #[serde(default)]
+    pub models: Vec<String>,
+    /// Circuit breaker: after this many failures a key is skipped for
+    /// the rest of the fallback walk ("o turda atla"). `0` is treated
+    /// as `1` — a single failure disables the key — so the walk always
+    /// terminates.
+    #[serde(default)]
+    pub circuit_breaker_threshold: u32,
+}
+
+/// Fully-resolved endpoint for one position in the fallback chain.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FallbackEndpoint {
+    /// API key. `None` only for the primary position when the base
+    /// config has no key (the client resolves it from env at build
+    /// time); chain keys are always concrete strings.
+    pub api_key: Option<String>,
+    /// Base URL the request is sent to.
+    pub base_url: String,
+    /// Model served by this key.
+    pub model: String,
+}
+
+/// Whether a failed hop should trigger a fallback to the next key.
+///
+/// Mirrors `omni-router`'s fallback triggers (key error /
+/// quota-exhausted):
+/// - credential rejection (`Auth`, HTTP 401),
+/// - rate limits and quota exhaustion (HTTP 429),
+/// - any other permanent (non-retryable) failure that a different
+///   key / base URL / model could plausibly recover from (403 quota
+///   blocks, idle timeouts, serialization, config mismatches, ...).
+///
+/// Deterministic request-content failures stay ineligible: no key
+/// change can fix a context-window overflow or a server
+/// `x-should-retry: false` rejection.
+#[must_use]
+pub fn is_fallback_eligible(err: &SamplingError) -> bool {
+    if err.is_auth_error() || err.is_rate_limited() {
+        return true;
+    }
+    !err.is_retryable()
+        && !err.is_context_length_error()
+        && !matches!(err.should_retry_header(), Some(false))
+}
+
+/// Per-request fallback chain with a per-key circuit breaker.
+///
+/// The walk mirrors `omni-router`'s `RoutingStrategy::Fallback`: on
+/// error the request moves top-down to the next live key. The walk
+/// wraps around the chain; a key that accumulated
+/// [`FallbackConfig::circuit_breaker_threshold`] failures is skipped
+/// for the rest of the walk. When every key is tripped the chain is
+/// exhausted.
+#[derive(Debug)]
+pub struct FallbackRouter {
+    endpoints: Vec<FallbackEndpoint>,
+    /// Failure count per endpoint (circuit breaker).
+    failures: Vec<u32>,
+    /// Index of the endpoint the next attempt should use.
+    current: usize,
+    threshold: u32,
+}
+
+impl FallbackRouter {
+    /// Build the chain from a fallback config and the primary endpoint.
+    ///
+    /// Endpoint `i >= 1` resolves to `key_chain[i-1]` with the matching
+    /// `base_urls[i-1]` / `models[i-1]` entry, falling back to the
+    /// primary's base URL / model when the entry is missing or empty.
+    #[must_use]
+    pub fn new(config: &FallbackConfig, primary: FallbackEndpoint) -> Self {
+        let mut endpoints = Vec::with_capacity(config.key_chain.len() + 1);
+        endpoints.push(primary.clone());
+        for (i, key) in config.key_chain.iter().enumerate() {
+            let base_url = config
+                .base_urls
+                .get(i)
+                .filter(|s| !s.is_empty())
+                .map_or_else(|| primary.base_url.clone(), Clone::clone);
+            let model = config
+                .models
+                .get(i)
+                .filter(|s| !s.is_empty())
+                .map_or_else(|| primary.model.clone(), Clone::clone);
+            endpoints.push(FallbackEndpoint {
+                api_key: Some(key.clone()),
+                base_url,
+                model,
+            });
+        }
+        let len = endpoints.len();
+        Self {
+            endpoints,
+            failures: vec![0; len],
+            current: 0,
+            threshold: config.circuit_breaker_threshold.max(1),
+        }
+    }
+
+    /// Total positions in the chain (primary + fallbacks).
+    #[must_use]
+    pub fn endpoint_count(&self) -> usize {
+        self.endpoints.len()
+    }
+
+    /// The endpoint the next attempt should use, if any.
+    #[must_use]
+    pub fn current_endpoint(&self) -> Option<&FallbackEndpoint> {
+        self.endpoints.get(self.current)
+    }
+
+    /// Count a failure for the current endpoint and advance to the next
+    /// live endpoint (top-down, wrapping; tripped keys are skipped).
+    ///
+    /// Returns the endpoint to try next, or `None` when every key in
+    /// the chain is tripped (chain exhausted).
+    #[must_use]
+    pub fn record_failure(&mut self) -> Option<FallbackEndpoint> {
+        if self.endpoints.is_empty() {
+            return None;
+        }
+        self.failures[self.current] = self.failures[self.current].saturating_add(1);
+        self.advance()
+    }
+
+    /// Reset the circuit breaker for the endpoint that just succeeded.
+    pub fn record_success(&mut self) {
+        if let Some(count) = self.failures.get_mut(self.current) {
+            *count = 0;
+        }
+    }
+
+    fn is_tripped(&self, idx: usize) -> bool {
+        self.failures[idx] >= self.threshold
+    }
+
+    fn advance(&mut self) -> Option<FallbackEndpoint> {
+        let n = self.endpoints.len();
+        if n <= 1 {
+            // No second key: a single-endpoint chain is exhausted the
+            // moment its only key fails (fallback has nowhere to go).
+            return None;
+        }
+        for step in 1..=n {
+            let idx = (self.current + step) % n;
+            if !self.is_tripped(idx) {
+                self.current = idx;
+                return self.endpoints.get(idx).cloned();
+            }
+        }
+        None
+    }
+}
+
+/// Outcome of feeding a failed hop into a [`FallbackWalk`].
+#[derive(Debug)]
+pub enum FallbackStep {
+    /// The error is not fallback-eligible: surface it as the final
+    /// outcome (same-key errors are not recoverable via the chain).
+    NotEligible,
+    /// Every key in the chain is tripped: surface the FIRST failure
+    /// (the original error) as the final outcome.
+    ChainExhausted,
+    /// Try the next endpoint in the chain.
+    RetryWith(FallbackEndpoint),
+}
+
+/// Stateful per-request fallback walk (pure; no I/O, no sleeping).
+///
+/// The actor feeds each failed hop here and acts on the returned
+/// [`FallbackStep`]. The first failure is retained so the caller can
+/// surface the original error when the chain is exhausted.
+#[derive(Debug)]
+pub struct FallbackWalk {
+    router: FallbackRouter,
+    original: Option<SamplingError>,
+}
+
+impl FallbackWalk {
+    /// Build a walk over the chain described by `config`, with
+    /// `primary` as the first endpoint.
+    #[must_use]
+    pub fn new(config: &FallbackConfig, primary: FallbackEndpoint) -> Self {
+        Self {
+            router: FallbackRouter::new(config, primary),
+            original: None,
+        }
+    }
+
+    /// Total positions in the chain (primary + fallbacks).
+    #[must_use]
+    pub fn endpoint_count(&self) -> usize {
+        self.router.endpoint_count()
+    }
+
+    /// The endpoint the next attempt should use, if any.
+    #[must_use]
+    pub fn current_endpoint(&self) -> Option<&FallbackEndpoint> {
+        self.router.current_endpoint()
+    }
+
+    /// The FIRST failure of the walk, if any.
+    #[must_use]
+    pub fn original_error(&self) -> Option<&SamplingError> {
+        self.original.as_ref()
+    }
+
+    /// Record a successful hop: reset the circuit breaker for the
+    /// working key.
+    pub fn on_success(&mut self) {
+        self.router.record_success();
+    }
+
+    /// Feed a failed hop into the walk. Records the first failure as
+    /// the original error, then answers with the next action.
+    pub fn on_failure(&mut self, err: &SamplingError) -> FallbackStep {
+        if self.original.is_none() {
+            self.original = Some(clone_error(err));
+        }
+        if !is_fallback_eligible(err) {
+            return FallbackStep::NotEligible;
+        }
+        match self.router.record_failure() {
+            Some(next) => FallbackStep::RetryWith(next),
+            None => FallbackStep::ChainExhausted,
+        }
+    }
 }
 
 /// Classify a sampling error into a [`RetryDecision`].
@@ -886,5 +1154,263 @@ mod tests {
             classify_error(&err, 0, 15, RATE_LIMIT_RETRY_THRESHOLD),
             RetryDecision::Fatal(_)
         ));
+    }
+
+    // ------------------------------------------------------------------
+    // Multi-key fallback (omni-router `Fallback` strategy embedded here)
+    // ------------------------------------------------------------------
+
+    fn primary() -> FallbackEndpoint {
+        FallbackEndpoint {
+            api_key: Some("key-1".into()),
+            base_url: "https://primary.example".into(),
+            model: "model-1".into(),
+        }
+    }
+
+    fn chain_config(keys: &[&str], threshold: u32) -> FallbackConfig {
+        FallbackConfig {
+            enabled: true,
+            key_chain: keys.iter().map(|k| k.to_string()).collect(),
+            base_urls: Vec::new(),
+            models: Vec::new(),
+            circuit_breaker_threshold: threshold,
+        }
+    }
+
+    fn auth_err() -> SamplingError {
+        SamplingError::Auth("rejected".into())
+    }
+
+    fn rate_err() -> SamplingError {
+        api_err(StatusCode::TOO_MANY_REQUESTS, "quota exhausted")
+    }
+
+    fn empty_err() -> SamplingError {
+        SamplingError::EmptyResponse {
+            context: xai_grok_sampling_types::EmptyResponseContext {
+                reason: xai_grok_sampling_types::EmptyReason::NoVisibleContent,
+                had_reasoning: false,
+                content_len: 0,
+                tool_call_count: 0,
+                finish_reason: Some("stop".into()),
+                completion_tokens: Some(1),
+                reasoning_tokens: Some(0),
+                prompt_tokens: Some(10),
+                model: "m".into(),
+                first_choice_seen: true,
+            },
+        }
+    }
+
+    /// (a) `fallback: None` keeps the single-key behavior: the default
+    /// policy carries no chain, and a chain built from the default
+    /// (disabled) config has exactly one endpoint that is exhausted
+    /// after a single failure — no second key is ever attempted.
+    #[test]
+    fn fallback_none_keeps_single_key_behavior() {
+        let policy = crate::config::RetryPolicy::default();
+        assert!(
+            policy.fallback.is_none(),
+            "default policy must not fall back"
+        );
+
+        let cfg = FallbackConfig::default();
+        assert!(!cfg.enabled);
+        let mut walk = FallbackWalk::new(&cfg, primary());
+        assert_eq!(walk.endpoint_count(), 1);
+        assert_eq!(walk.current_endpoint(), Some(&primary()));
+        match walk.on_failure(&auth_err()) {
+            FallbackStep::ChainExhausted => {}
+            other => panic!("single-key chain must exhaust immediately, got {other:?}"),
+        }
+        assert_eq!(
+            walk.original_error().map(|e| e.to_string()),
+            Some(auth_err().to_string())
+        );
+    }
+
+    /// (b) First key errors -> the walk hands the request to the second
+    /// key, which then succeeds.
+    #[test]
+    fn fallback_chain_tries_second_key_after_first_failure() {
+        let mut walk = FallbackWalk::new(&chain_config(&["key-2"], 3), primary());
+        assert_eq!(walk.endpoint_count(), 2);
+
+        match walk.on_failure(&auth_err()) {
+            FallbackStep::RetryWith(endpoint) => {
+                assert_eq!(endpoint.api_key.as_deref(), Some("key-2"));
+                // Empty base_urls/models entries fall back to the primary.
+                assert_eq!(endpoint.base_url, primary().base_url);
+                assert_eq!(endpoint.model, primary().model);
+            }
+            other => panic!("expected RetryWith(key-2), got {other:?}"),
+        }
+        // The walk now points at the second key; a success there ends it.
+        assert_eq!(
+            walk.current_endpoint().and_then(|e| e.api_key.as_deref()),
+            Some("key-2")
+        );
+        walk.on_success();
+        assert_eq!(walk.endpoint_count(), 2);
+    }
+
+    /// Fallback hops resolve per-key base_url / model overrides.
+    #[test]
+    fn fallback_endpoint_resolves_base_url_and_model_overrides() {
+        let mut cfg = chain_config(&["key-2"], 1);
+        cfg.base_urls = vec!["https://secondary.example".into()];
+        cfg.models = vec!["model-2".into()];
+        let mut walk = FallbackWalk::new(&cfg, primary());
+        match walk.on_failure(&rate_err()) {
+            FallbackStep::RetryWith(endpoint) => {
+                assert_eq!(endpoint.api_key.as_deref(), Some("key-2"));
+                assert_eq!(endpoint.base_url, "https://secondary.example");
+                assert_eq!(endpoint.model, "model-2");
+            }
+            other => panic!("expected RetryWith(key-2, secondary, model-2), got {other:?}"),
+        }
+    }
+
+    /// A three-key chain is walked top-down in order.
+    #[test]
+    fn fallback_walks_chain_top_down_in_order() {
+        let mut walk = FallbackWalk::new(&chain_config(&["key-2", "key-3"], 1), primary());
+        for expected in ["key-2", "key-3"] {
+            match walk.on_failure(&auth_err()) {
+                FallbackStep::RetryWith(endpoint) => {
+                    assert_eq!(endpoint.api_key.as_deref(), Some(expected));
+                }
+                other => panic!("expected RetryWith({expected}), got {other:?}"),
+            }
+        }
+        match walk.on_failure(&auth_err()) {
+            FallbackStep::ChainExhausted => {}
+            other => panic!("expected ChainExhausted after 3 keys, got {other:?}"),
+        }
+    }
+
+    /// (c) When the chain is exhausted the caller must surface the
+    /// ORIGINAL (first) error, not the last one.
+    #[test]
+    fn chain_exhausted_returns_original_error() {
+        let mut walk = FallbackWalk::new(&chain_config(&["key-2"], 1), primary());
+        let first = auth_err();
+        let last = rate_err();
+        assert!(matches!(
+            walk.on_failure(&first),
+            FallbackStep::RetryWith(_)
+        ));
+        match walk.on_failure(&last) {
+            FallbackStep::ChainExhausted => {}
+            other => panic!("expected ChainExhausted, got {other:?}"),
+        }
+        let original = walk
+            .original_error()
+            .expect("original error must be recorded on first failure");
+        assert_eq!(original.to_string(), first.to_string());
+        assert_ne!(original.to_string(), last.to_string());
+    }
+
+    /// (d) Circuit breaker: a key that reached `circuit_breaker_threshold`
+    /// failures is skipped for the rest of the walk.
+    #[test]
+    fn circuit_breaker_skips_key_after_threshold_failures() {
+        let mut walk = FallbackWalk::new(&chain_config(&["key-2"], 2), primary());
+        // key-1 fails once -> key-2
+        assert!(matches!(
+            walk.on_failure(&auth_err()),
+            FallbackStep::RetryWith(_)
+        ));
+        // key-2 fails once -> wraps back to key-1 (1 < threshold 2)
+        assert!(matches!(
+            walk.on_failure(&rate_err()),
+            FallbackStep::RetryWith(_)
+        ));
+        assert_eq!(
+            walk.current_endpoint().and_then(|e| e.api_key.as_deref()),
+            Some("key-1")
+        );
+        // key-1 fails again: 2 >= threshold -> tripped; the walk must
+        // SKIP it and hand the request to key-2.
+        match walk.on_failure(&auth_err()) {
+            FallbackStep::RetryWith(endpoint) => {
+                assert_eq!(
+                    endpoint.api_key.as_deref(),
+                    Some("key-2"),
+                    "tripped key-1 must be skipped"
+                );
+            }
+            other => panic!("expected RetryWith(key-2) skipping tripped key-1, got {other:?}"),
+        }
+        // key-2 fails again: 2 >= threshold -> both tripped -> exhausted.
+        match walk.on_failure(&rate_err()) {
+            FallbackStep::ChainExhausted => {}
+            other => panic!("expected ChainExhausted after both keys tripped, got {other:?}"),
+        }
+    }
+
+    /// A zero threshold still terminates: the key is skipped after its
+    /// first failure.
+    #[test]
+    fn zero_breaker_threshold_terminates_and_skips_after_first_failure() {
+        let mut cfg = chain_config(&["key-2"], 0);
+        assert_eq!(cfg.circuit_breaker_threshold, 0);
+        let mut walk = FallbackWalk::new(&cfg, primary());
+        assert!(matches!(
+            walk.on_failure(&auth_err()),
+            FallbackStep::RetryWith(_)
+        ));
+        assert!(matches!(
+            walk.on_failure(&rate_err()),
+            FallbackStep::ChainExhausted
+        ));
+    }
+
+    #[test]
+    fn fallback_eligibility_covers_auth_rate_limit_and_permanent_errors() {
+        assert!(is_fallback_eligible(&auth_err()));
+        assert!(is_fallback_eligible(&api_err(
+            StatusCode::UNAUTHORIZED,
+            "nope"
+        )));
+        assert!(is_fallback_eligible(&rate_err()));
+        assert!(is_fallback_eligible(&api_err(
+            StatusCode::FORBIDDEN,
+            "insufficient quota"
+        )));
+        assert!(is_fallback_eligible(&SamplingError::IdleTimeout {
+            elapsed_secs: 60
+        }));
+        assert!(is_fallback_eligible(&api_err(
+            StatusCode::NOT_FOUND,
+            "no such model"
+        )));
+    }
+
+    #[test]
+    fn fallback_eligibility_excludes_retryable_and_deterministic_errors() {
+        // Retryable: the hop's own retry loop owns the recovery.
+        assert!(!is_fallback_eligible(&api_err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "boom"
+        )));
+        assert!(!is_fallback_eligible(&SamplingError::EventStreamError(
+            "reset".into()
+        )));
+        assert!(!is_fallback_eligible(&empty_err()));
+        // Deterministic request-content failures: no key change can fix them.
+        assert!(!is_fallback_eligible(&api_err(
+            StatusCode::BAD_REQUEST,
+            "The prompt is too long for this model's context window."
+        )));
+        let server_said_stop = SamplingError::Api {
+            status: StatusCode::BAD_REQUEST,
+            message: "malformed tool call".into(),
+            model_metadata: None,
+            retry_after_secs: None,
+            should_retry: Some(false),
+        };
+        assert!(!is_fallback_eligible(&server_said_stop));
     }
 }

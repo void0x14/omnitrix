@@ -819,6 +819,13 @@ impl SessionActor {
                 self.chat_state_handle.push_user_message(user_chat);
             }
         }
+        crate::session::persistence::record_session_event_best_effort(
+            &self.session_events_dir(),
+            crate::session::persistence::SessionEventRecord::Message {
+                role: "user".to_owned(),
+                text: prompt_text_for_hook.clone(),
+            },
+        );
         self.dispatch_hook(
             xai_grok_hooks::event::HookEventName::UserPromptSubmit,
             xai_grok_hooks::event::HookPayload::UserPromptSubmit {
