@@ -14,10 +14,7 @@
 //! doner. Model adlari gomulu degildir (AS7/I5) — arastirma ve yargi saglayicilari
 //! config'ten gelir (bridge kurulumunda cozulur).
 
-use std::sync::Arc;
-
-use crate::omni_bridge::{OmniAutonomous, OmniResearch, ResearchMode, research};
-use crate::slash::command::{CommandExecCtx, CommandResult, SlashCommand};
+use crate::omni_bridge::ResearchMode;
 
 /// `/omni-autonomous` komutu.
 pub struct OmniAutonomousCommand;
@@ -71,7 +68,7 @@ impl crate::slash::command::SlashCommand for OmniAutonomousCommand {
 
     fn run(
         &self,
-        ctx: &mut crate::slash::command::CommandExecCtx<'_>,
+        _ctx: &mut crate::slash::command::CommandExecCtx<'_>,
         args: &str,
     ) -> crate::slash::command::CommandResult {
         let problem = args.trim().to_string();
@@ -111,6 +108,9 @@ pub fn initial_research_mode(prefer: Option<&str>) -> ResearchMode {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Arc;
+    use crate::omni_bridge::{OmniAutonomous, OmniResearch, research};
+    use crate::slash::command::{CommandExecCtx, CommandResult, SlashCommand};
     use crate::acp::model_state::ModelState;
     use crate::app::bundle::BundleState;
     use crate::settings::PagerLocalSnapshot;

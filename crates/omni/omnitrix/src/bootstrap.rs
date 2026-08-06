@@ -248,6 +248,13 @@ pub fn instant_exit(code: i32) -> ! {
 /// SIGINT gozcusu. Ham kip (raw mode) acikken Ctrl+C cogu terminalde sinyale
 /// donusmez; tus olayi olarak da yakalanir (bkz. `main.rs`). Iki yol da ayni
 /// `instant_exit` cagrisina duser.
+///
+/// TUI icinde bu gozcu KURULMAZ: `xai-grok-pager` kendi signal handler'ini
+/// kurar (SIGINT/SIGTERM/SIGHUP -> kendi kapanis yolu, `signal_handler::install`
+/// `app/mod.rs:1170`). Ikinci bir `ctrl_c()` gozcusu pager'in kapanisiyla
+/// yarisir; crash-only kapanis pager uzerinden isler (8.1). Bu fonksiyon
+/// bagimsiz/kutuphane kullanimlari icin korunur.
+#[allow(dead_code)]
 pub async fn watch_sigint() {
     if tokio::signal::ctrl_c().await.is_ok() {
         instant_exit(0);
