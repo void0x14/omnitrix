@@ -202,6 +202,31 @@ pub fn research() -> Option<Arc<dyn OmniResearch>> {
     RESEARCH.get().cloned()
 }
 
+/// Faz 10 tam-otonom dongu motoru (kurulum: omnitrix bin, warmup sonrasi).
+///
+/// Motor problem metnini alir, arastirir, planlar, scheduler'a spawn eder ve
+/// `TerminationOracle` ile degerlendirir; ozet metin doner. Pager yalnizca
+/// bu trait'i gorur — omni-core/scheduler tipleri pager'a sizdirilmaz (I3).
+pub trait OmniAutonomous: Send + Sync {
+    /// Donguyu baslatir. `Ok(summary)` insan-okunur sonuc ozetidir.
+    fn run(&self, problem: &str) -> Result<String, String>;
+}
+
+static AUTONOMOUS: OnceLock<Arc<dyn OmniAutonomous>> = OnceLock::new();
+
+/// Install the autonomous loop engine. First call wins; a second install is
+/// rejected with `Err(())` (mirrors [`install`]).
+pub fn install_autonomous(engine: Arc<dyn OmniAutonomous>) -> Result<(), ()> {
+    AUTONOMOUS.set(engine).map_err(|_| ())
+}
+
+/// The installed autonomous loop engine, if any. `None` means warm-up has not
+/// installed one yet or the pager runs standalone.
+pub fn autonomous() -> Option<Arc<dyn OmniAutonomous>> {
+    AUTONOMOUS.get().cloned()
+}
+
+
 /// Configured notify channels, as seen by the pager (Task 6.1).
 ///
 /// Plain booleans on purpose: the pager never touches omni-notify types; the

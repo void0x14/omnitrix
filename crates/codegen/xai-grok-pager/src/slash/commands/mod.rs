@@ -47,6 +47,7 @@ pub mod omni_dashboard;
 pub mod omni_status;
 pub mod omni_tasks;
 pub mod omni_research;
+pub mod omni_autonomous;
 pub mod omni_backup;
 pub mod personas;
 pub mod plan;
@@ -153,6 +154,7 @@ pub fn builtin_commands() -> Vec<Arc<dyn SlashCommand>> {
         Arc::new(omni_tasks::OmniTasksCommand::new()),
         Arc::new(omni_notify::OmniNotifyCommand::new()),
         Arc::new(omni_research::OmniResearchCommand::new()),
+        Arc::new(omni_autonomous::OmniAutonomousCommand::new()),
         Arc::new(omni_backup::OmniBackupCommand::new()),
         Arc::new(release_notes::ReleaseNotesCommand),
         Arc::new(tutorial::TutorialCommand),

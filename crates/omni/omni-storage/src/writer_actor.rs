@@ -295,6 +295,18 @@ impl WriterActor {
             .map_err(|_| StorageError::Internal("WriterActor channel closed".into()))
     }
 
+    /// Ayni yazici kanalina yazan hafif bir kopya (tek yazar kurali bozulmaz:
+    /// tek `mpsc::Sender`, birden cok referans). Handle'sizdir — kapanisi
+    /// orijinal ornek yonetir (I3, 6.2). Omnitrix bin'deki kopru katmanlari
+    /// (arastirma/otonom dongu) uzun omurlu `Arc` tasir.
+    #[must_use]
+    pub fn clone_for_bridge(&self) -> Self {
+        Self {
+            tx: self.tx.clone(),
+            handle: None,
+        }
+    }
+
     pub async fn flush(&self) {
         if let Some(tx) = &self.tx {
             let (done, rx) = oneshot::channel();

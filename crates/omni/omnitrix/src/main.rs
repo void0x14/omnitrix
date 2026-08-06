@@ -1,4 +1,5 @@
 mod api;
+mod autonomous;
 mod bootstrap;
 mod run;
 
@@ -305,7 +306,10 @@ async fn warmup_task(t0: Instant, phase_tx: watch::Sender<bootstrap::WarmupPhase
             install_notify_bridge(Arc::clone(&notify));
             install_backup_bridge();
             match storage.writer.as_ref() {
-                Some(writer) => install_research_bridge(&config, writer).await,
+                Some(writer) => {
+                    install_research_bridge(&config, writer).await;
+                    install_autonomous_bridge(writer);
+                }
                 None => tracing::warn!("yazici aktoru yok — arastirma motoru atlandi"),
             }
             // Task 1.3: SON kurulur — `install_event_sink` yazici aktorunu
@@ -544,6 +548,23 @@ async fn install_research_bridge(
     });
     if xai_grok_pager::omni_bridge::install_research(adapter).is_err() {
         tracing::warn!("arastirma koprusu zaten kurulu — ikinci kurulum yok sayildi");
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Otonom dongu koprusu (FAZ 10, Task 10.2)
+// ---------------------------------------------------------------------------
+
+/// `/omni-autonomous` koprusu: tam-otonom dongu motorunu kurar. Arastirma
+/// motoru kurulduysa onu kullanir; kurulmadiysa yalnizca plan-oracle ayagi
+/// calisir (I6: panik yok). Ilk kurulum kazanir.
+fn install_autonomous_bridge(writer: &omni_storage::writer_actor::WriterActor) {
+    let research = xai_grok_pager::omni_bridge::research();
+    let engine: Arc<dyn xai_grok_pager::omni_bridge::OmniAutonomous> = Arc::new(
+        autonomous::AutonomousLoop::new(research, Arc::new(writer.clone_for_bridge())),
+    );
+    if xai_grok_pager::omni_bridge::install_autonomous(engine).is_err() {
+        tracing::warn!("otonom dongu koprusu zaten kurulu — ikinci kurulum yok sayildi");
     }
 }
 
