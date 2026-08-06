@@ -241,6 +241,7 @@ pulldown-cmark = "0.13"
 quick-xml = "0.38"
 rand = "0.9"
 zeroize = "1"
+chacha20poly1305 = "0.11"
 redb = "2"
 ratatui = { version = "0.29" }
 ratatui-core = "0.1"
@@ -422,12 +423,13 @@ inherits = "release-dist"
 
 [profile.dev]
 panic = "abort"
-split-debuginfo = "unpacked"
-codegen-units = 128
-debug = "line-tables-only"
+split-debuginfo = "off"
+codegen-units = 256
+debug = false
 opt-level = 0
 lto = false
 incremental = true
+overflow-checks = false
 
 [profile.bench]
 debug = true

@@ -1450,12 +1450,54 @@ pub(crate) struct SubagentValidationContext {
     pub allowed_subagent_types: Option<Vec<String>>,
     pub cli_agent_names: Vec<String>,
 }
+/// Omni persona katalogunda (bkz. `crate::agent::omnipersona`) tanimli bir
+/// subagent tipi mi?
+///
+/// Katalog kimlikleri Ingilizce oldugu icin karsilastirma buyuk/kucuk harf
+/// duyarsizdir: `"XLR8"` ve `"xlr8"` ayni personayi bulur. Bu fonksiyon yalnizca
+/// katalog uyeligini denetler; `allowed_subagent_types` kontrolu
+/// [`omni_persona_validation_outcome`] ile yapilir.
+pub(crate) fn validate_omni_persona(id: &str) -> bool {
+    crate::agent::omnipersona::persona_by_id(id).is_some()
+}
+/// Omni persona tipleri icin `allowed_subagent_types` kontrolunu uygular.
+///
+/// Katalogda **olmayan** tiplerde `None` doner: mevcut akis (discovery +
+/// toggle + allow-list) aynen calisir. Katalogdaki bir tip icin:
+/// - allow-list `None` ya da tip listede ise → `Ok` (omni personasi taninir),
+/// - listede degilse → `NotAllowed { allowed }` (mevcut gate semantigi).
+///
+/// Eslesme case-insensitive'dir; `SubagentValidationContext` ve
+/// `SubagentSpawnContext` ortak `Option<Vec<String>>` allow-list tasidigi icin
+/// iki dogrulama yoluna da tek yerden hizmet eder.
+fn omni_persona_validation_outcome(
+    id: &str,
+    allowed_subagent_types: Option<&[String]>,
+) -> Option<SubagentValidateTypeOutcome> {
+    if !validate_omni_persona(id) {
+        return None;
+    }
+    match allowed_subagent_types {
+        None => Some(SubagentValidateTypeOutcome::Ok),
+        Some(allowed) if allowed.iter().any(|candidate| candidate.eq_ignore_ascii_case(id)) => {
+            Some(SubagentValidateTypeOutcome::Ok)
+        }
+        Some(allowed) => Some(SubagentValidateTypeOutcome::NotAllowed {
+            allowed: allowed.to_vec(),
+        }),
+    }
+}
 /// Synchronously validate a subagent type against discovery + toggle + allow-list.
 /// `Unknown { available }` is sorted by `str::cmp` for stable rendering.
 pub(crate) fn validate_subagent_type(
     subagent_type: &str,
     ctx: &SubagentValidationContext,
 ) -> SubagentValidateTypeOutcome {
+    if let Some(outcome) =
+        omni_persona_validation_outcome(subagent_type, ctx.allowed_subagent_types.as_deref())
+    {
+        return outcome;
+    }
     let context = xai_grok_subagent_resolution::DefinitionValidationContext {
         cwd: &ctx.parent_cwd,
         plugins: ctx.plugin_registry.as_deref(),
@@ -1493,6 +1535,11 @@ fn gate_subagent_type(
     subagent_type: &str,
     ctx: &SubagentSpawnContext,
 ) -> SubagentValidateTypeOutcome {
+    if let Some(outcome) =
+        omni_persona_validation_outcome(subagent_type, ctx.allowed_subagent_types.as_deref())
+    {
+        return outcome;
+    }
     let cli_agents = ctx
         .agent_config
         .as_ref()

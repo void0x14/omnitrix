@@ -2,7 +2,7 @@
 # Ozellikle es zamanli calisan ajanlar da cargo cagirdigi icin tavan sart.
 # Yerel gelistirme ayari; CI'da CARGO_BUILD_JOBS ile ezilebilir.
 [build]
-jobs = 4
+jobs = 8
 
 # link-arg
 # https://pyo3.rs/v0.17.1/building_and_distribution.html#macos
@@ -38,7 +38,9 @@ rustflags = [
 ]
 
 [target.x86_64-unknown-linux-gnu]
-rustflags = ["-C", "force-unwind-tables=yes"]
+# Gelistirme hizi: overflow checks ve debug_assertions kapali (uretim oncesi
+# kapatilabilir ekstra kontroller; final assembly'de acilabilir).
+rustflags = ["-C", "force-unwind-tables=yes", "-C", "overflow-checks=no", "-C", "debug-assertions=no"]
 
 [target.aarch64-unknown-linux-gnu]
 rustflags = ["-C", "target-cpu=neoverse-v2", "-C", "force-unwind-tables=yes"]

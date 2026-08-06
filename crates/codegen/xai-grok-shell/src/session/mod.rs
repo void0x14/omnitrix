@@ -1,5 +1,6 @@
 pub mod acp_types;
 pub mod announcement_state;
+pub mod backup;
 pub mod commands;
 pub mod compaction_config;
 pub mod handle;
@@ -11,6 +12,7 @@ pub mod prompt_queue;
 pub mod two_pass;
 pub use self::acp_session::*;
 pub use self::acp_types::*;
+pub use self::backup::{BackupConfig, BackupError, BackupReport, create_backup};
 pub use self::commands::*;
 pub use self::fork::{ForkSessionRequest, ForkSessionResponse, fork_session};
 pub use self::handle::*;

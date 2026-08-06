@@ -4748,7 +4748,7 @@ pub(crate) fn first_own_credential(
         .or_else(|| env_key.and_then(EnvKeys::resolve_value))
 }
 /// Priority: model api_key/env_key > cached auth-provider token > session
-/// token > XAI_API_KEY.
+/// token > XAI_API_KEY > live key pool (`key_ingestion`).
 pub fn resolve_credentials(model: &ModelEntry, session_key: Option<&str>) -> ResolvedCredentials {
     let info = model.info();
     let (api_key, base_url, auth_type) = if let Some(key) = model.own_credential() {
@@ -4776,6 +4776,15 @@ pub fn resolve_credentials(model: &ModelEntry, session_key: Option<&str>) -> Res
             .clone()
             .unwrap_or_else(|| info.base_url.clone());
         (Some(key), url, xai_chat_state::AuthType::ApiKey)
+    } else if let Some(pool_key) = crate::agent::key_ingestion::next_key_round_robin() {
+        // Omnitrix eritme ek yolu: harici sqlite beslemesinden gelen canli
+        // havuz doluysa havuz anahtarini dene. Bos havuz -> mevcut davranis
+        // aynen surer; bu yalnizca ek yoldur, hicbir mevcut akis bozulmaz.
+        let url = model
+            .api_base_url
+            .clone()
+            .unwrap_or_else(|| info.base_url.clone());
+        (Some(pool_key), url, xai_chat_state::AuthType::ApiKey)
     } else {
         if let Some(ref env_keys) = model.env_key
             && !env_keys.is_empty()

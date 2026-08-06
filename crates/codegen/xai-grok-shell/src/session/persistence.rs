@@ -298,6 +298,11 @@ impl SessionEventRecorder {
                 path: path.clone(),
                 source,
             })?;
+        // Yedekleme tetikleyicisi: oturum kaydı başarıyla yazıldığında
+        // `XAI_GROK_BACKUP_INTERVAL_SECS` geçtiyse arka planda yedek alınır;
+        // yapılandırma yoksa veya interval dolmadıysa boşuna iş yapılmaz,
+        // hatalar sessizce `tracing`'e loglanır (I6 — akış asla bozulmaz).
+        crate::session::backup::maybe_auto_backup();
         Ok(())
     }
 }

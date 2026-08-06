@@ -23,6 +23,7 @@ pub mod commands;
 pub mod config;
 pub mod doom_loop;
 pub mod events;
+pub mod grounding;
 pub mod handle;
 pub mod metrics;
 pub mod retry;
@@ -43,6 +44,10 @@ pub use config::{
 };
 pub use doom_loop::DoomLoopSignalCollector;
 pub use events::{SamplingChannel, SamplingErrorInfo, SamplingErrorKind, SamplingEvent};
+pub use grounding::{
+    DEFAULT_VIOLATION_PENALTY, EvidenceRef, GroundingConfig, GroundingVerdict, Verdict,
+    check_evidence_claims, check_evidence_claims_with, penalty_for,
+};
 pub use handle::SamplerHandle;
 pub use metrics::{InferenceLatencyStats, compute_percentiles};
 pub use retry::{

@@ -364,6 +364,11 @@ pub async fn dispatch_non_blocking(
         event.traits().gate == GateKind::Observe,
         "dispatch_non_blocking called with gate event {event:?}"
     );
+    // Ayrı omni-notify katmanı grok hook akışına buradan bağlanır:
+    // `Notification`/`SessionEnd`/`StopFailure` olaylarını Telegram/Twilio
+    // kanallarına iletir. Yapılandırma kurulmamışsa ya da olay bildirime
+    // girmiyorsa sessiz no-op'tur; hook akışını asla bozmaz (I6).
+    let _ = crate::notify::dispatch_event(envelope).await;
     let hooks = registry.hooks_for_canonical(event);
     if hooks.is_empty() {
         return Vec::new();

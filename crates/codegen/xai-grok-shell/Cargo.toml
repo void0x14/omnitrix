@@ -113,6 +113,8 @@ image = { workspace = true, features = ["png", "jpeg", "gif", "webp"] }
 moka = { workspace = true, features = ["future"] }
 dhat = { workspace = true, optional = true }
 base64 = { workspace = true }
+chacha20poly1305 = { workspace = true }
+zeroize = { workspace = true }
 jsonwebtoken = { version = "10", features = ["rust_crypto"] }
 sha2 = { workspace = true }
 rand = { workspace = true }

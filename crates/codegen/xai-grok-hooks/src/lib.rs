@@ -43,8 +43,11 @@ mod env_expand;
 pub mod error;
 pub mod event;
 pub mod matcher;
+pub mod notify;
 pub mod result;
 pub mod runner;
 #[cfg(test)]
 mod test_support;
 pub mod trust;
+
+pub use notify::{dispatch_event, install, NotifyConfig, NotifyError};

@@ -137,6 +137,11 @@ pub struct SamplerConfig {
     /// `None` (default) = single-key behavior, exactly as before.
     #[serde(default)]
     pub fallback: Option<FallbackConfig>,
+
+    /// Grounding gate (evidence requirement + falsificationist judging) for
+    /// this request. `None` (default) = gate off, behavior exactly as before.
+    #[serde(default)]
+    pub grounding: Option<crate::grounding::GroundingConfig>,
 }
 
 impl Default for SamplerConfig {
@@ -174,6 +179,7 @@ impl Default for SamplerConfig {
             doom_loop_recovery: None,
             header_injector: None,
             fallback: None,
+            grounding: None,
         }
     }
 }
@@ -311,5 +317,25 @@ mod tests {
             round_tripped.doom_loop_recovery,
             with_policy.doom_loop_recovery
         );
+    }
+
+    /// `SamplerConfig.grounding` defaults to `None`: existing behavior
+    /// (gate off) is preserved and configs without the field still parse.
+    #[test]
+    fn config_without_grounding_deserializes_to_none() {
+        assert!(SamplerConfig::default().grounding.is_none());
+
+        let mut stripped = serde_json::to_value(SamplerConfig::default()).unwrap();
+        stripped.as_object_mut().unwrap().remove("grounding");
+        let config: SamplerConfig = serde_json::from_value(stripped).unwrap();
+        assert!(config.grounding.is_none());
+
+        let with_grounding = SamplerConfig {
+            grounding: Some(crate::grounding::GroundingConfig::default()),
+            ..Default::default()
+        };
+        let round_tripped: SamplerConfig =
+            serde_json::from_value(serde_json::to_value(&with_grounding).unwrap()).unwrap();
+        assert_eq!(round_tripped.grounding, with_grounding.grounding);
     }
 }

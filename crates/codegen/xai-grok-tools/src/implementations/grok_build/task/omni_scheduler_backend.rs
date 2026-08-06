@@ -267,7 +267,7 @@ impl AdmissionGovernor {
 
     #[must_use]
     pub fn active_count(&self) -> usize {
-        self.active_agents.load(Ordering::Acquire)
+        self.active_agents.load(Ordering::Acquire) as usize
     }
 }
 
@@ -905,7 +905,7 @@ impl OmniSchedulerBackend {
     ) -> Result<AdmissionToken, ToolError> {
         let mut token = self.try_admit(entry.estimated_ram);
         if token.is_none() {
-            self.enqueue(entry).await;
+            self.enqueue(Arc::clone(&entry)).await;
         }
         while token.is_none() {
             let notified = entry.notify.notified();
