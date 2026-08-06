@@ -226,6 +226,34 @@ pub fn autonomous() -> Option<Arc<dyn OmniAutonomous>> {
     AUTONOMOUS.get().cloned()
 }
 
+/// Faz 4 yonlendirme kontrolu (kurulum: omnitrix bin, warmup sonrasi).
+///
+/// Pager yalnizca strateji adini ve rol->model eslemesini gorur; `omni-router`
+/// tipleri pager'a sizdirilmaz (I3). Model adlari config'ten gelir (AS7/I5).
+pub trait OmniRouter: Send + Sync {
+    /// Aktif stratejiyi degistirir. `strategy` icin izin verilenler:
+    /// `round_robin` | `weighted` | `fallback` | `jep`.
+    fn set_strategy(&self, strategy: &str) -> Result<String, String>;
+    /// Bir rolu modele atar (config'e yazar). `role` icin izin verilenler:
+    /// `judge` | `executor` | `planner` | `summary` | `web_search`.
+    fn set_role_model(&self, role: &str, model: &str) -> Result<String, String>;
+    /// Mevcut strateji + rol eslemelerinin ozeti.
+    fn summary(&self) -> String;
+}
+
+static ROUTER: OnceLock<Arc<dyn OmniRouter>> = OnceLock::new();
+
+/// Install the router control seam. First call wins; a second install is
+/// rejected with `Err(())` (mirrors [`install`]).
+pub fn install_router(r: Arc<dyn OmniRouter>) -> Result<(), ()> {
+    ROUTER.set(r).map_err(|_| ())
+}
+
+/// The installed router control, if any.
+pub fn router() -> Option<Arc<dyn OmniRouter>> {
+    ROUTER.get().cloned()
+}
+
 
 /// Configured notify channels, as seen by the pager (Task 6.1).
 ///

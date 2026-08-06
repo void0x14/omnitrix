@@ -305,6 +305,7 @@ async fn warmup_task(t0: Instant, phase_tx: watch::Sender<bootstrap::WarmupPhase
             .await;
             install_notify_bridge(Arc::clone(&notify));
             install_backup_bridge();
+            install_router_bridge();
             match storage.writer.as_ref() {
                 Some(writer) => {
                     install_research_bridge(&config, writer).await;
@@ -565,6 +566,95 @@ fn install_autonomous_bridge(writer: &omni_storage::writer_actor::WriterActor) {
     );
     if xai_grok_pager::omni_bridge::install_autonomous(engine).is_err() {
         tracing::warn!("otonom dongu koprusu zaten kurulu — ikinci kurulum yok sayildi");
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Yonlendirme koprusu (FAZ 4, Task 4.1)
+// ---------------------------------------------------------------------------
+
+/// `config/routing.toml`'un okundugu yol. `OMNITRIX_CONFIG_DIR` override'i
+/// bootstrap'taki profil kurulumuyla ayni kaynaktan gelir.
+fn routing_config_path() -> std::path::PathBuf {
+    std::env::var("OMNITRIX_CONFIG_DIR")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|_| {
+            std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../../config")
+        })
+        .join("routing.toml")
+}
+
+/// `/omni-routing` koprusu: strateji degistirme + rol->model atama
+/// (AS7/I5: model adlari config'ten gelir, koda gomulu degildir). I6: dosya
+/// okunamazsa varsayilan degerlerle calisir; yazim hatasi `Err` doner.
+struct RouterBridge {
+    path: std::path::PathBuf,
+}
+
+impl RouterBridge {
+    fn load(&self) -> omni_router::strategies::RoutingConfig {
+        omni_router::strategies::RoutingConfig::load(&self.path).unwrap_or_default()
+    }
+
+    fn save(&self, config: &omni_router::strategies::RoutingConfig) -> Result<(), String> {
+        let raw = toml::to_string(config).map_err(|e| e.to_string())?;
+        std::fs::write(&self.path, raw).map_err(|e| e.to_string())
+    }
+}
+
+impl xai_grok_pager::omni_bridge::OmniRouter for RouterBridge {
+    fn set_strategy(&self, strategy: &str) -> Result<String, String> {
+        use omni_router::strategies::RoutingStrategy;
+        let parsed = match strategy {
+            "round_robin" => RoutingStrategy::RoundRobin,
+            "weighted" => RoutingStrategy::Weighted,
+            "fallback" => RoutingStrategy::Fallback,
+            "jep" => RoutingStrategy::JudgeExecutorPlanner,
+            other => return Err(format!("bilinmeyen strateji: {other}")),
+        };
+        let mut config = self.load();
+        config.strategy = parsed.clone();
+        self.save(&config)?;
+        Ok(format!("strateji -> {strategy} ({} dosyasina yazildi)", self.path.display()))
+    }
+
+    fn set_role_model(&self, role: &str, model: &str) -> Result<String, String> {
+        let mut config = self.load();
+        let field = match role {
+            "judge" => &mut config.jep.judge,
+            "executor" => &mut config.jep.executor,
+            "planner" => &mut config.jep.planner,
+            other => {
+                return Err(format!(
+                    "bilinmeyen rol: {other} (judge|executor|planner)"
+                ))
+            }
+        };
+        *field = model.to_string();
+        self.save(&config)?;
+        Ok(format!("rol {role} -> {model} ({} dosyasina yazildi)", self.path.display()))
+    }
+
+    fn summary(&self) -> String {
+        let config = self.load();
+        format!(
+            "strateji={} jep: judge={} executor={} planner={}",
+            config.strategy.as_db_str(),
+            config.jep.judge,
+            config.jep.executor,
+            config.jep.planner,
+        )
+    }
+}
+
+/// `/omni-routing` koprusunu kurar. Ilk kurulum kazanir.
+fn install_router_bridge() {
+    let bridge: Arc<dyn xai_grok_pager::omni_bridge::OmniRouter> =
+        Arc::new(RouterBridge {
+            path: routing_config_path(),
+        });
+    if xai_grok_pager::omni_bridge::install_router(bridge).is_err() {
+        tracing::warn!("yonlendirme koprusu zaten kurulu — ikinci kurulum yok sayildi");
     }
 }
 
