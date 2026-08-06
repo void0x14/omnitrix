@@ -999,6 +999,23 @@ impl AcpUpdateTracker {
         scrollback: &mut ScrollbackState,
         is_replay: bool,
     ) -> bool {
+        // Task 1.3: stream tool calls into the omnitrix event sink. Replays of
+        // an already-persisted session are skipped (they would duplicate rows).
+        if !is_replay
+            && let Some(sink) = crate::omni_bridge::event_sink()
+        {
+            let name = if tc.title.is_empty() {
+                format!("{:?}", tc.kind)
+            } else {
+                tc.title.clone()
+            };
+            let args = tc
+                .raw_input
+                .as_ref()
+                .map(serde_json::Value::to_string)
+                .unwrap_or_default();
+            sink.on_tool_call(&name, &args);
+        }
         self.finish_thinking(scrollback);
         self.current_agent_msg = None;
         if is_todo_tool(&tc)

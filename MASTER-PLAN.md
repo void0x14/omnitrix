@@ -49,7 +49,6 @@ ALPHA-PLAN'ın en kritik bulgusu: mevcut `ork-*` kodu, olgun `xai-*` altyapısı
 ```mermaid
 flowchart TB
     subgraph Faces["Yuzler (K7/K8) - durumu okur/yazar, cekirdegi tutmaz"]
-        TUI["omni-tui<br/>ratatui + crossterm"]
         WEB["omni-webui<br/>axum + SSR HTML + SSE/WS"]
         REMOTE["Uzak kanallar (K9)<br/>IPv6 - Tailscale - Telegram - WhatsApp/SMS"]
     end
@@ -79,7 +78,6 @@ flowchart TB
         PROVIDER["omni-provider<br/>detection - keyring - health - ingestion"]
     end
 
-    TUI --> CTRL
     WEB --> CTRL
     REMOTE --> CTRL
     CTRL --> STATE
@@ -170,7 +168,6 @@ Tek `omnitrix` binary + **iç orkestrasyon crate'leri `omni-*`**. `xai-*` isimle
 | `omni-tools` | — (yeni) | YENİ | K3 broker, diff-stream fs-shim, AS1 kod tool, edit/search kablolaması |
 | `omni-config` | `ork-runtime` config'i | YENİ | Katmanlı config (AS8) |
 | `omni-control` | `ork-webui` bir kısmı | YENİDEN YAZ | Kontrol düzlemi API'si; auth; SSE/WS yayını |
-| `omni-tui` | `ork-tui` | YENİDEN YAZ | ratatui yüzü; **daemon'a bağlanır** |
 | `omni-webui` | `ork-webui` | YENİDEN YAZ | SSR HTML + SSE/WS yüzü |
 | `omni-notify` | `ork-notify` | **TUT** (genişlet) | Telegram/Twilio/... bildirim kanalları |
 | `omni-research` | — (yeni) | YENİ | Sağlayıcı-değiştirilebilir araştırma motoru (K14) |
@@ -226,7 +223,6 @@ omnitrix/
 │   │   ├── omni-tools/
 │   │   ├── omni-config/
 │   │   ├── omni-control/
-│   │   ├── omni-tui/
 │   │   ├── omni-webui/
 │   │   ├── omni-notify/
 │   │   ├── omni-research/
@@ -682,7 +678,7 @@ Omnitrix kendi kodunu geliştirebilir, **ama kapılı:**
 - **Bu fazda YOK (bilinçli):** multiagent, JEP, persona kataloğu, computer-use, video, backup, notify, araştırma.
 
 ### Faz 2 — Ortak durum + iki yüz (K7/K8, iki UI'dan önce çekirdek)
-- **Kapsam:** `omni-proto` ortak model · `omni-control` SSE/WS + auth · `omni-tui` + `omni-webui` **aynı akıştan** türer.
+- **Kapsam:** `omni-proto` ortak model · `omni-control` SSE/WS + auth · `omni-webui` **aynı akıştan** türer.
 - **`xai-*` bağlanan:** — (çoğu omni + `axum`).
 - **Kapı:** `tests/ui_parity.rs` — TUI komutu WebUI akışında görünür, snapshot bit-eş · auth zorunlu (kimliksiz istek 401).
 

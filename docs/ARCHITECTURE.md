@@ -33,7 +33,6 @@ Plandaki tam diyagram MASTER-PLAN 1.2'dedir. Ozeti:
 ```mermaid
 flowchart TB
     subgraph Faces["Yuzler — durumu okur/yazar, cekirdegi tutmaz (K7/K8)"]
-        TUI["omni-tui"]
         WEB["omni-webui"]
         REMOTE["uzak kanallar<br/>omni-notify (K9)"]
     end
@@ -120,7 +119,6 @@ tablosunun ozetidir.
 
 | Crate | Sorumluluk | Plan |
 |---|---|---|
-| `omni-tui` | Terminal yuzu; kanonik durum akisini cizer | 3.2, 6.2 |
 | `omni-webui` | Sunucu-render web yuzu (SSR + SSE/WS), JS derleme zinciri yok | 3.2, 6.2 |
 | `omni-notify` | Bildirim kanallari, dedup, politika, tetikleyici | 6.6 |
 | `omni-research` | Saglayici-degistirilebilir arastirma motoru | 19.2 |

@@ -13,6 +13,7 @@ const MIGRATION_0006_SQL: &str = include_str!("../../../../migrations/0006_recor
 const MIGRATION_0007_SQL: &str = include_str!("../../../../migrations/0007_backups_journal.sql");
 const MIGRATION_0008_SQL: &str = include_str!("../../../../migrations/0008_omni_revisions.sql");
 const MIGRATION_0009_SQL: &str = include_str!("../../../../migrations/0009_faz3_columns.sql");
+const MIGRATION_0010_SQL: &str = include_str!("../../../../migrations/0010_key_ingestion.sql");
 
 const MIGRATIONS: &[(i64, &str, &str)] = &[
     (1, "providers", MIGRATION_0001_SQL),
@@ -24,6 +25,7 @@ const MIGRATIONS: &[(i64, &str, &str)] = &[
     (7, "backups_journal", MIGRATION_0007_SQL),
     (8, "omni_revisions", MIGRATION_0008_SQL),
     (9, "faz3_columns", MIGRATION_0009_SQL),
+    (10, "key_ingestion", MIGRATION_0010_SQL),
 ];
 
 fn migration_dir() -> Option<std::path::PathBuf> {
@@ -180,6 +182,10 @@ impl SchemaManager {
 
     pub fn migration_0009_faz3_columns(&self) -> Result<(), StorageError> {
         self.apply_migration(9, "faz3_columns", MIGRATION_0009_SQL)
+    }
+
+    pub fn migration_0010_key_ingestion(&self) -> Result<(), StorageError> {
+        self.apply_migration(10, "key_ingestion", MIGRATION_0010_SQL)
     }
 
     fn apply_migration(

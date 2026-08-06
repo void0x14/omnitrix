@@ -25,5 +25,8 @@ rand = { workspace = true }
 rusqlite = { workspace = true }
 xai-fsnotify = { workspace = true }
 
+[dev-dependencies]
+tempfile = { workspace = true }
+
 [lints]
 workspace = true

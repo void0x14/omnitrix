@@ -989,6 +989,13 @@ pub(crate) async fn spawn_session_actor(
         diff_touch_sink: Some(diff_touch_sink),
         diff_touch_stream: Some(diff_touch_stream),
         diff_cas,
+        // Faz 10 / Task 10.1: computer-use gunlugu oturum dizininde tutulur;
+        // shim'lenmis fs uzerinden yazildigi icin masaustu dokunusu diff
+        // akisinda gorunur (R7).
+        computer_use_journal_path: Some(
+            crate::session::persistence::session_dir(&session_info)
+                .join("omni-computer-use.jsonl"),
+        ),
         tools_notification_handle: tools_notification_handle.clone(),
         bridge_state_path: bridge_state_path.clone(),
         session_env: tool_context.session_env.clone(),

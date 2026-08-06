@@ -7038,9 +7038,13 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-trait",
+ "base64",
  "blake3",
+ "chacha20poly1305",
  "chrono",
+ "rand 0.9.2",
  "reqwest 0.12.24",
+ "ring",
  "rusqlite",
  "serde",
  "serde_json",
@@ -7048,6 +7052,7 @@ dependencies = [
  "tokio",
  "tracing",
  "uuid",
+ "zeroize",
 ]
 
 [[package]]
@@ -7161,6 +7166,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2 0.10.9",
+ "tempfile",
  "thiserror 2.0.18",
  "tokio",
  "tracing",
@@ -7255,6 +7261,7 @@ dependencies = [
  "futures",
  "libc",
  "omni-proto",
+ "omni-research",
  "omni-storage",
  "parking_lot",
  "serde",
@@ -7368,21 +7375,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "omni-tui"
-version = "0.1.0"
-dependencies = [
- "crossterm",
- "omni-control",
- "omni-proto",
- "ratatui",
- "serde_json",
- "thiserror 2.0.18",
- "tokio",
- "tracing",
- "xai-ratatui-textarea",
-]
-
-[[package]]
 name = "omni-webui"
 version = "0.1.0"
 dependencies = [
@@ -7419,11 +7411,11 @@ dependencies = [
  "omni-proto",
  "omni-provider",
  "omni-record",
+ "omni-research",
  "omni-router",
  "omni-scheduler",
  "omni-storage",
  "omni-tools",
- "omni-tui",
  "omni-webui",
  "ratatui",
  "rusqlite",
@@ -7432,10 +7424,12 @@ dependencies = [
  "thiserror 2.0.18",
  "tokio",
  "toml",
+ "tower",
  "tracing",
  "tracing-subscriber",
  "xai-grok-pager",
  "xai-grok-sampler",
+ "xai-grok-shared",
 ]
 
 [[package]]
@@ -13988,6 +13982,7 @@ dependencies = [
  "rand 0.9.2",
  "ratatui",
  "regex",
+ "rusqlite",
  "rustls",
  "serde",
  "serde_json",
@@ -14353,6 +14348,8 @@ dependencies = [
  "notify-debouncer-mini",
  "nucleo",
  "obfstr",
+ "omni-storage",
+ "omni-tools",
  "parking_lot",
  "portable-pty",
  "process-wrap",

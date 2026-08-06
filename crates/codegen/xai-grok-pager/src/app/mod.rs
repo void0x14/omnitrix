@@ -656,7 +656,7 @@ pub async fn run(
         );
         conn
     };
-    let agent_guard =
+    let mut agent_guard =
         crate::acp::spawn::AgentShutdownGuard::new(cancel.clone(), connection.agent_thread.take());
     let mut config_watcher = crate::appearance::ConfigWatcher::start().await?;
     let alt_screen_config_mode = config_watcher.current().alt_screen;
@@ -758,6 +758,10 @@ pub async fn run(
     .await;
     crate::unified_log::flush_blocking().await;
     let restore_result = restore_terminal(terminal, writer_thread, screen_mode);
+    // 8.1 crash-only: oturum flush'i icin bekleme YOK. Ajan iptal edilir ama
+    // join edilmez; sureç kapanis yolunda ilerler (omnitrix `instant_exit`).
+    // Veri WAL/journal tabanli; graceful shutdown zinciri yasaktir (8.1).
+    agent_guard.cancel_without_join();
     drop(agent_guard);
     xai_tty_utils::global_process_scope().kill_all();
     if let Err(cleanup_error) = restore_result {

@@ -322,4 +322,52 @@ mod tests {
         assert!(!dispatcher.has_telegram());
         assert!(!dispatcher.has_phone());
     }
+
+    /// Yalnizca tek istegi yanitlayan yerel sahte Telegram uc noktasi.
+    /// Gercek HTTP el sikismasi isteriz: `dispatch` icindeki gonderim yolunun
+    /// (reqwest -> `sendMessage`) uc noktaya gercekten dokundugunu dogrular.
+    async fn fake_telegram_api() -> String {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("dinleyici");
+        let addr = listener.local_addr().expect("adres");
+        tokio::spawn(async move {
+            loop {
+                let (mut socket, _) = match listener.accept().await {
+                    Ok(accepted) => accepted,
+                    Err(_) => break,
+                };
+                tokio::spawn(async move {
+                    let mut buf = [0u8; 8192];
+                    let _ = socket.read(&mut buf).await;
+                    let body = br#"{"ok":true,"result":{"message_id":1,"chat":{"id":1},"text":"x"}}"#;
+                    let header = format!(
+                        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                        body.len()
+                    );
+                    let _ = socket.write_all(header.as_bytes()).await;
+                    let _ = socket.write_all(body).await;
+                });
+            }
+        });
+        format!("http://{addr}")
+    }
+
+    #[tokio::test]
+    async fn saglikli_sahte_kanala_bildirim_gonderilir() {
+        // Kanal enjekte edilir; uc nokta erisilemez degil, gercek bir sahte
+        // sunucudur — kanal cagrisi basarili sayilir ve rapora yansir.
+        let base = fake_telegram_api().await;
+        let telegram = TelegramNotifier::new("t", "1").with_api_base(&base);
+        let dispatcher = NotifyDispatcher::new(NotifyPolicy::default()).with_telegram(telegram);
+
+        let report = dispatcher
+            .dispatch(&notice_event(NoticeLevel::Error, "sahte-test"))
+            .await;
+        assert!(report.triggered, "tetikleyiciye giren olay islenmeli");
+        assert!(report.telegram_sent, "saglikli kanala giden bildirim gonderilmeli");
+        assert!(report.failures.is_empty(), "hata beklenmiyordu: {:?}", report.failures);
+    }
 }

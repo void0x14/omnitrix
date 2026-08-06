@@ -134,6 +134,43 @@ use subagent_activity::*;
 #[allow(unused_imports)]
 use workflow_ingest::*;
 
+/// Compact JSON descriptor of an inbound ACP message for the event sink.
+///
+/// `AcpClientMessage` is deliberately not `Serialize` (it wraps
+/// `oneshot::Sender`), so we emit the variant kind plus — for session
+/// notifications — the session id and the serialized `SessionUpdate` body.
+fn acp_message_brief(msg: &AcpClientMessage) -> String {
+    match msg {
+        AcpClientMessage::SessionNotification(notif) => {
+            let update = serde_json::to_value(&notif.request.update)
+                .ok()
+                .unwrap_or(serde_json::Value::Null);
+            serde_json::json!({
+                "type": "session_notification",
+                "session_id": notif.request.session_id.0,
+                "update": update,
+            })
+            .to_string()
+        }
+        AcpClientMessage::RequestPermission(_) => {
+            r#"{"type":"request_permission"}"#.to_string()
+        }
+        AcpClientMessage::ReadTextFile(_) => r#"{"type":"read_text_file"}"#.to_string(),
+        AcpClientMessage::WriteTextFile(_) => r#"{"type":"write_text_file"}"#.to_string(),
+        AcpClientMessage::CreateTerminal(_) => r#"{"type":"create_terminal"}"#.to_string(),
+        AcpClientMessage::TerminalOutput(_) => r#"{"type":"terminal_output"}"#.to_string(),
+        AcpClientMessage::ReleaseTerminal(_) => r#"{"type":"release_terminal"}"#.to_string(),
+        AcpClientMessage::WaitForTerminalExit(_) => {
+            r#"{"type":"wait_for_terminal_exit"}"#.to_string()
+        }
+        AcpClientMessage::KillTerminalCommand(_) => {
+            r#"{"type":"kill_terminal_command"}"#.to_string()
+        }
+        AcpClientMessage::ExtMethod(_) => r#"{"type":"ext_method"}"#.to_string(),
+        AcpClientMessage::ExtNotification(_) => r#"{"type":"ext_notification"}"#.to_string(),
+    }
+}
+
 /// Handle an ACP notification (session update, permission request, etc.).
 ///
 /// Returns `true` if the active view was visually affected (needs redraw).
@@ -142,6 +179,14 @@ use workflow_ingest::*;
 /// background agent must still land in its own scrollback so the user sees
 /// the full turn after switching back.
 pub(crate) fn handle(msg: AcpClientMessage, app: &mut AppView) -> bool {
+    // Task 1.3: stream every ACP wire message into the omnitrix event sink
+    // (installed by the omnitrix binary after warm-up). `AcpClientMessage` is
+    // not Serialize (it carries `oneshot::Sender`), so the fallback descriptor
+    // passes the variant kind + session id, and the full `SessionUpdate` body
+    // for session notifications. No sink installed (standalone TUI) => no-op.
+    if let Some(sink) = crate::omni_bridge::event_sink() {
+        sink.on_acp_message(&acp_message_brief(&msg));
+    }
     match msg {
         AcpClientMessage::SessionNotification(notif) => {
             let mut meta = NotificationMeta::from_json(notif.request.meta.as_ref());

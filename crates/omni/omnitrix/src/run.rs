@@ -499,7 +499,9 @@ async fn writer_execute(
 
 /// Gorev + ajan satirlarini yazar ve olay-log'un ihtiyac duydugu `agent_id`'yi
 /// dondurur. `agent_events` / `file_touches` bu kimlige yabanci anahtarla bagli.
-async fn ensure_agent_row(writer: &WriterActor, db: &Path, title: &str) -> anyhow::Result<i64> {
+/// TUI event sink'i (Task 1.3) de ayni satir desenini kullanir; bu yuzden
+/// `pub(crate)` yapildi.
+pub(crate) async fn ensure_agent_row(writer: &WriterActor, db: &Path, title: &str) -> anyhow::Result<i64> {
     // `root_id` kendine referans verdiginden yeni id onceden hesaplanir:
     // AUTOINCREMENT'in bir sonraki degeri = max(sqlite_sequence.seq, max(id)) + 1.
     writer_execute(

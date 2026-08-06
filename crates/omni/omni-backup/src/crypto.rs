@@ -389,10 +389,7 @@ mod tests {
     /// AS10 kapisi: anahtar hicbir bicimde zarfin icinde degil.
     #[test]
     fn envelope_never_contains_key_material() {
-        let key = match BackupKey::generate("gate-ref") {
-            Ok(k) => k,
-            Err(e) => panic!("generate failed: {e}"),
-        };
+        let key = BackupKey::generate("gate-ref");
         let env = match seal(&key, &vec![0xABu8; 4096]) {
             Ok(e) => e,
             Err(e) => panic!("seal failed: {e}"),
@@ -500,10 +497,7 @@ mod tests {
 
     #[test]
     fn base64_roundtrip_and_length_checks() {
-        let key = match BackupKey::generate("ref") {
-            Ok(k) => k,
-            Err(e) => panic!("generate failed: {e}"),
-        };
+        let key = BackupKey::generate("ref");
         let encoded = key.export_base64();
         let restored = match BackupKey::from_base64("ref", &encoded) {
             Ok(k) => k,

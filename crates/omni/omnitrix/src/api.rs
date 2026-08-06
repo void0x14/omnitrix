@@ -18,7 +18,6 @@
 use std::sync::Arc;
 
 use futures::future::BoxFuture;
-use omni_control::api::router;
 use omni_control::stream::DEFAULT_CAPACITY;
 use omni_control::{
     Broadcaster, CommandSink, ControlError, ControlState, SnapshotSource, TokenRecord,
@@ -204,8 +203,14 @@ impl ControlPlaneApi {
         let listener = tokio::net::TcpListener::bind(&self.addr).await?;
         let bound = listener.local_addr()?;
         tracing::info!(addr = %bound, "kontrol duzlemi dinlemede");
-        axum::serve(listener, router(self.state)).await?;
+        axum::serve(listener, Self::app(self.state)).await?;
         Ok(())
+    }
+
+    /// Kontrol duzlemi + webui rotalarini tek router'da birlestirir (K7/K8:
+    /// iki yuz, tek cekirdek). Testlerde dogrudan cagrilir.
+    pub fn app(state: ControlState) -> axum::Router {
+        omni_control::api::router(state.clone()).merge(omni_webui::router(state))
     }
 }
 
@@ -324,5 +329,44 @@ mod tests {
             })
             .await;
         assert!(matches!(result, Err(ControlError::Command(_))));
+    }
+
+    #[tokio::test]
+    async fn merged_app_serves_webui_and_control_routes() {
+        use axum::body::Body;
+        use axum::http::{Request, StatusCode};
+        use tower::ServiceExt;
+
+        let verifier = token_verifier(Some(PHC)).expect("verifier");
+        let events = Broadcaster::new(16);
+        let bridge = Arc::new(CoreBridge::new(Arc::new(Mutex::new(CoreState::new())), events.clone()));
+        let state = ControlState::new(verifier, events, bridge.clone(), bridge);
+
+        let app = ControlPlaneApi::app(state);
+
+        // WebUI ana sayfa: kimliksiz istek auth'a takilir (K9: auth zorunlu).
+        let index = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/")
+                    .body(Body::empty())
+                    .expect("istek"),
+            )
+            .await
+            .expect("yanit");
+        assert_eq!(index.status(), StatusCode::UNAUTHORIZED, "girissiz / -> 401");
+
+        // Kontrol duzlemi: kimliksiz snapshot zorunlu auth ile reddedilir.
+        let snapshot = app
+            .oneshot(
+                Request::builder()
+                    .uri(omni_control::api::PATH_SNAPSHOT)
+                    .body(Body::empty())
+                    .expect("istek"),
+            )
+            .await
+            .expect("yanit");
+        assert_eq!(snapshot.status(), StatusCode::UNAUTHORIZED, "auth zorunlu (K9)");
     }
 }

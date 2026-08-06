@@ -37,6 +37,7 @@ fn derive_encryption_key() -> Key {
     key
 }
 
+#[derive(Clone)]
 pub struct KeyManager {
     store: Arc<RwLock<HashMap<String, Zeroizing<String>>>>,
     keys_dir: PathBuf,
@@ -47,15 +48,10 @@ impl KeyManager {
     pub fn new() -> Self {
         Self::default()
     }
-}
 
-impl Default for KeyManager {
-    fn default() -> Self {
-        let keys_dir = dirs::config_dir()
-            .unwrap_or_else(|| PathBuf::from("."))
-            .join("omnitrix")
-            .join("keys");
-
+    /// Anahtarlarin yazilacagi dizini acikca verir. Hermetik testler ve
+    /// gomulu kullanim icindir; varsayilan kullanici dizini degistirilmez.
+    pub fn with_keys_dir(keys_dir: PathBuf) -> Self {
         let _ = std::fs::create_dir_all(&keys_dir);
 
         #[cfg(unix)]
@@ -70,7 +66,16 @@ impl Default for KeyManager {
             encrypt_key: derive_encryption_key(),
         }
     }
+}
 
+impl Default for KeyManager {
+    fn default() -> Self {
+        let keys_dir = dirs::config_dir()
+            .unwrap_or_else(|| PathBuf::from("."))
+            .join("omnitrix")
+            .join("keys");
+        Self::with_keys_dir(keys_dir)
+    }
 }
 
 impl KeyManager {

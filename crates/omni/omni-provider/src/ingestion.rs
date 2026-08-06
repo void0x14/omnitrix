@@ -577,6 +577,14 @@ pub struct KeyVerdict {
     pub detail: String,
 }
 
+/// Canlilik karari veren soyutlama. [`KeyFeeder`] ag cagrilariyla gercek
+/// canlilik yapar; testler sahte karar verici takar (ag gerektirmez).
+#[async_trait::async_trait]
+pub trait KeyVerifier: Send + Sync {
+    /// Anahtarin canli/olu karari (12.2 iki kademe).
+    async fn verify_key(&self, key: &str) -> KeyVerdict;
+}
+
 /// Tek besleme turunun ozeti.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FeedReport {
@@ -623,6 +631,13 @@ pub struct KeyFeeder {
 impl Default for KeyFeeder {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[async_trait::async_trait]
+impl KeyVerifier for KeyFeeder {
+    async fn verify_key(&self, key: &str) -> KeyVerdict {
+        KeyFeeder::verify_key(self, key).await
     }
 }
 
@@ -897,6 +912,22 @@ impl KeyFeeder {
         db: &Connection,
         key_manager: Option<&KeyManager>,
     ) -> Result<FeedReport, IngestionError> {
+        self.feed_with(self, source, db, key_manager).await
+    }
+
+    /// [`feed_once`] ile ayni hat; canlilik karari disaridan gelir
+    /// ([`KeyVerifier`]). Agsiz testler bu yuzden besleme hattinin kendisini
+    /// (oku -> ayir -> kaydet) dogrulayabilir.
+    pub async fn feed_with<V>(
+        &self,
+        verifier: &V,
+        source: &FeedSource,
+        db: &Connection,
+        key_manager: Option<&KeyManager>,
+    ) -> Result<FeedReport, IngestionError>
+    where
+        V: KeyVerifier + ?Sized,
+    {
         ensure_fed_keys_table(db)?;
 
         let raws = read_raw_keys(source)?;
@@ -905,7 +936,7 @@ impl KeyFeeder {
         let now = chrono::Utc::now().to_rfc3339();
 
         for raw in &raws {
-            let verdict = self.verify_key(&raw.value).await;
+            let verdict = verifier.verify_key(&raw.value).await;
             let key_ref = fingerprint(&raw.value);
 
             match verdict.liveness {
@@ -1165,4 +1196,291 @@ fn upsert_fed_key(
     )
     .map_err(|e| IngestionError::Persist(e.to_string()))?;
     Ok(())
+}
+
+/// `fed_keys` tablosunun canli/olu sayilari ve canli provider dagilimi.
+/// `/omni-keys` ozeti ve saglayici paneli bu sayilari kullanir.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct KeyCounts {
+    pub live: usize,
+    pub dead: usize,
+    /// Canli anahtarlarin provider bazinda dagilimi (buyukten kucuge).
+    pub by_provider: Vec<(String, usize)>,
+}
+
+/// `fed_keys`'ten sayim. Tablo yoksa hata doner; cagiran (omnitrix bin)
+/// bunu "anahtar veritabani yok" olarak yorumlar (I6: panic yok).
+pub fn fed_key_counts(db: &Connection) -> Result<KeyCounts, IngestionError> {
+    let mut counts = KeyCounts::default();
+
+    let mut stmt = db
+        .prepare("SELECT status, COUNT(*) FROM fed_keys GROUP BY status")
+        .map_err(|e| IngestionError::Persist(format!("count prepare: {e}")))?;
+    let rows = stmt
+        .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?)))
+        .map_err(|e| IngestionError::Persist(format!("count query: {e}")))?;
+    for row in rows {
+        let (status, n) = row.map_err(|e| IngestionError::Persist(format!("count row: {e}")))?;
+        match status.as_str() {
+            "live" => counts.live = usize::try_from(n).unwrap_or(usize::MAX),
+            "dead" => counts.dead = usize::try_from(n).unwrap_or(usize::MAX),
+            _ => {}
+        }
+    }
+    drop(stmt);
+
+    let mut stmt = db
+        .prepare(
+            "SELECT provider_kind, COUNT(*) FROM fed_keys \
+             WHERE status = 'live' AND provider_kind IS NOT NULL \
+             GROUP BY provider_kind ORDER BY COUNT(*) DESC",
+        )
+        .map_err(|e| IngestionError::Persist(format!("provider count prepare: {e}")))?;
+    let rows = stmt
+        .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?)))
+        .map_err(|e| IngestionError::Persist(format!("provider count query: {e}")))?;
+    for row in rows {
+        let (kind, n) = row.map_err(|e| IngestionError::Persist(format!("provider row: {e}")))?;
+        counts
+            .by_provider
+            .push((kind, usize::try_from(n).unwrap_or(usize::MAX)));
+    }
+
+    Ok(counts)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Agsiz sahte dogrulayici: on-ek tespitini korur (detection.rs), "dead"
+    /// gecen anahtari kesin olu sayar. Testin hatti gercek karar vericiyle
+    /// ayni sekilde isletmesi icin `KeyVerdict` akisi birebir aynidir.
+    struct MockVerifier;
+
+    #[async_trait::async_trait]
+    impl KeyVerifier for MockVerifier {
+        async fn verify_key(&self, key: &str) -> KeyVerdict {
+            if key.contains("dead") {
+                return KeyVerdict {
+                    liveness: Liveness::Dead,
+                    provider: None,
+                    tier: VerifyTier::Models,
+                    detail: "mock dead".into(),
+                };
+            }
+            let kind = match ProviderKind::detect_from_key(key) {
+                Some(k) => k,
+                None => {
+                    return KeyVerdict {
+                        liveness: Liveness::Dead,
+                        provider: None,
+                        tier: VerifyTier::Models,
+                        detail: "unrecognized key prefix".into(),
+                    };
+                }
+            };
+            let base_url = kind.default_base_url().to_string();
+            let provider = ProviderInfo::new(kind, base_url);
+            KeyVerdict {
+                liveness: Liveness::Live,
+                provider: Some(provider),
+                tier: VerifyTier::Models,
+                detail: "mock live".into(),
+            }
+        }
+    }
+
+    /// Kullanicinin harici anahtar DB'sini taklit eden gecici sqlite.
+    fn seed_source_db(path: &std::path::Path, keys: &[&str]) {
+        let conn = Connection::open(path).expect("open source db");
+        conn.execute_batch(
+            "CREATE TABLE keys (key TEXT PRIMARY KEY, label TEXT);
+             CREATE TABLE labels (key TEXT PRIMARY KEY, note TEXT);",
+        )
+        .expect("create source schema");
+        for (i, k) in keys.iter().enumerate() {
+            conn.execute(
+                "INSERT INTO keys (key, label) VALUES (?1, ?2)",
+                rusqlite::params![k, format!("label-{i}")],
+            )
+            .expect("insert source key");
+        }
+    }
+
+    fn count_rows(db: &Connection, status: &str) -> i64 {
+        db.query_row(
+            "SELECT COUNT(*) FROM fed_keys WHERE status = ?1",
+            rusqlite::params![status],
+            |r| r.get(0),
+        )
+        .expect("count fed_keys")
+    }
+
+    fn provider_rows(db: &Connection) -> Vec<(String, Option<String>)> {
+        let mut stmt = db
+            .prepare("SELECT key_ref, provider_kind FROM fed_keys ORDER BY key_ref")
+            .expect("prepare provider rows");
+        let rows = stmt
+            .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, Option<String>>(1)?)))
+            .expect("query provider rows");
+        rows.map(|r| r.expect("row")).collect()
+    }
+
+    /// Uctan uca: harici sqlite -> oku -> canli/olu ayir -> fed_keys +
+    /// keyring. GERCEK anahtar yok; detection on-ekleri ve sahte karar.
+    #[tokio::test]
+    async fn feed_separates_live_and_dead() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let source_path = tmp.path().join("keys.sqlite");
+        seed_source_db(
+            &source_path,
+            &[
+                "sk-ant-live-aaaaaaaa",  // Anthropic, canli
+                "sk-proj-live-bbbbbbbb", // OpenAI, canli
+                "xai-live-cccccccc",     // xAI, canli
+                "sk-ant-dead-dddddddd",  // Anthropic, olu ("dead" isaretli)
+                "garbage-not-a-key",     // taninmayan on-ek -> olu
+                "  ",                    // bos -> okunmaz, sayilmaz
+            ],
+        );
+
+        let dest_path = tmp.path().join("omnitrix.sqlite");
+        let dest = Connection::open(&dest_path).expect("open dest db");
+        let keyring = KeyManager::with_keys_dir(tmp.path().join("keyring"));
+        let feeder = KeyFeeder::new();
+        let source = FeedSource::new(source_path.clone()).with_label_column("label");
+
+        let report = feeder
+            .feed_with(&MockVerifier, &source, &dest, Some(&keyring))
+            .await
+            .expect("feed");
+
+        assert_eq!(report.keys_read, 5, "bos satir okunmamali");
+        assert_eq!(report.live, 3);
+        assert_eq!(report.dead, 2);
+        assert!(report.errors.is_empty(), "errors: {:?}", report.errors);
+
+        assert_eq!(count_rows(&dest, "live"), 3);
+        assert_eq!(count_rows(&dest, "dead"), 2);
+
+        // Canli anahtarlar keyring'e gitti (dosya + okunabilir).
+        let live_key = "sk-ant-live-aaaaaaaa";
+        let live_ref = fingerprint(live_key);
+        assert!(keyring.has_key(&live_ref).await, "canli anahtar keyring'de olmali");
+        let stored = keyring.get_key(&live_ref).await.expect("stored live key");
+        assert_eq!(stored.as_str(), live_key);
+
+        // Olu anahtar keyring'de YOK.
+        let dead_ref = fingerprint("sk-ant-dead-dddddddd");
+        assert!(!keyring.has_key(&dead_ref).await, "olu anahtar keyring'e girmemeli");
+
+        // Provider dagilimi: canli Anthropic/OpenAI/xAI, olu taninmayan yok.
+        let rows = provider_rows(&dest);
+        let live_kinds: Vec<&str> = rows
+            .iter()
+            .filter(|(r, _)| r == &live_ref)
+            .filter_map(|(_, k)| k.as_deref())
+            .collect();
+        assert_eq!(live_kinds, vec!["Anthropic"]);
+
+        // Taninmayan on-ekli olu anahtarin provider_kind'i NULL'dir.
+        let garbage_ref = fingerprint("garbage-not-a-key");
+        let garbage_kind = rows
+            .iter()
+            .find(|(r, _)| r == &garbage_ref)
+            .map(|(_, k)| k.clone())
+            .expect("garbage row");
+        assert_eq!(garbage_kind, None, "taninmayan olu anahtar provider'siz");
+
+        let counts = fed_key_counts(&dest).expect("counts");
+        assert_eq!(counts.live, 3);
+        assert_eq!(counts.dead, 2);
+        let prov: Vec<&str> = counts.by_provider.iter().map(|(k, _)| k.as_str()).collect();
+        assert_eq!(prov.len(), 3, "uc canli provider: {prov:?}");
+        assert!(prov.contains(&"Anthropic"));
+        assert!(prov.contains(&"OpenAI"));
+        assert!(prov.contains(&"xAI"));
+    }
+
+    /// Mod degistiren sahte dogrulayici: `live` kapaliyken HER anahtari olu,
+    /// acikken on-ek tespitiyle canli sayar. Ayni anahtar degeri iki farkli
+    /// karar gorur — besleme `key_ref` ayni kaldigi icin revizasyon yapar.
+    struct ToggleVerifier {
+        live: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    }
+
+    impl ToggleVerifier {
+        fn new() -> Self {
+            Self {
+                live: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            }
+        }
+
+        fn set_live(&self) {
+            self.live
+                .store(true, std::sync::atomic::Ordering::Relaxed);
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl KeyVerifier for ToggleVerifier {
+        async fn verify_key(&self, key: &str) -> KeyVerdict {
+            if !self.live.load(std::sync::atomic::Ordering::Relaxed) {
+                return KeyVerdict {
+                    liveness: Liveness::Dead,
+                    provider: None,
+                    tier: VerifyTier::Models,
+                    detail: "mock off".into(),
+                };
+            }
+            let kind = ProviderKind::detect_from_key(key).expect("known prefix");
+            let base_url = kind.default_base_url().to_string();
+            let provider = ProviderInfo::new(kind, base_url);
+            KeyVerdict {
+                liveness: Liveness::Live,
+                provider: Some(provider),
+                tier: VerifyTier::Models,
+                detail: "mock live".into(),
+            }
+        }
+    }
+
+    /// Besleme iki kez kosarsa yeni karar revize edilir (olu -> canli):
+    /// anahtar degeri (dolayisiyla `key_ref`) AYNI kalir, status guncellenir.
+    #[tokio::test]
+    async fn feed_revises_dead_to_live() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let source_path = tmp.path().join("keys.sqlite");
+        seed_source_db(&source_path, &["sk-ant-aaaaaaaa"]);
+
+        let dest_path = tmp.path().join("omnitrix.sqlite");
+        let dest = Connection::open(&dest_path).expect("open dest db");
+        let feeder = KeyFeeder::new();
+        let source = FeedSource::new(source_path.clone());
+        let verifier = ToggleVerifier::new();
+
+        let first = feeder
+            .feed_with(&verifier, &source, &dest, None)
+            .await
+            .expect("first feed");
+        assert_eq!(first.dead, 1);
+
+        // Ayni anahtar, yeni karar: canli.
+        verifier.set_live();
+        let second = feeder
+            .feed_with(&verifier, &source, &dest, None)
+            .await
+            .expect("second feed");
+        assert_eq!(second.live, 1);
+
+        let counts = fed_key_counts(&dest).expect("counts");
+        assert_eq!(counts.live, 1);
+        assert_eq!(counts.dead, 0, "revizasyon: olu canliya dondu");
+        assert_eq!(
+            counts.by_provider,
+            vec![("Anthropic".to_string(), 1)],
+            "canli provider dagilimi"
+        );
+    }
 }

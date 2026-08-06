@@ -495,6 +495,36 @@ impl DesktopBackend for UnavailableBackend {
     }
 }
 
+/// Masaustu sunucusu HIC tespit edilemediginde takilan dikis.
+///
+/// [`BackendRegistry::resolve_detected`] `NoDisplayServer` dondugunde agent
+/// kurulumu aracı yine kaydeder (kayit kapsamdan bagimsizdir), ama arka uc bu
+/// olur: her cagriyi acik bir [`ComputerUseError::NoDisplayServer`] hatasiyla
+/// reddeder. Wayland/X11 yokken arac patlamaz, hata doner (I6) ve R7 gunlugu
+/// "failed" satirini yazar.
+#[derive(Debug, Clone, Default)]
+pub struct NoDisplayBackend;
+
+#[async_trait]
+impl DesktopBackend for NoDisplayBackend {
+    fn display_server(&self) -> DisplayServer {
+        DisplayServer::Wayland
+    }
+
+    fn name(&self) -> &str {
+        "no-display"
+    }
+
+    async fn geometry(&self) -> Result<ScreenGeometry, ComputerUseError> {
+        Err(ComputerUseError::NoDisplayServer)
+    }
+
+    async fn perform(&self, action: &DesktopAction) -> Result<DesktopOutcome, ComputerUseError> {
+        let _ = action;
+        Err(ComputerUseError::NoDisplayServer)
+    }
+}
+
 /// Sunucu -> arka uc esleme tablosu.
 ///
 /// K6 kapisi: [`BackendRegistry::covers_all`] hem Wayland hem X11 icin bir
@@ -717,6 +747,21 @@ impl ComputerUseSession {
             boundary_branch: None,
             seq: AtomicU64::new(0),
         }
+    }
+
+    /// Omnitrix agent kurulumu icin varsayilan oturum.
+    ///
+    /// Seam tablosundan ortamca tespit edilen sunucu cozulur; masaustu yoksa
+    /// [`NoDisplayBackend`] takilir — kurulum asla basarisiz olmaz, cagrilar
+    /// acik hatayla doner (I6). Gunluk `fs` uzerinden yazilir; shim'lenmis
+    /// fs verilirse her masaustu dokunusu diff akisina duser (R7).
+    pub fn for_omnitrix(fs: Arc<dyn AsyncFileSystem>, journal_path: PathBuf) -> Self {
+        let registry = BackendRegistry::seam();
+        let backend = match registry.resolve_detected() {
+            Ok(backend) => backend,
+            Err(_) => Arc::new(NoDisplayBackend),
+        };
+        Self::new(backend, ActionJournal::new(fs, journal_path))
     }
 
     /// K5 geri-alma sinirini oturuma baglar (R7 ikinci yarisi).
@@ -999,16 +1044,10 @@ impl ComputerUseTool {
 
     /// Model-yuzu tanim.
     pub fn describe() -> ToolDescription {
-        ToolDescription::new(
-            Self::NAME,
-            "Masaustunu kullanir: ekran goruntusu, isaretci, tus ve metin \
-             eylemleri. Her eylem oturum gunlugune yazilir ve diff akisinda \
-             gorunur; gecici calisma agaci acikken yapilan degisiklikler geri \
-             alinabilir.",
-        )
-        .with_namespace(Self::NAMESPACE)
-        .with_kind("computer_use")
-        .with_arguments_schema(Self::args_schema())
+        ToolDescription::new(Self::NAME, MODEL_DESCRIPTION)
+            .with_namespace(Self::NAMESPACE)
+            .with_kind("computer_use")
+            .with_arguments_schema(Self::args_schema())
     }
 
     /// Hub kayit satiri.
@@ -1077,6 +1116,35 @@ impl Tool for ComputerUseTool {
                 .await
                 .map_err(|err| err.into_tool_error(&tool_id))
         }
+    }
+}
+
+/// Model-yuzu tanim metni.
+///
+/// Hem [`ComputerUseTool::describe`] (hub `ToolDescription`) hem
+/// `ToolMetadata::description_template` (grok toolset kayit duzlemi) bu
+/// sabitten beslenir — iki duzlem ayni metni gosterir.
+pub const MODEL_DESCRIPTION: &str = "Masaustunu kullanir: ekran goruntusu, isaretci, tus ve metin \
+     eylemleri. Her eylem oturum gunlugune yazilir ve diff akisinda gorunur; gecici calisma \
+     agaci acikken yapilan degisiklikler geri alinabilir.";
+
+/// grok toolset kayit duzleminin gerektirdigi metadata.
+///
+/// `ToolBridge::register_mcp_tools` (memory araclariyla ayni yol) bu impl'i
+/// ister: arac, harici bir MCP sunucusuna gerek kalmadan MCP kayit
+/// duzlemine (`ToolNamespace::MCP`) takilir ve model-yuzu tanimi
+/// `description_template`'ten gelir.
+impl xai_grok_tools::types::tool_metadata::ToolMetadata for ComputerUseTool {
+    fn kind(&self) -> xai_grok_tools::types::tool::ToolKind {
+        xai_grok_tools::types::tool::ToolKind::Write
+    }
+
+    fn tool_namespace(&self) -> xai_grok_tools::types::tool::ToolNamespace {
+        xai_grok_tools::types::tool::ToolNamespace::MCP
+    }
+
+    fn description_template(&self) -> &str {
+        MODEL_DESCRIPTION
     }
 }
 
@@ -1186,11 +1254,17 @@ mod tests {
 
     fn session_with_shim() -> (ComputerUseSession, tokio::sync::mpsc::UnboundedReceiver<FileTouch>)
     {
+        session_with_shim_over(Arc::new(FakeBackend::new(DisplayServer::Wayland)))
+    }
+
+    /// [`session_with_shim`]'in arka uc parametreli bicimi.
+    fn session_with_shim_over(
+        backend: Arc<dyn DesktopBackend>,
+    ) -> (ComputerUseSession, tokio::sync::mpsc::UnboundedReceiver<FileTouch>) {
         let (sink, stream) = touch_channel();
         let root = std::env::temp_dir();
         let shim = DiffShimFs::new(Arc::new(MemFs::default()), root.clone(), sink);
         let journal = ActionJournal::new(Arc::new(shim), root.join("omni-computer-use.jsonl"));
-        let backend = Arc::new(FakeBackend::new(DisplayServer::Wayland));
         (ComputerUseSession::new(backend, journal), stream)
     }
 
@@ -1389,5 +1463,72 @@ mod tests {
         let unavailable = ComputerUseError::NoDisplayServer.into_tool_error(&tool_id);
         let failed = ComputerUseError::Backend("kapali".to_owned()).into_tool_error(&tool_id);
         assert_ne!(unavailable.variant_name(), failed.variant_name());
+    }
+
+    /// I6: masaustu yokken arac cagrisi hata doner, patlamaz; hata
+    /// `service_unavailable` olarak tool katmanina tasinir.
+    #[tokio::test]
+    async fn no_display_backend_refuses_without_panicking() {
+        let (session, mut stream) = session_with_shim_over(Arc::new(NoDisplayBackend));
+
+        let tool_id = ToolId::new("omni:computer").expect("kimlik");
+        let err = session
+            .perform(&DesktopAction::Screenshot)
+            .await
+            .expect_err("masaustu yokken eylem reddedilmeli");
+        assert!(matches!(err, ComputerUseError::NoDisplayServer));
+        assert_eq!(
+            err.into_tool_error(&tool_id).variant_name(),
+            "service_unavailable"
+        );
+
+        // R7: basarisiz eylem bile intent+failed satirlarini diff akisina duser.
+        let first = stream.try_recv().expect("intent dokunusu");
+        let second = stream.try_recv().expect("failed dokunusu");
+        assert_eq!(first.path, session.journal_path());
+        assert_eq!(second.path, session.journal_path());
+        assert_eq!(session.journal.len().await, 2);
+    }
+
+    /// Kurulum hicbir ortamda basarisiz olmaz ve cagri asla patlamaz (I6):
+    /// masaustu algilansin ya da algilanmasin `for_omnitrix` oturum doner,
+    /// eylem hata veya basariyla sonlanir ve gunluk her durumda iki satir
+    /// (intent + done/failed) tasir (R7).
+    #[tokio::test]
+    async fn for_omnitrix_never_fails_construction() {
+        let (sink, mut stream) = touch_channel();
+        let root = std::env::temp_dir();
+        let shim = DiffShimFs::new(Arc::new(MemFs::default()), root.clone(), sink);
+        let session = ComputerUseSession::for_omnitrix(
+            Arc::new(shim),
+            root.join("omni-computer-for-omnitrix.jsonl"),
+        );
+
+        // Hangi arka uc secilmis olursa olsun (somut/sunucu-yok/seam) cagri
+        // `Result` ile biter — panik yok, `unwrap` yok.
+        let _ = session.perform(&DesktopAction::CursorPosition).await;
+
+        // Her durumda intent + done/failed satirlari diff akisina duser.
+        let first = stream.try_recv().expect("intent dokunusu");
+        let second = stream.try_recv().expect("done/failed dokunusu");
+        assert_eq!(first.path, session.journal_path());
+        assert_eq!(second.path, session.journal_path());
+        assert_eq!(session.journal.len().await, 2);
+    }
+
+    /// grok toolset kayit duzlemi icin gereken metadata tutarli doner.
+    #[test]
+    fn tool_metadata_matches_the_grok_registration_plane() {
+        use xai_grok_tools::types::tool::ToolKind;
+        use xai_grok_tools::types::tool_metadata::ToolMetadata as _;
+
+        let (session, _stream) = session_with_shim();
+        let tool = ComputerUseTool::new(Arc::new(session)).expect("arac kurulmali");
+        assert_eq!(tool.kind(), ToolKind::Write);
+        assert_eq!(
+            tool.tool_namespace(),
+            xai_grok_tools::types::tool::ToolNamespace::MCP
+        );
+        assert!(tool.description_template().contains("Masaustunu kullanir"));
     }
 }

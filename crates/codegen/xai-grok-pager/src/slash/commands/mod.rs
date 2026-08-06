@@ -41,8 +41,13 @@ pub mod mcps;
 pub mod model;
 pub mod multiline;
 pub mod new;
+pub mod omni_notify;
+pub mod omni_keys;
+pub mod omni_dashboard;
 pub mod omni_status;
 pub mod omni_tasks;
+pub mod omni_research;
+pub mod omni_backup;
 pub mod personas;
 pub mod plan;
 pub mod plugin;
@@ -143,7 +148,12 @@ pub fn builtin_commands() -> Vec<Arc<dyn SlashCommand>> {
         Arc::new(queue::QueueCommand),
         Arc::new(tasks::TasksCommand),
         Arc::new(omni_status::OmniStatusCommand::new()),
+        Arc::new(omni_dashboard::OmniDashboardCommand::new()),
+        Arc::new(omni_keys::OmniKeysCommand::new()),
         Arc::new(omni_tasks::OmniTasksCommand::new()),
+        Arc::new(omni_notify::OmniNotifyCommand::new()),
+        Arc::new(omni_research::OmniResearchCommand::new()),
+        Arc::new(omni_backup::OmniBackupCommand::new()),
         Arc::new(release_notes::ReleaseNotesCommand),
         Arc::new(tutorial::TutorialCommand),
         Arc::new(config_agents::ConfigAgentsCommand),
@@ -303,6 +313,7 @@ mod tests {
             "multiline",
             "new",
             "omni",
+            "omni-dashboard",
             "omni-tasks",
             "onboarding",
             "personas",
@@ -699,6 +710,10 @@ mod tests {
         assert!(
             reg.get("omni").is_some(),
             "/omni should be registered in builtins"
+        );
+        assert!(
+            reg.get("omni-dashboard").is_some(),
+            "/omni-dashboard should be registered in builtins"
         );
         assert!(
             reg.get("omni-tasks").is_some(),

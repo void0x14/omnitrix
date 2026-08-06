@@ -16,6 +16,27 @@ events = true
 [notify]
 escalation = false
 
+# FAZ 8 (K13, 6.3): kullanicinin KENDI harici anahtar DB'si. Yol verilmezse
+# (veya OMNITRIX_KEY_DB ayarlanmazsa) besleme warm_up'ta sessizce atlanir.
+# Tablo/sutun varsayilanlari: `keys` / `key`.
+[keys]
+# feed_db = "/home/kullanici/.keys/keys.sqlite"
+# feed_table = "keys"
+# feed_key_column = "key"
+
+# FAZ 7 (K14, 19.2): arastirma motoru. provider verilmezse motor kurulmaz;
+# `/omni-research` "arastirma motoru kurulmamis" der. MCP tabanli herhangi bir
+# arama araci (Firecrawl/Exa) config'ten baglanir; saglayici degisimi kod
+# degisikligi degildir (AS8).
+# [research.provider]
+# kind = "mcp"
+# server_name = "firecrawl"
+# url = "https://firecrawl.example/mcp"
+# tool = "firecrawl_search"
+# query_arg = "query"
+# limit_arg = "limit"
+# depth_arg = "maxDepth"
+
 # Gozlemlenebilirlik (AS9, Bolum 16). Orta RAM: seyrek ornekleme, kisa
 # retention, Prometheus kapali. sampling_ratio 0.0..=1.0; retention_secs = 0
 # sinirsiz demektir; max_series = 0 tavansiz demektir.

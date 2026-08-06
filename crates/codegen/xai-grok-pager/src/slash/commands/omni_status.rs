@@ -110,6 +110,7 @@ mod tests {
                     active_agents: 2,
                     storage_bytes: 5 * 1024 * 1024,
                     healthy: true,
+                    agents: Vec::new(),
                 }
             }
         }

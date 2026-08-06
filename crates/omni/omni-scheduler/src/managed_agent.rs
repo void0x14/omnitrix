@@ -31,6 +31,21 @@ pub enum ManagedAgentState {
     Killed,
 }
 
+impl ManagedAgentState {
+    /// Kanonik gorunum etiketi (dashboard/event kullanicilari icin).
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Idle => "idle",
+            Self::Active => "active",
+            Self::Paused => "paused",
+            Self::Completed => "completed",
+            Self::Failed => "failed",
+            Self::Killed => "killed",
+        }
+    }
+}
+
 pub struct ManagedAgent {
     pub id: Uuid,
     pub parent_id: Option<Uuid>,

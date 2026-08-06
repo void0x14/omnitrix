@@ -113,7 +113,7 @@ Dort katman. Ayrintili diyagram ve crate haritasi:
 Bolum 1-3'tur.
 
 ```
-Yuzler           omni-tui · omni-webui · uzak kanallar (omni-notify)
+Yuzler           omni-webui · uzak kanallar (omni-notify)
 Kontrol duzlemi  omni-control  (tek API, auth zorunlu, SSE/WS yayini)
 Cekirdek         omni-proto/omni-core · omni-scheduler · omni-router · omni-tools · omni-agent
 Temel            xai-*  (VENDORED — duzenlenmez)
@@ -141,7 +141,6 @@ surecte yasar. Dayaniklilik her yazimi once WAL'a gecirir.
 | `omni-research` | Saglayici-degistirilebilir arastirma motoru (surface/deep/ocean) |
 | `omni-record` | Oturum kaydi, olay-log ve tekrar oynatma |
 | `omni-backup` | Yedekleme/geri yukleme: 3-2-1, SigV4 imzalama + sifreleme |
-| `omni-tui` | Terminal yuzu: kanonik `omni-proto` durum akisini cizer (I3/K7) |
 | `omni-webui` | Sunucu-render web yuzu: maud SSR + SSE/WS, JS derleme zinciri yok |
 | `omni-tests` | Entegrasyon/kapi test kosum takimi; kokteki `tests/*.rs` hedeflerini barindirir |
 | `omni-bench` | Faz kapisi olcum araci: cold-start, shutdown, RSS — komut + metrik + esik (I1) |

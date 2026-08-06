@@ -25,6 +25,8 @@ omni-storage = { workspace = true }
 omni-notify = { workspace = true }
 omni-record = { workspace = true }
 omni-backup = { workspace = true }
+# Faz 7: arastirma motoru (saglayici config'ten, kalicilik research_findings'e).
+omni-research = { workspace = true }
 omni-webui = { workspace = true }
 ratatui = { workspace = true }
 crossterm = { workspace = true }
@@ -53,6 +55,9 @@ xai-grok-sampler = { workspace = true }
 # `trace_startup` pager'in `/dev/null` stderr yonlendirmesini asip terminale
 # yazmak icin pager'in kendi stderr kanalini kullanir (Task 1.1).
 xai-grok-shared = { workspace = true }
+
+[dev-dependencies]
+tower = "0.5"
 
 
 [lints]

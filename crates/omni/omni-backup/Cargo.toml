@@ -18,6 +18,12 @@ chrono = { workspace = true, features = ["serde"] }
 async-trait = { workspace = true }
 anyhow = { workspace = true }
 rusqlite = { workspace = true }
+# crypto.rs (ChaCha20-Poly1305 zarf) + sigv4.rs (AWS HMAC zinciri) gereksinimleri.
+base64 = { workspace = true }
+rand = { workspace = true }
+zeroize = { workspace = true }
+ring = { workspace = true }
+chacha20poly1305 = "0.11"
 
 [lints]
 workspace = true

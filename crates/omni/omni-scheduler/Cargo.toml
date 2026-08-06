@@ -35,6 +35,9 @@ tokio-util = { workspace = true }
 libc = { workspace = true }
 omni-storage = { workspace = true }
 omni-proto = { workspace = true }
+# Faz 7: duplike ResearchMode kaldirildi; butce tek kaynaktan (omni-research
+# modes.rs) gelir, scheduler kendi mod enum'u icat etmez (I3).
+omni-research = { workspace = true }
 # 19.1: ajana calisirken mesaj enjekte — kuyruk satiri + birlestirme kurallari
 # tek yerden gelir (I2 tek yon: salt okuma).
 xai-prompt-queue = { workspace = true }

@@ -794,6 +794,13 @@ pub(super) fn dispatch_send_prompt_inner(
             .slash_controller
             .recognized_token_ranges(&text, &agent.session.models);
 
+        // Task 1.3: a real plain-text prompt is about to be sent/enqueued (all
+        // slash/command/upsell/reconnect guards already returned above). Stream
+        // it into the omnitrix event sink; no sink => no-op.
+        if let Some(sink) = crate::omni_bridge::event_sink() {
+            sink.on_prompt(text.trim());
+        }
+
         let immediate_server_send =
             immediate_server_send_eligible(agent) && agent.prompt.images.is_empty();
         tracing::debug!(

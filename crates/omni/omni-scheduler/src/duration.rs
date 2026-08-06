@@ -56,7 +56,7 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use tracing::debug;
 
-use crate::research::ResearchMode;
+use omni_research::ResearchMode;
 
 // ---------------------------------------------------------------------------
 // Sabitler

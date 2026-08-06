@@ -1,15 +1,17 @@
 use std::collections::VecDeque;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicI64, AtomicUsize, Ordering};
 use std::sync::Arc;
 
+use dashmap::DashMap;
+use omni_proto::AgentTier;
 use tokio::sync::Mutex;
 use tracing::{debug, info, warn};
 use uuid::Uuid;
 
 use crate::admission::AdmissionController;
 use crate::hierarchy::HierarchyTree;
-use crate::interrupt::InterruptBus;
-use crate::managed_agent::ManagedAgent;
+use crate::interrupt::{Interrupt, InterruptBus, InterruptLevel};
+use crate::managed_agent::{ManagedAgent, ManagedAgentState};
 use crate::persona::PersonaKind;
 
 fn ram_estimate_for(persona: &PersonaKind) -> u64 {
@@ -76,6 +78,28 @@ struct QueuedEntry {
     priority: u8,
 }
 
+/// Canli ajan kaydi — dashboard gorunumu icin satir kaynagi (Faz 3.1).
+struct AgentEntry {
+    agent_id: Uuid,
+    tier: AgentTier,
+    agent: ManagedAgent,
+}
+
+/// Dashboard'a verilen, baglam tasimayan ajan gorunumu.
+#[derive(Debug, Clone)]
+pub struct AgentView {
+    /// Tablo satir kimligi (`/omni-dashboard interrupt <id>` hedefi).
+    pub row_id: i64,
+    /// Ajanin mantiksal kimligi.
+    pub agent_id: Uuid,
+    /// Tier makinesi degeri (canli spawn/kuyruk karsiligi).
+    pub tier: AgentTier,
+    /// `ManagedAgent` durum makinesi degeri.
+    pub status: ManagedAgentState,
+    /// Ajan adi (gorev basligi olarak gorunur).
+    pub task_title: String,
+}
+
 struct SchedulerInner {
     hierarchy: HierarchyTree,
     admission: AdmissionController,
@@ -84,6 +108,10 @@ struct SchedulerInner {
     queued_agents: Mutex<VecDeque<QueuedEntry>>,
     active_count: AtomicUsize,
     queued_count: AtomicUsize,
+    /// Canli ajan defteri: satir kimligi -> kayit. Spawn edilen gorev bitince
+    /// silinir; kuyruktakiler uyanip spawn olana kadar kayitta kalir.
+    agents: DashMap<i64, AgentEntry>,
+    next_row_id: AtomicI64,
 }
 
 pub struct Scheduler {
@@ -119,6 +147,8 @@ impl Scheduler {
                 queued_agents: Mutex::new(VecDeque::new()),
                 active_count: AtomicUsize::new(0),
                 queued_count: AtomicUsize::new(0),
+                agents: DashMap::new(),
+                next_row_id: AtomicI64::new(1),
             }),
         }
     }
@@ -128,6 +158,7 @@ impl Scheduler {
         agent: ManagedAgent,
     ) -> Result<SpawnHandle, SpawnError> {
         let agent_id = agent.id;
+        let row_id = self.inner.register(&agent);
         let persona_label = format!("{}", agent.persona);
         let estimated_ram = ram_estimate_for(&agent.persona);
         let rss = read_rss_bytes();
@@ -152,6 +183,7 @@ impl Scheduler {
             agent,
             estimated_ram,
             agent_id,
+            row_id,
         )
         {
             Ok(handle) => Ok(handle),
@@ -196,6 +228,55 @@ impl Scheduler {
         self.inner.queued_count.load(Ordering::Acquire)
     }
 
+    /// Canli ajan defterinin dashboard gorunumu (Faz 3.1 `/omni-dashboard`).
+    ///
+    /// `ManagedAgent` defteri satir kimligi ile tutulur; durum satirlari
+    /// ajanin canli durum makinesinden okunur. I6: panik yok.
+    pub fn agent_views(&self) -> Vec<AgentView> {
+        let mut views: Vec<AgentView> = self
+            .inner
+            .agents
+            .iter()
+            .map(|entry| AgentView {
+                row_id: *entry.key(),
+                agent_id: entry.agent_id,
+                tier: entry.tier,
+                status: entry.agent.current_state(),
+                task_title: entry.agent.name().to_string(),
+            })
+            .collect();
+        views.sort_by_key(|v| v.row_id);
+        views
+    }
+
+    /// Bir ajan satirina `AgentKill` kesmesi gonderir (dashboard interrupt).
+    ///
+    /// Kesme, ajan gorevlerinin dinledigi dahili otobuse duser. Bilinmeyen
+    /// satir kimligi `Err` doner; alici yoksa otobus hatasi yine `Err`.
+    pub fn interrupt_agent(&self, row_id: i64, reason: &str) -> Result<(), String> {
+        let target = self
+            .inner
+            .agents
+            .get(&row_id)
+            .map(|e| e.agent_id)
+            .ok_or_else(|| format!("ajan satiri bulunamadi: {row_id}"))?;
+
+        let interrupt = Interrupt {
+            id: Uuid::new_v4(),
+            target_agent_id: target,
+            level: InterruptLevel::AgentKill,
+            reason: reason.to_string(),
+            issued_at: chrono::Utc::now(),
+            issued_by: None,
+            is_broadcast: false,
+        };
+
+        self.inner
+            .interrupts
+            .send(interrupt)
+            .map_err(|e| format!("interrupt iletilemedi: {e}"))
+    }
+
     pub fn ram_pressure(&self) -> f64 {
         let rss = read_rss_bytes();
         if self.inner.mem_high_watermark_bytes == 0 {
@@ -222,11 +303,42 @@ impl Scheduler {
 }
 
 impl SchedulerInner {
+    fn register(&self, agent: &ManagedAgent) -> i64 {
+        let row_id = self.next_row_id.fetch_add(1, Ordering::Relaxed);
+        self.agents.insert(
+            row_id,
+            AgentEntry {
+                agent_id: agent.id,
+                tier: AgentTier::Queued,
+                agent: agent.clone(),
+            },
+        );
+        row_id
+    }
+
+    fn set_tier(&self, row_id: i64, tier: AgentTier) {
+        if let Some(mut entry) = self.agents.get_mut(&row_id) {
+            entry.tier = tier;
+        }
+    }
+
+    fn row_id_of(&self, agent_id: Uuid) -> Option<i64> {
+        self.agents
+            .iter()
+            .find(|e| e.agent_id == agent_id)
+            .map(|e| *e.key())
+    }
+
+    fn unregister(&self, row_id: i64) {
+        self.agents.remove(&row_id);
+    }
+
     fn try_admit_and_spawn(
         inner: Arc<Self>,
         agent: ManagedAgent,
         estimated_ram: u64,
         agent_id: Uuid,
+        row_id: i64,
     ) -> Result<SpawnHandle, (ManagedAgent, u64, Uuid)> {
         let parent_id = agent.parent_id;
 
@@ -246,6 +358,7 @@ impl SchedulerInner {
         let cancel_token = tokio_util::sync::CancellationToken::new();
 
         inner.active_count.fetch_add(1, Ordering::AcqRel);
+        inner.set_tier(row_id, AgentTier::Active);
 
         let inner_clone = Arc::clone(&inner);
 
@@ -259,6 +372,7 @@ impl SchedulerInner {
             info!(agent_id = %agent_id, "agent task finished");
 
             inner_clone.active_count.fetch_sub(1, Ordering::AcqRel);
+            inner_clone.unregister(row_id);
             inner_clone.try_drain_queue().await;
         });
 
@@ -299,12 +413,17 @@ impl SchedulerInner {
 
             let QueuedEntry { agent, estimated_ram, .. } = entry;
             let agent_id = agent.id;
+            let row_id = match self.row_id_of(agent_id) {
+                Some(id) => id,
+                None => self.register(&agent),
+            };
 
             match Self::try_admit_and_spawn(
                 Arc::clone(self),
                 agent,
                 estimated_ram,
                 agent_id,
+                row_id,
             )
             {
                 Ok(_) => {

@@ -102,7 +102,6 @@ members = [
     "crates/omni/omni-storage",
     "crates/omni/omni-tests",
     "crates/omni/omni-tools",
-    "crates/omni/omni-tui",
     "crates/omni/omni-webui",
     "crates/omni/omnitrix",
 ]
@@ -222,7 +221,6 @@ omni-scheduler = { path = "crates/omni/omni-scheduler" }
 omni-storage = { path = "crates/omni/omni-storage" }
 omni-tests = { path = "crates/omni/omni-tests" }
 omni-tools = { path = "crates/omni/omni-tools" }
-omni-tui = { path = "crates/omni/omni-tui" }
 omni-webui = { path = "crates/omni/omni-webui" }
 omnitrix = { path = "crates/omni/omnitrix" }
 opentelemetry-http = { version = "0.32", features = ["reqwest-blocking"] }

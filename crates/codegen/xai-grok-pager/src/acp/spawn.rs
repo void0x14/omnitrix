@@ -65,6 +65,16 @@ impl AgentShutdownGuard {
     pub fn new(cancel: CancellationToken, thread: Option<thread::JoinHandle<Result<()>>>) -> Self {
         Self { cancel, thread }
     }
+
+    /// 8.1 crash-only kapanis: calisan ajan iptal edilir ama oturum flush'i
+    /// (SessionEnd hook'lari, bellek kaydi) BEKLENMEZ. `thread` tasinir ve
+    /// JoinHandle detach edilir; surec kapanisi kisa sure sonra gelir ve OS
+    /// is parcacigini reaper eder. Veri WAL/journal tabanli oldugu icin
+    /// flush kaybi guvenlidir; graceful kapanis zinciri yasaktir (8.1).
+    pub fn cancel_without_join(&mut self) {
+        self.cancel.cancel();
+        self.thread.take();
+    }
 }
 
 impl Drop for AgentShutdownGuard {

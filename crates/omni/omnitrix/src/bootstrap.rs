@@ -4,8 +4,13 @@ use std::time::Instant;
 
 use omni_control::Broadcaster;
 use omni_core::CoreState;
+use omni_notify::{
+    EnvCredentialStore, EscalationNotifier, NotifyCredentials, NotifyDispatcher, NotifyPolicy,
+    TelegramNotifier, TwilioNotifier,
+};
 use omni_provider::detection::ProviderDetector;
 use omni_provider::health::HealthProbe;
+use omni_provider::ingestion::{FeedReport, FeedSource, KeyFeeder};
 use omni_provider::keyring::KeyManager;
 use omni_router::strategies::Router;
 use omni_scheduler::interrupt::InterruptBus;
@@ -16,6 +21,7 @@ use omni_storage::redb_store::RedbStore;
 use omni_storage::sqlite_schema::SchemaManager;
 use omni_storage::wal::WalReplay;
 use omni_storage::writer_actor::{WriteOp, WriterActor};
+use tokio::sync::broadcast::error::RecvError;
 use tokio::sync::{Mutex, watch};
 
 /// `max_active_agents` profillerde hem sayi (low=2, high=50) hem de string
@@ -56,6 +62,37 @@ pub struct OmnitrixConfig {
     pub notify: NotifyConfig,
     #[serde(default)]
     pub api: ApiConfig,
+    #[serde(default)]
+    pub keys: KeysConfig,
+    /// Faz 7: arastirma motoru. `provider` yoksa motor kurulmaz;
+    /// `/omni-research` "kurulmamis" mesaji verir (I6).
+    #[serde(default)]
+    pub research: ResearchConfig,
+}
+
+/// Faz 7 arastirma saglayicisi. `omni-research` ProviderConfig'i (etiketli
+/// birlik: `kind = "mcp"`) dogrudan TOML'dan cozulur; Firecrawl -> Exa gecisi
+/// konfig degisikligidir, kod degisikligi degil (AS8).
+#[derive(Debug, Default, serde::Deserialize)]
+#[allow(dead_code)]
+pub struct ResearchConfig {
+    /// Arastirma saglayicisi; `None` ise motor kurulmaz.
+    #[serde(default)]
+    pub provider: Option<omni_research::ProviderConfig>,
+}
+
+/// FAZ 8 (K13, 6.3): kullanicinin KENDI harici anahtar DB'si. Yol yalnizca
+/// kullanicidan gelir — kod hicbir kaynak gomlemez. Bos birakilirsa besleme
+/// sessizce atlanir.
+#[derive(Debug, Default, serde::Deserialize)]
+#[allow(dead_code)]
+pub struct KeysConfig {
+    /// Harici sqlite dosyasi (kullanicinin anahtar deposu).
+    pub feed_db: Option<String>,
+    /// Anahtarlarin bulundugu tablo (varsayilan: `keys`).
+    pub feed_table: Option<String>,
+    /// Anahtar degerini tutan sutun (varsayilan: `key`).
+    pub feed_key_column: Option<String>,
 }
 
 #[derive(Debug, serde::Deserialize)]
@@ -107,7 +144,9 @@ fn default_api_addr() -> String {
 
 #[allow(dead_code)]
 pub struct OmnitrixContext {
-    pub scheduler: Scheduler,
+    /// `Arc`: bridge provider'i canli ajan defterini okurken baglam park
+    /// edilmis halde de scheduler canli kalir (I3 tek ornek).
+    pub scheduler: Arc<Scheduler>,
     pub storage: StorageLayer,
     pub provider: ProviderLayer,
     pub interrupt_bus: Arc<InterruptBus>,
@@ -119,6 +158,9 @@ pub struct OmnitrixContext {
     /// Kontrol duzlemi yayincisi. API baslatilamadiysa `None` olur — o zaman
     /// olay yayacak bir yuz de yoktur.
     pub events: Option<Broadcaster>,
+    /// Bildirim dagiticisi (Faz 6, Task 6.1). Kanallar kimlik bilgilerinden
+    /// kurulur; hicbir kanal yoksa dagitici bos calisir, acilis bloke olmaz (I6).
+    pub notify: Arc<NotifyDispatcher>,
     pub config: OmnitrixConfig,
 }
 
@@ -222,17 +264,16 @@ pub fn init() -> anyhow::Result<()> {
     Ok(())
 }
 
-/// TUI modunda stderr'e log yazmak alternatif ekrani bozar. Bu yuzden abone
-/// yalnizca `OMNITRIX_LOG_STDERR=1` iken kurulur; aksi halde `tracing` cagrilari
-/// sessiz no-op olur ve ilk frame temiz kalir (8.2).
-pub fn init_for_tui() {
-    let want = std::env::var("OMNITRIX_LOG_STDERR")
-        .map(|v| v == "1")
-        .unwrap_or(false);
-    if want {
-        let _ = init();
-    }
-}
+/// TUI modunda omnitrix kendi global tracing abonesini KURMAZ.
+///
+/// Pager (`xai_grok_pager`) olay dongusunde koşulsuz olarak kendi global
+/// subscriber'ini kurar (`init_tracing` -> `install_firehose` -> `registry.init()`);
+/// omnitrix'in once kurdugu bir abone `SetGlobalDefaultError` panigiyle sureci
+/// oldurur (I6: panik yok). Omnitrix loglari (varsayilan direktif WARN+) pager'in
+/// firehose'u uzerinden tracing panesine akar; stderr'e ayrıca yazmak gerekmez
+/// (pager fd2'yi `/dev/null`'a yonlendirir, 8.2). Eski `OMNITRIX_LOG_STDERR`
+/// bayragi bu yuzden islevsizdir; CLI alt-komutlari `init()` yolunu kullanir.
+pub fn init_for_tui() {}
 
 /// Veri dizini; yoksa olusturulur.
 pub fn data_dir() -> anyhow::Result<PathBuf> {
@@ -359,6 +400,156 @@ pub fn init_provider(_config: &OmnitrixConfig) -> ProviderLayer {
     }
 }
 
+// ---------------------------------------------------------------------------
+// FAZ 8 — anahtar besleme hatti baglantisi (K13, 6.3)
+// ---------------------------------------------------------------------------
+
+/// Besleme kaynagini cozer: `OMNITRIX_KEY_DB` ortam degiskeni config'teki
+/// `keys.feed_db`'den once gelir. Ikisi de yoksa `None` — warm_up beslemeyi
+/// sessizce atlar (yapilandirilmamis = kaynak yok).
+pub fn feed_source_from_config(config: &OmnitrixConfig) -> Option<FeedSource> {
+    let db = std::env::var("OMNITRIX_KEY_DB")
+        .ok()
+        .filter(|v| !v.trim().is_empty())
+        .or_else(|| config.keys.feed_db.clone())
+        .filter(|v| !v.trim().is_empty())?;
+
+    let mut source = FeedSource::new(PathBuf::from(db));
+    if let Some(table) = config.keys.feed_table.as_deref().filter(|t| !t.trim().is_empty()) {
+        source = source.with_table(table);
+    }
+    if let Some(col) = config
+        .keys
+        .feed_key_column
+        .as_deref()
+        .filter(|c| !c.trim().is_empty())
+    {
+        source = source.with_key_column(col);
+    }
+    Some(source)
+}
+
+/// Tek besleme turu: kaynak -> dogrula -> canli/olu ayir -> keyring +
+/// `fed_keys`/`dead_keys` + saglik izleme. `omnitrix keys import` alt-komutu
+/// ve warm_up beslemesi ayni yolu kullanir.
+///
+/// Hata yollari I6 geregi panic'sizdir: kaynak yoksa "anahtar veritabani yok"
+/// anlaminda hata doner, cagiran sessizce atlayabilir.
+pub async fn feed_keys_once(
+    source: &FeedSource,
+    key_manager: &KeyManager,
+    health: &HealthProbe,
+) -> anyhow::Result<FeedReport> {
+    if !source.db_path.exists() {
+        anyhow::bail!(
+            "anahtar veritabani yok: {}",
+            source.db_path.display()
+        );
+    }
+
+    let db = db_path()?;
+
+    // Kayit hedefinin semasi hazir olmali (0010_key_ingestion: fed_keys/dead_keys).
+    let schema = SchemaManager::new(&db).map_err(|e| anyhow::anyhow!("SchemaManager: {e}"))?;
+    schema
+        .run_migrations()
+        .map_err(|e| anyhow::anyhow!("migration: {e}"))?;
+    drop(schema);
+
+    let conn = rusqlite::Connection::open(&db)
+        .map_err(|e| anyhow::anyhow!("omnitrix sqlite acilamadi: {e}"))?;
+
+    let feeder = KeyFeeder::new();
+    let report = feeder
+        .feed_once(source, &conn, Some(key_manager))
+        .await
+        .map_err(|e| anyhow::anyhow!("besleme hatasi: {e}"))?;
+
+    // Olu bolumu: fed_keys'teki olu satirlari dead_keys'e yansit (revizable
+    // tarihce; canliya donerse fed_keys.status guncellenir, dead_keys kalir).
+    mirror_dead_keys(&conn)?;
+
+    // Canli saglayicilar saglik izleyicisine kaydedilir (pasif kontrol hatti).
+    track_live_providers(&conn, health).await;
+
+    tracing::info!(
+        source = %source.db_path.display(),
+        keys_read = report.keys_read,
+        live = report.live,
+        dead = report.dead,
+        "anahtar beslemesi tamam"
+    );
+
+    Ok(report)
+}
+
+/// `fed_keys.status='dead'` satirlarini `dead_keys`'e yansitir. Hata
+/// raporlanir ama beslemenin ana akisini durdurmaz (I6: panic yok).
+fn mirror_dead_keys(conn: &rusqlite::Connection) -> anyhow::Result<()> {
+    conn.execute(
+        "INSERT INTO dead_keys \
+         (key_ref, provider_kind, base_url, source_path, label, verify_tier, detail, first_seen, last_checked) \
+         SELECT key_ref, provider_kind, base_url, source_path, label, verify_tier, detail, first_seen, last_checked \
+         FROM fed_keys WHERE status = 'dead' \
+         ON CONFLICT(key_ref) DO UPDATE SET \
+           provider_kind = excluded.provider_kind, base_url = excluded.base_url, \
+           source_path = excluded.source_path, label = excluded.label, \
+           verify_tier = excluded.verify_tier, detail = excluded.detail, \
+           last_checked = excluded.last_checked",
+        [],
+    )
+    .map_err(|e| anyhow::anyhow!("dead_keys yansimasi: {e}"))?;
+    Ok(())
+}
+
+/// Canli anahtarlarin saglayicilarini HealthProbe'a kaydeder; boylece pasif
+/// kontrol dongusu onlari izler. Tekil hatalar yutulur (I6).
+async fn track_live_providers(conn: &rusqlite::Connection, health: &HealthProbe) {
+    let query = "SELECT DISTINCT provider_kind, base_url FROM fed_keys \
+                 WHERE status = 'live' AND provider_kind IS NOT NULL AND base_url IS NOT NULL";
+    let Ok(mut stmt) = conn.prepare(query) else {
+        return;
+    };
+    let rows = stmt.query_map([], |r| {
+        Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
+    });
+    let Ok(rows) = rows else {
+        return;
+    };
+    for row in rows.flatten() {
+        let (kind, base_url) = row;
+        health.track_provider(&kind, &base_url).await;
+    }
+}
+
+/// Besleme iplikcigini kurar. `feed_keys_once` rusqlite `Connection`'i await
+/// boyunca tutar (Send degildir) — tokio `spawn` edilemez; bu yuzden kendi
+/// ipligi uzerinde yakalanmis `Handle::block_on` ile kosar. Her hata yolu
+/// uyariyla atlar (I6: panic yok).
+fn spawn_key_feed(source: FeedSource, provider: &ProviderLayer) {
+    let Some(handle) = tokio::runtime::Handle::try_current().ok() else {
+        tracing::warn!("anahtar beslemesi: runtime yok — atlandi");
+        return;
+    };
+    let feed_keyring = provider.keyring.clone();
+    let feed_health = Arc::clone(&provider.health);
+    let spawn = std::thread::Builder::new()
+        .name("omnitrix-key-feed".into())
+        .spawn(move || {
+            if let Err(e) = handle.block_on(feed_keys_once(&source, &feed_keyring, &feed_health))
+            {
+                tracing::warn!(
+                    %e,
+                    source = %source.db_path.display(),
+                    "anahtar beslemesi atlandi"
+                );
+            }
+        });
+    if let Err(e) = spawn {
+        tracing::warn!(%e, "anahtar beslemesi ipligi kurulamadi — atlandi");
+    }
+}
+
 pub fn init_router(health_probe: HealthProbe) -> Router {
     Router::with_health_probe(health_probe)
 }
@@ -370,6 +561,79 @@ pub fn init_scheduler(config: &OmnitrixConfig) -> Scheduler {
         config.runtime.max_depth,
         config.runtime.mem_high_watermark_mb,
     )
+}
+
+/// Bildirim dagiticisini kurar (Faz 6, K9, Task 6.1).
+///
+/// Politika varsayilan Bolum 13 tablosunu kodlar; `notify.escalation`
+/// yalnizca telefon kanalinin (SMS/arama) kurulup kurulmayacagina karar
+/// verir. Telegram kanali kimlik bilgilerinden, telefon kanali yalnizca
+/// `escalation=true` iken kurulur. Kimlik bilgisi yoksa kanal atlanir;
+/// dagitici bos kanallarla calisir, patlamaz (I6).
+async fn init_notify(config: &OmnitrixConfig) -> Arc<NotifyDispatcher> {
+    let policy = NotifyPolicy::default();
+    let credentials = match NotifyCredentials::load(&EnvCredentialStore).await {
+        Ok(credentials) => credentials,
+        Err(err) => {
+            tracing::warn!(target: "omni::notify", %err, "notify kimlikleri okunamadi; kanallar kapali");
+            NotifyCredentials::default()
+        }
+    };
+
+    let mut dispatcher = NotifyDispatcher::new(policy.clone());
+    if let Some(telegram) = TelegramNotifier::from_notify_credentials(&credentials) {
+        tracing::info!(target: "omni::notify", chat_id = %telegram.chat_id(), "telegram kanali kuruldu");
+        dispatcher = dispatcher.with_telegram(telegram);
+    }
+
+    if config.notify.escalation {
+        match TwilioNotifier::from_notify_credentials(&credentials) {
+            Some(notifier) => {
+                tracing::info!(target: "omni::notify", to = %notifier.to(), "telefon kanali kuruldu");
+                dispatcher = dispatcher.with_escalation(EscalationNotifier::new(notifier, policy));
+            }
+            None => tracing::debug!(
+                target: "omni::notify",
+                "notify.escalation=true ama twilio kimlikleri yok"
+            ),
+        }
+    } else {
+        tracing::debug!(target: "omni::notify", "notify.escalation=false — telefon kanallari kapali");
+    }
+
+    Arc::new(dispatcher)
+}
+
+/// Broadcaster olay akisina abone olur ve her olayi dagiticinin onune koyar
+/// (Task 6.1). Tetikleyici eslesmesi omni-notify'in kendi mantigidir:
+/// `AgentUpserted` gibi tetiklenmeyen olaylar sessizce atlanir.
+///
+/// Geride kalma (Lagged) aboneligi koparmaz: bir sonraki olay normal akar;
+/// dusen olaylar yalnizca loga yazilir (I6 — panik yok).
+fn spawn_notify_consumer(events: &Broadcaster, notify: Arc<NotifyDispatcher>) {
+    let mut receiver = events.subscribe();
+    tokio::spawn(async move {
+        loop {
+            match receiver.recv().await {
+                Ok(event) => {
+                    let report = notify.dispatch(&event).await;
+                    if report.triggered {
+                        tracing::debug!(
+                            target: "omni::notify",
+                            telegram_sent = report.telegram_sent,
+                            sms_sent = report.sms_sent,
+                            call_placed = report.call_placed,
+                            suppressed = report.suppressed,
+                            failures = ?report.failures,
+                            "durum olayi dagiticiya islendi"
+                        );
+                    }
+                }
+                Err(RecvError::Lagged(_)) => continue,
+                Err(RecvError::Closed) => break,
+            }
+        }
+    });
 }
 
 /// Kontrol duzlemini kurar: `omni-control` router'i + `omni-core` koprusu.
@@ -432,9 +696,24 @@ pub async fn warm_up(phase: &watch::Sender<WarmupPhase>) -> anyhow::Result<Omnit
     let _router = init_router((*provider.health).clone());
     let _ = phase.send(WarmupPhase::ProviderReady);
 
-    let scheduler = init_scheduler(&config);
+    // FAZ 8 (K13, 6.3): kaynak yapilandirildiysa anahtar beslemesi arka planda
+    // baslar (okunus -> canlilik -> canli/olu). Yapilandirilmamis kaynak
+    // sessizce atlanir; hata TUI'yi asla bloke etmez (I6).
+    //
+    // `feed_keys_once` rusqlite `Connection`'i await boyunca tutar (Send
+    // degildir); bu yuzden kendi iplikcigi uzerinde `Handle::block_on` ile
+    // kosar. Iplik veya runtime kurulamazsa besleme uyarilarak atlanir (I6).
+    if let Some(source) = feed_source_from_config(&config) {
+        spawn_key_feed(source, &provider);
+    }
+
+    let scheduler = Arc::new(init_scheduler(&config));
     let interrupt_bus = Arc::new(InterruptBus::default());
     let penalty_ledger = PenaltyLedger::new();
+
+    // Bildirim dagiticisi: kanallar kimlik bilgilerinden kurulur; yoksa bos
+    // calisir. Açilis hicbir sekilde bloke etmez (I6).
+    let notify = init_notify(&config).await;
 
     // Tek yazar cekirdek. Derinlik tavani koddan degil yapilandirmadan gelir
     // (K1/AS3); `u8` tasmasi tavani en buyuk degere sabitler, panik yoktur (I6).
@@ -464,6 +743,10 @@ pub async fn warm_up(phase: &watch::Sender<WarmupPhase>) -> anyhow::Result<Omnit
 
     let _ = phase.send(WarmupPhase::Ready);
 
+    if let Some(broadcaster) = &events {
+        spawn_notify_consumer(broadcaster, Arc::clone(&notify));
+    }
+
     Ok(OmnitrixContext {
         scheduler,
         storage,
@@ -473,6 +756,7 @@ pub async fn warm_up(phase: &watch::Sender<WarmupPhase>) -> anyhow::Result<Omnit
         health_probe,
         core,
         events,
+        notify,
         config,
     })
 }
@@ -572,4 +856,37 @@ pub async fn record_task(title: &str) -> anyhow::Result<String> {
     writer.shutdown().await;
 
     Ok(op_id)
+}
+
+/// Faz 7: arastirma sonuclarinin (`research_findings.task_id`) baglanacagi
+/// gorev kimligi. Tabloda gorev varsa en yeni kimlik kullanilir (FK
+/// gecerli); hic gorev yoksa tek bir "interactive research" satiri yazilir.
+///
+/// Okuma ayri bir WAL-baglantisi uzerinden yapilir; yazarlar aktor sirasini
+/// bozmaz. Hata I6 geregi yukari tasinir; cagiran motoru kurmadan gecer.
+pub async fn ensure_research_task(writer: &WriterActor) -> anyhow::Result<omni_proto::TaskId> {
+    use rusqlite::types::Value;
+
+    let db = db_path()?;
+    let conn = rusqlite::Connection::open(&db).map_err(|e| anyhow::anyhow!("okuma baglantisi: {e}"))?;
+    let has_tasks: bool = conn
+        .query_row("SELECT EXISTS(SELECT 1 FROM tasks LIMIT 1)", [], |r| r.get(0))
+        .unwrap_or(false);
+    let max_id: i64 = conn
+        .query_row("SELECT COALESCE(MAX(id), 0) FROM tasks", [], |r| r.get(0))
+        .unwrap_or(0);
+    drop(conn);
+
+    if has_tasks {
+        return Ok(max_id);
+    }
+
+    writer_execute(
+        writer,
+        "INSERT INTO tasks (id, parent_id, root_id, title, mode, status, depth) \
+         VALUES (1, NULL, 1, 'interactive research', 'research', 'open', 0)",
+        Vec::<Value>::new(),
+    )
+    .await?;
+    Ok(1)
 }
