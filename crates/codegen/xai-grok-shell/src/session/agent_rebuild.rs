@@ -371,7 +371,6 @@ impl AgentRebuildSpec {
                 );
             }
         }
-        }
         let model_validator = models_manager.clone();
         agent
             .tool_bridge()
@@ -445,7 +444,6 @@ impl AgentRebuildSpec {
     }
 }
 /// Faz 10 / Task 10.1: yerlesik `grok_computer` aracını agent toolset'ine kaydeder.
-///
 /// `ToolBridge::register_mcp_tools` yolu aracı MCP kayit duzlemine
 /// (`ToolNamespace::MCP`) takar; memory araclariyla ayni mekanizma. Harici
 /// bir MCP sunucusu/process GEREKMEZ — arac ajanla ayni surecte calisir ve

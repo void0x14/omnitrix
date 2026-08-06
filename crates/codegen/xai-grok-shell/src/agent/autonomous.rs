@@ -248,7 +248,7 @@ impl BlockEvidence {
 
 /// Kullanici karari (yerel kopya; `omni_proto::ApprovalDecision` bagimliligi
 /// eklenmemistir).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
 pub enum ApprovalDecision {
     /// Onaylandi.
     Allow,
@@ -342,6 +342,12 @@ pub enum CheckKind {
     Test,
     /// Sema/lint kapisi.
     SchemaLint,
+}
+
+impl std::fmt::Display for CheckKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_db_str())
+    }
 }
 
 impl CheckKind {
@@ -1139,7 +1145,7 @@ impl AutonomousLoop {
             });
             let results = join_all(futures).await;
             for (index, evidence) in results {
-                outcomes[index] = Some(evidence);
+                outcomes[index] = Some(evidence?);
             }
         }
 
@@ -1147,7 +1153,7 @@ impl AutonomousLoop {
             if block.depends_on.is_none() {
                 continue;
             }
-            outcomes[index] = Some(self.spawn_one(block, session_dir, events).await);
+            outcomes[index] = Some(self.spawn_one(block, session_dir, events).await?);
         }
 
         let mut evidence = Vec::with_capacity(blocks.len());
@@ -1166,7 +1172,7 @@ impl AutonomousLoop {
         session_dir: &Path,
         events: &SessionEventRecorder,
     ) -> Result<BlockEvidence, AutonomousError> {
-        let subagent_id = Uuid::new_v7().to_string();
+        let subagent_id = Uuid::new_v4().to_string();
         let request = SubagentRequest {
             id: subagent_id.clone(),
             prompt: block.text.clone(),

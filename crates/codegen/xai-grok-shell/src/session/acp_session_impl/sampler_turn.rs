@@ -532,6 +532,7 @@ impl SessionActor {
             doom_loop_recovery: self.doom_loop_recovery,
             header_injector: Some(std::sync::Arc::new(TraceContextInjector)),
             fallback: None,
+            grounding: None,
         }
     }
     /// Install auto-mode permission classifier with a live LLM side-query

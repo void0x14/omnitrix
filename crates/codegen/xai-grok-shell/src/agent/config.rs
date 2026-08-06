@@ -5269,6 +5269,7 @@ pub fn sampling_config_for_model(
         doom_loop_recovery: None,
         header_injector: None,
         fallback: None,
+        grounding: None,
     }
 }
 /// Fold URL-derived headers into `extra_headers`.

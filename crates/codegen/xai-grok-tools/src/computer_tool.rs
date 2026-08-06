@@ -365,8 +365,8 @@ impl ComputerBackend for EnvComputerBackend {
     }
 
     async fn click(&self, x: Option<i32>, y: Option<i32>) -> Result<(), String> {
-        let x_str = x.map(i32::to_string);
-        let y_str = y.map(i32::to_string);
+        let x_str = x.map(|v| v.to_string());
+        let y_str = y.map(|v| v.to_string());
         let server = self.detect().await?.server;
         match server {
             ServerKind::X11 => {
@@ -392,8 +392,8 @@ impl ComputerBackend for EnvComputerBackend {
     }
 
     async fn scroll(&self, x: Option<i32>, y: Option<i32>, delta: i32) -> Result<(), String> {
-        let x_str = x.map(i32::to_string);
-        let y_str = y.map(i32::to_string);
+        let x_str = x.map(|v| v.to_string());
+        let y_str = y.map(|v| v.to_string());
         let server = self.detect().await?.server;
         match server {
             ServerKind::X11 => {
@@ -599,6 +599,7 @@ async fn execute_computer(
     match action {
         ComputerAction::Detect => {
             let info = backend.detect().await.map_err(no_display)?;
+            let backend_name = info.backend.to_string();
             Ok(GrokComputerOutput {
                 action: action.to_string(),
                 display_server: Some(info.server.to_string()),
@@ -606,12 +607,13 @@ async fn execute_computer(
                 path: None,
                 content: format!(
                     "# Detect\n\n- **Display server:** `{}`\n- **Backend:** `{}`\n",
-                    info.server, info.backend
+                    info.server, backend_name
                 ),
             })
         }
         ComputerAction::Screenshot => {
             let info = backend.detect().await.map_err(no_display)?;
+            let backend_name = info.backend.to_string();
             let home = home_dir()?;
             let path = run_screenshot(backend, &home).await?;
             Ok(GrokComputerOutput {
@@ -623,7 +625,7 @@ async fn execute_computer(
                     "# Screenshot\n\n- **Path:** `{}`\n- **Display server:** `{}`\n- **Backend:** `{}`\n",
                     path.display(),
                     info.server,
-                    info.backend
+                    backend_name
                 ),
             })
         }

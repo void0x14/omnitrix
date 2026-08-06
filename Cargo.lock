@@ -333,18 +333,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "argon2"
-version = "0.5.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3c3610892ee6e0cbce8ae2700349fcf8f98adb0dbfbee85aec3c9179d29cc072"
-dependencies = [
- "base64ct",
- "blake2",
- "cpufeatures 0.2.17",
- "password-hash",
-]
-
-[[package]]
 name = "arrayref"
 version = "0.3.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1398,15 +1386,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b588b76d00fde79687d7646a9b5bdf3cc0f655e0bbd080335a95d7e96f3587da"
 dependencies = [
  "serde_core",
-]
-
-[[package]]
-name = "blake2"
-version = "0.10.6"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "46502ad458c9a52b69d4d4d32775c788b7a1b85e8bc9d482d92250fc0e3f8efe"
-dependencies = [
- "digest 0.10.7",
 ]
 
 [[package]]
@@ -6274,28 +6253,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "47e1ffaa40ddd1f3ed91f717a33c8c0ee23fff369e3aa8772b9605cc1d22f4c3"
 
 [[package]]
-name = "maud"
-version = "0.27.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8156733e27020ea5c684db5beac5d1d611e1272ab17901a49466294b84fc217e"
-dependencies = [
- "itoa",
- "maud_macros",
-]
-
-[[package]]
-name = "maud_macros"
-version = "0.27.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7261b00f3952f617899bc012e3dbd56e4f0110a038175929fa5d18e5a19913ca"
-dependencies = [
- "proc-macro2",
- "proc-macro2-diagnostics",
- "quote",
- "syn 2.0.119",
-]
-
-[[package]]
 name = "maybe-async"
 version = "0.2.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7192,422 +7149,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "omni-agent"
-version = "0.1.0"
-dependencies = [
- "async-trait",
- "omni-tools",
- "serde",
- "serde_json",
- "thiserror 2.0.19",
- "tokio",
- "xai-chat-state",
- "xai-grok-agent",
- "xai-grok-compaction",
- "xai-token-estimation",
-]
-
-[[package]]
-name = "omni-backup"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "async-trait",
- "base64",
- "blake3",
- "chacha20poly1305",
- "chrono",
- "rand 0.9.5",
- "reqwest 0.12.28",
- "ring",
- "rusqlite",
- "serde",
- "serde_json",
- "thiserror 2.0.19",
- "tokio",
- "tracing",
- "uuid",
- "zeroize",
-]
-
-[[package]]
-name = "omni-bench"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "libc",
- "serde",
- "serde_json",
-]
-
-[[package]]
-name = "omni-config"
-version = "0.1.0"
-dependencies = [
- "dunce",
- "parking_lot",
- "rusqlite",
- "serde",
- "serde_json",
- "tempfile",
- "thiserror 2.0.19",
- "toml",
- "tracing",
- "xai-grok-config",
- "xai-grok-config-types",
-]
-
-[[package]]
-name = "omni-control"
-version = "0.1.0"
-dependencies = [
- "argon2",
- "axum",
- "futures",
- "omni-proto",
- "serde",
- "serde_json",
- "thiserror 2.0.19",
- "tokio",
- "tokio-stream",
- "tower",
- "tower-http",
- "tracing",
-]
-
-[[package]]
-name = "omni-core"
-version = "0.1.0"
-dependencies = [
- "blake3",
- "fastrace",
- "omni-proto",
- "omni-storage",
- "parking_lot",
- "rusqlite",
- "serde",
- "serde_json",
- "tempfile",
- "thiserror 2.0.19",
- "tokio",
- "toml",
- "tracing",
- "xai-fsnotify",
- "xai-tracing",
-]
-
-[[package]]
-name = "omni-notify"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "async-trait",
- "chrono",
- "omni-proto",
- "parking_lot",
- "reqwest 0.12.28",
- "serde",
- "serde_json",
- "thiserror 2.0.19",
- "tokio",
- "tracing",
- "xai-grok-voice",
- "zeroize",
-]
-
-[[package]]
-name = "omni-proto"
-version = "0.1.0"
-dependencies = [
- "chrono",
- "serde",
- "serde_json",
- "thiserror 2.0.19",
-]
-
-[[package]]
-name = "omni-provider"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "async-trait",
- "chacha20poly1305",
- "chrono",
- "dirs 5.0.1",
- "rand 0.9.5",
- "reqwest 0.12.28",
- "ring",
- "rusqlite",
- "serde",
- "serde_json",
- "sha2 0.10.9",
- "tempfile",
- "thiserror 2.0.19",
- "tokio",
- "tracing",
- "uuid",
- "xai-fsnotify",
- "zeroize",
-]
-
-[[package]]
-name = "omni-record"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "async-trait",
- "blake3",
- "chrono",
- "omni-proto",
- "omni-storage",
- "parking_lot",
- "rusqlite",
- "serde",
- "serde_json",
- "tempfile",
- "thiserror 2.0.19",
- "tokio",
- "tracing",
- "uuid",
- "zstd",
-]
-
-[[package]]
-name = "omni-research"
-version = "0.1.0"
-dependencies = [
- "async-trait",
- "chrono",
- "omni-proto",
- "omni-storage",
- "rusqlite",
- "serde",
- "serde_json",
- "tempfile",
- "thiserror 2.0.19",
- "tokio",
- "tracing",
- "uuid",
- "xai-grok-mcp",
-]
-
-[[package]]
-name = "omni-router"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "async-trait",
- "backon",
- "chrono",
- "futures",
- "mockito",
- "omni-agent",
- "omni-proto",
- "omni-provider",
- "omni-storage",
- "omni-tools",
- "rand 0.9.5",
- "regex",
- "reqwest 0.12.28",
- "rusqlite",
- "serde",
- "serde_json",
- "tempfile",
- "thiserror 2.0.19",
- "tokio",
- "toml",
- "tracing",
- "uuid",
- "xai-circuit-breaker",
- "xai-grok-models",
- "xai-grok-sampler",
- "xai-grok-sampling-types",
-]
-
-[[package]]
-name = "omni-scheduler"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "async-trait",
- "blake3",
- "chrono",
- "dashmap",
- "futures",
- "libc",
- "omni-proto",
- "omni-research",
- "omni-storage",
- "parking_lot",
- "serde",
- "serde_json",
- "tempfile",
- "thiserror 2.0.19",
- "tokio",
- "tokio-util",
- "toml",
- "tracing",
- "uuid",
- "xai-chat-state",
- "xai-grok-agent",
- "xai-grok-compaction",
- "xai-grok-sampler",
- "xai-grok-tools",
- "xai-interjection-core",
- "xai-prompt-queue",
- "xai-system-power",
- "xai-tool-runtime",
- "zstd",
-]
-
-[[package]]
-name = "omni-storage"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "async-trait",
- "blake3",
- "chrono",
- "dashmap",
- "parking_lot",
- "redb",
- "rusqlite",
- "serde",
- "serde_json",
- "tempfile",
- "thiserror 2.0.19",
- "tokio",
- "tracing",
- "uuid",
- "xai-sqlite-journal",
- "zstd",
-]
-
-[[package]]
-name = "omni-tests"
-version = "0.1.0"
-dependencies = [
- "async-trait",
- "axum",
- "chrono",
- "eventsource-stream",
- "futures",
- "mockito",
- "omni-agent",
- "omni-backup",
- "omni-config",
- "omni-control",
- "omni-core",
- "omni-notify",
- "omni-proto",
- "omni-provider",
- "omni-record",
- "omni-research",
- "omni-router",
- "omni-scheduler",
- "omni-storage",
- "omni-tools",
- "omni-webui",
- "reqwest 0.12.28",
- "rusqlite",
- "serde_json",
- "tempfile",
- "tokio",
- "tokio-tungstenite 0.27.0",
- "tokio-util",
- "uuid",
- "xai-chat-state",
- "xai-grok-agent",
- "xai-grok-sampler",
- "xai-grok-tools",
-]
-
-[[package]]
-name = "omni-tools"
-version = "0.1.0"
-dependencies = [
- "async-trait",
- "base64",
- "chrono",
- "dunce",
- "omni-storage",
- "schemars 1.2.2",
- "serde",
- "serde_json",
- "tempfile",
- "thiserror 2.0.19",
- "tokio",
- "tracing",
- "xai-codebase-graph",
- "xai-computer-hub-core",
- "xai-fast-worktree",
- "xai-gix-status",
- "xai-grok-tools",
- "xai-hunk-tracker",
- "xai-tool-protocol",
- "xai-tool-runtime",
- "xai-tool-types",
-]
-
-[[package]]
-name = "omni-webui"
-version = "0.1.0"
-dependencies = [
- "axum",
- "futures",
- "maud",
- "omni-control",
- "omni-proto",
- "serde",
- "serde_json",
- "tokio",
- "tokio-stream",
- "tower",
- "tower-http",
- "tracing",
-]
-
-[[package]]
-name = "omnitrix"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "axum",
- "chrono",
- "crossterm",
- "dirs 5.0.1",
- "dunce",
- "futures",
- "omni-agent",
- "omni-backup",
- "omni-control",
- "omni-core",
- "omni-notify",
- "omni-proto",
- "omni-provider",
- "omni-record",
- "omni-research",
- "omni-router",
- "omni-scheduler",
- "omni-storage",
- "omni-tools",
- "omni-webui",
- "ratatui",
- "rusqlite",
- "serde",
- "serde_json",
- "thiserror 2.0.19",
- "tokio",
- "toml",
- "tower",
- "tracing",
- "tracing-subscriber",
- "xai-grok-pager",
- "xai-grok-sampler",
- "xai-grok-shared",
-]
-
-[[package]]
 name = "once_cell"
 version = "1.21.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7859,17 +7400,6 @@ dependencies = [
  "redox_syscall 0.5.18",
  "smallvec",
  "windows-link 0.2.1",
-]
-
-[[package]]
-name = "password-hash"
-version = "0.5.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "346f04948ba92c43e8469c1ee6736c7563d71012b17d40745260fe106aac2166"
-dependencies = [
- "base64ct",
- "rand_core 0.6.4",
- "subtle",
 ]
 
 [[package]]
@@ -8545,18 +8075,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "proc-macro2-diagnostics"
-version = "0.10.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "af066a9c399a26e020ada66a034357a868728e72cd426f3adcd35f80d88d88c8"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 2.0.119",
- "version_check",
-]
-
-[[package]]
 name = "process-wrap"
 version = "9.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -9076,15 +8594,6 @@ dependencies = [
  "bytemuck",
  "font-types 0.12.2",
  "once_cell",
-]
-
-[[package]]
-name = "redb"
-version = "2.6.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8eca1e9d98d5a7e9002d0013e18d5a9b000aee942eb134883a82f06ebffb6c01"
-dependencies = [
- "libc",
 ]
 
 [[package]]
@@ -11473,7 +10982,6 @@ dependencies = [
  "futures-core",
  "pin-project-lite",
  "tokio",
- "tokio-util",
 ]
 
 [[package]]
@@ -14496,6 +14004,7 @@ dependencies = [
  "blake3",
  "bm25",
  "bytes",
+ "chacha20poly1305",
  "chrono",
  "clap",
  "criterion",
@@ -14527,8 +14036,6 @@ dependencies = [
  "notify-debouncer-mini",
  "nucleo",
  "obfstr",
- "omni-storage",
- "omni-tools",
  "parking_lot",
  "portable-pty",
  "process-wrap",
@@ -14623,6 +14130,7 @@ dependencies = [
  "xai-tracing-macros",
  "xai-tty-utils",
  "xai-workflow",
+ "zeroize",
  "zstd",
 ]
 
