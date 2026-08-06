@@ -316,6 +316,7 @@ pub mod feedback;
 pub mod feedback_manager;
 pub mod file_system;
 pub mod fork;
+pub mod fs_shim;
 pub(crate) mod fs_watch;
 pub(crate) mod goal_classifier;
 pub(crate) mod goal_evaluator;

@@ -1,4 +1,4 @@
-//! Diff akisi fs-shim'i (MASTER-PLAN 5.2 / 9.3).
+//! Diff akisi fs-shim'i (MASTER-PLAN 5.2 / 9.3) — omni-tools'tan tasindi.
 //!
 //! `AgentBuilder::with_fs` kancasindan gecen her dosya dokunusu once alt
 //! katmana devredilir, sonra akisa yazilir. Kapsam uyarisi: yalnizca
@@ -13,16 +13,255 @@
 //! I6: bu modulde panik yoktur. Alt katman hatalari `ComputerError` olarak
 //! oldugu gibi cagirana geri verilir; muhasebe (CAS/diff/akis) hatalari ise
 //! dosya islemini asla dusurmez, yalnizca kayda gecer.
+//!
+//! ## Omni-tools'tan tasima notu
+//!
+//! `omni-tools::fs_shim::DiffShimFs` ve `omni-tools::diff::FileTouch` birebir
+//! tasindi; `omni-storage::cas::CasBlobStore` yerine ayni moduldeki sade
+//! `CasBlobStore` kullanilir (blake3 atifli, zstd'siz dosya deposu). Hunk
+//! sayimi `xai_hunk_tracker` uzerinden yapilir — `+/-` sayiminin tek gercek
+//! kaynagi degismedi.
 
 use std::ffi::OsString;
+use std::fs;
+use std::io::{Read, Write};
 use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 
-use omni_storage::cas::CasBlobStore;
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
 use xai_grok_tools::computer::types::{AsyncFileSystem, ComputerError};
+use xai_hunk_tracker::{FileHunkData, Hunk, HunkSource};
 
-use crate::diff::FileTouch;
+// ============================================================================
+// CAS (icerik atiflari) — omni-storage tasimasi, zstd'siz
+// ============================================================================
+
+/// CAS islem hatasi. Dosya islemini dusurmeyen muhasebe hatasidir; yalnizca
+/// kayda gecer (I6).
+#[derive(Debug, thiserror::Error)]
+#[error("CAS: {0}")]
+pub struct CasError(String);
+
+/// blake3 atifli, klasor bazli basit icerik deposu.
+///
+/// `store` icerigi blake3 ile ozetler ve ozetle adlandirilmis dosyaya yazar;
+/// `load` ozetten dosyayi bulup okur. Omni-storage'dan tasinirken zstd
+/// sikistirmasi ATLANDI: yazim duz dosyadir, atif birebir ayni sekilde
+/// calisir (I6 — davranis korunur).
+#[derive(Debug, Clone)]
+pub struct CasBlobStore {
+    base_path: PathBuf,
+}
+
+/// Ozeti `base` altinda 2-2 yuvali dizin yapisine oturtur:
+/// `<base>/<ilk2>/<sonraki2>/<kalan>`. Tasima oncesi omni-storage duzeniyle
+/// aynidir; uzanti atlanir (sikistirma yok).
+fn hash_to_path(hash: &str, base: &Path) -> PathBuf {
+    let (prefix, rest) = hash.split_at(2.min(hash.len()));
+    let (mid, file) = if rest.len() > 2 {
+        rest.split_at(2)
+    } else {
+        (rest, "")
+    };
+    let mut dir = base.join(prefix);
+    if !mid.is_empty() {
+        dir = dir.join(mid);
+    }
+    let name = if file.is_empty() { prefix } else { file };
+    dir.join(name)
+}
+
+impl CasBlobStore {
+    /// Depo kokunu kurar; dizin yoksa kendisi olusturur.
+    ///
+    /// Cagri yolu `~/.grok/omnitrix-cas/` gibi bir yoldur. Dizin kurulamazsa
+    /// `Err` doner — cagiran (spawn) akisi atifsiz surdurur (I6).
+    pub fn new(base_path: &Path) -> Result<Self, CasError> {
+        fs::create_dir_all(base_path)
+            .map_err(|e| CasError(format!("depo dizini kurulamadi ({}): {e}", base_path.display())))?;
+        Ok(Self {
+            base_path: base_path.to_path_buf(),
+        })
+    }
+
+    /// Icerigi blake3 ile ozetler, dosyaya yazar ve atfi dondurur.
+    ///
+    /// `compress` omni-storage imzasindan tasima geregi korunur; zstd
+    /// atlandigi icin yok sayilir.
+    pub fn store(&self, data: &[u8], _compress: bool) -> Result<String, CasError> {
+        let hash = blake3::hash(data).to_hex().to_string();
+        let path = hash_to_path(&hash, &self.base_path);
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent)
+                .map_err(|e| CasError(format!("CAS dizini kurulamadi ({}): {e}", parent.display())))?;
+        }
+        let mut f = fs::File::create(&path)
+            .map_err(|e| CasError(format!("CAS dosyasi acilamadi ({}): {e}", path.display())))?;
+        f.write_all(data)
+            .map_err(|e| CasError(format!("CAS yazim hatasi ({}): {e}", path.display())))?;
+        Ok(hash)
+    }
+
+    /// Atiftan icerigi okur; yoksa `Ok(None)`.
+    pub fn load(&self, hash: &str) -> Result<Option<Vec<u8>>, CasError> {
+        let path = hash_to_path(hash, &self.base_path);
+        if !path.exists() {
+            return Ok(None);
+        }
+        let mut f = fs::File::open(&path)
+            .map_err(|e| CasError(format!("CAS dosyasi acilamadi ({}): {e}", path.display())))?;
+        let mut raw = Vec::new();
+        f.read_to_end(&mut raw)
+            .map_err(|e| CasError(format!("CAS okuma hatasi ({}): {e}", path.display())))?;
+        Ok(Some(raw))
+    }
+
+    /// Atiftan dosyayi siler; yoksa sessizce basarili sayilir.
+    pub fn delete(&self, hash: &str) -> Result<(), CasError> {
+        let path = hash_to_path(hash, &self.base_path);
+        if path.exists() {
+            fs::remove_file(&path)
+                .map_err(|e| CasError(format!("CAS silme hatasi ({}): {e}", path.display())))?;
+        }
+        Ok(())
+    }
+}
+
+// ============================================================================
+// Dokunus muhasebesi (FileTouch + +/- sayimi) — omni-tools::diff tasimasi
+// ============================================================================
+
+/// Bellekteki iki metni karsilastirirken `Hunk.path`'e yazilan yer tutucu.
+///
+/// `compute_hunks` bu yolu DISKTEN OKUMAZ; yalnizca uretilen hunk'in etiketine
+/// ve log satirina gider.
+const IN_MEMORY_PATH: &str = "<memory>";
+
+/// Tek bir dosya dokunusunun ozeti — `0008` semasindaki `file_touches`
+/// satirinin bellek karsiligi.
+#[derive(Debug, Clone)]
+pub struct FileTouch {
+    /// Dokunulan yol (shim'e geldigi haliyle).
+    pub path: PathBuf,
+    /// Calisma dizininin disinda mi? Dizin-disi dokunus kullaniciya gorunur.
+    pub outside_workspace: bool,
+    /// Eklenen satir sayisi.
+    pub added: usize,
+    /// Silinen satir sayisi.
+    pub removed: usize,
+    /// Onceki icerigin CAS atfi (yazilmadiysa `None`).
+    pub pre_ref: Option<String>,
+    /// Sonraki icerigin CAS atfi (yazilmadiysa `None`).
+    pub post_ref: Option<String>,
+}
+
+impl FileTouch {
+    /// Sayimlari verilmis, CAS atiflari henuz baglanmamis bir dokunus.
+    pub fn new(path: PathBuf, outside_workspace: bool, added: usize, removed: usize) -> Self {
+        Self {
+            path,
+            outside_workspace,
+            added,
+            removed,
+            pre_ref: None,
+            post_ref: None,
+        }
+    }
+
+    /// Icerik atiflarini baglar (CAS yazimindan sonra).
+    pub fn with_refs(mut self, pre_ref: Option<String>, post_ref: Option<String>) -> Self {
+        self.pre_ref = pre_ref;
+        self.post_ref = post_ref;
+        self
+    }
+
+    /// Hunk izleyicisinden gelen dosya verisinden dokunus kurar.
+    ///
+    /// `FileHunkData.hunks` yolundan gelen hunk'larda `patch` doludur; burada
+    /// yalnizca `line_info` sayimlari kullanilir (`summary()` gosterim icindir).
+    /// Dikkat: `FileHunkData::default()` ile "dosya izlenmiyor" durumu ayirt
+    /// edilemez; ikisi de `(0, 0)` verir.
+    pub fn from_hunk_data(path: PathBuf, outside_workspace: bool, data: &FileHunkData) -> Self {
+        let (added, removed) = hunk_data_delta(data);
+        Self::new(path, outside_workspace, added, removed)
+    }
+
+    /// `file_touches` sutunlarina yazilacak `(eklenen, silinen)` cifti.
+    ///
+    /// Sema `INTEGER` tuttugu icin sayimlar 32 bit'e sikistirilir; tasma
+    /// panige degil doyuma gider (I6).
+    pub fn counts_u32(&self) -> (u32, u32) {
+        (clamp_u32(self.added), clamp_u32(self.removed))
+    }
+
+    /// Hicbir satir degismemis mi? Dikkat: `compute_hunks` sessizce bos
+    /// donebildigi icin bu "degisiklik yok" GARANTISI vermez (bkz. [`line_delta`]).
+    pub fn is_empty_delta(&self) -> bool {
+        self.added == 0 && self.removed == 0
+    }
+}
+
+/// `usize` sayimini tasma yasamadan `u32`'ye indirger.
+fn clamp_u32(value: usize) -> u32 {
+    u32::try_from(value).unwrap_or(u32::MAX)
+}
+
+/// Hunk listesinden `(eklenen, silinen)` toplamini cikarir.
+///
+/// `line_info.new_count` = `+` satir, `line_info.old_count` = `-` satir.
+/// Toplama `saturating_add` ile yapilir; patolojik girdi tasma paniki uretmez.
+pub fn hunks_delta(hunks: &[Hunk]) -> (usize, usize) {
+    hunks.iter().fold((0usize, 0usize), |(added, removed), h| {
+        (
+            added.saturating_add(h.line_info.new_count),
+            removed.saturating_add(h.line_info.old_count),
+        )
+    })
+}
+
+/// Hunk izleyicisinin dosya verisinden `(eklenen, silinen)` toplami.
+///
+/// `FileHunkData.hunks` alani `Vec<Arc<Hunk>>` oldugu icin [`hunks_delta`]
+/// dilim imzasina uymaz; toplama burada tekrarlanir.
+pub fn hunk_data_delta(data: &FileHunkData) -> (usize, usize) {
+    data.hunks
+        .iter()
+        .fold((0usize, 0usize), |(added, removed), h| {
+            (
+                added.saturating_add(h.line_info.new_count),
+                removed.saturating_add(h.line_info.old_count),
+            )
+        })
+}
+
+/// Atfi cagiranin sectigi genel sayim yolu.
+fn line_delta_with_source(
+    path: &Path,
+    baseline: &str,
+    current: &str,
+    source: HunkSource,
+) -> (usize, usize) {
+    let hunks: Vec<Hunk> = xai_hunk_tracker::diff::compute_hunks(path, baseline, current, source);
+    hunks_delta(&hunks)
+}
+
+/// Iki metin arasindaki `(eklenen, silinen)` satir sayimi.
+///
+/// Disk yolu olmayan (bellekte tutulan) icerikler icin kisa yol; sayim yine
+/// `xai_hunk_tracker` uzerinden yapilir. Atif bilgisi tasinmadigi icin sonuc
+/// [`HunkSource::External`] ile etiketlenir — etiket sayimi etkilemez.
+///
+/// Uyari: `pre == post`, 1 MiB ustu girdi veya diff zaman asiminda sonuc
+/// `(0, 0)`'dir; bu "degisiklik yok" GARANTISI degildir.
+pub fn count_hunks(pre: &str, post: &str) -> (u32, u32) {
+    let (added, removed) =
+        line_delta_with_source(Path::new(IN_MEMORY_PATH), pre, post, HunkSource::External);
+    (clamp_u32(added), clamp_u32(removed))
+}
+
+// ============================================================================
+// DiffShimFs — omni-tools::fs_shim tasimasi (birebir)
+// ============================================================================
 
 /// Dokunus akisinin gonderici ucu.
 pub type TouchSink = UnboundedSender<FileTouch>;
@@ -59,7 +298,7 @@ fn lexical_normalize(path: &Path) -> PathBuf {
 /// 1. yazim oncesi icerik okunur (dosya yoksa "yok" kabul edilir) -> `pre_ref`
 /// 2. islem alt katmana devredilir
 /// 3. yazim sonrasi icerik CAS'a yazilir -> `post_ref`
-/// 4. `+/-` sayimi `crate::diff` uzerinden alinir
+/// 4. `+/-` sayimi [`count_hunks`] uzerinden alinir
 /// 5. `FileTouch` uretilip kurucuda alinan kanaldan yayinlanir
 pub struct DiffShimFs {
     inner: Arc<dyn AsyncFileSystem>,
@@ -95,7 +334,7 @@ impl DiffShimFs {
         self
     }
 
-    /// Dokunusu hangi ajan turuna atfedecegimizi belirler.
+    /// Dokunusu hangi ajan turune atfedecegimizi belirler.
     pub fn with_prompt_index(mut self, prompt_index: usize) -> Self {
         self.prompt_index = prompt_index;
         self
@@ -197,12 +436,12 @@ impl DiffShimFs {
 
         let baseline = String::from_utf8_lossy(before.unwrap_or_default()).into_owned();
         let current = String::from_utf8_lossy(after.unwrap_or_default()).into_owned();
-        let (added, removed) = crate::diff::count_hunks(&baseline, &current);
+        let (added, removed) = count_hunks(&baseline, &current);
 
         let touch = FileTouch::new(
             path.to_path_buf(),
             self.outside_workspace(path),
-            // Sayim genisligi diff modulunun sozlesmesine birakilir; tasma
+            // Sayim genisligi `count_hunks` sozlesmesine birakilir; tasma
             // pratikte imkansiz, yine de I6 geregi panik yerine sifire duser.
             added.try_into().unwrap_or_default(),
             removed.try_into().unwrap_or_default(),
@@ -289,7 +528,7 @@ mod tests {
     async fn yazim_dokunus_yayinlar() {
         let root = std::env::temp_dir();
         let (fs, mut stream) = shim(root.clone());
-        let path = root.join("omni-fs-shim-test.txt");
+        let path = root.join("fs-shim-test.txt");
 
         let written = fs.write_file(&path, b"bir\niki\n").await;
         assert!(written.is_ok());
@@ -309,7 +548,7 @@ mod tests {
     async fn silme_dokunus_yayinlar() {
         let root = std::env::temp_dir();
         let (fs, mut stream) = shim(root.clone());
-        let path = root.join("omni-fs-shim-test-2.txt");
+        let path = root.join("fs-shim-test-2.txt");
 
         assert!(fs.write_file(&path, b"veri\n").await.is_ok());
         let _ = stream.try_recv();
@@ -321,7 +560,7 @@ mod tests {
 
     #[test]
     fn dizin_disi_yol_isaretlenir() {
-        let root = std::env::temp_dir().join("omni-workspace-kok");
+        let root = std::env::temp_dir().join("workspace-kok");
         let (sink, _stream) = touch_channel();
         let fs = DiffShimFs::new(Arc::new(MemFs::default()), root.clone(), sink);
 
@@ -332,10 +571,34 @@ mod tests {
 
     #[test]
     fn goreli_yol_kok_altinda_sayilir() {
-        let root = std::env::temp_dir().join("omni-workspace-kok");
+        let root = std::env::temp_dir().join("workspace-kok");
         let (sink, _stream) = touch_channel();
         let fs = DiffShimFs::new(Arc::new(MemFs::default()), root, sink);
 
         assert!(!fs.outside_workspace(Path::new("alt/dizin/dosya.rs")));
+    }
+
+    #[test]
+    fn cas_duz_yazim_okuma_cevrimi() {
+        let tmp = tempfile::tempdir().expect("temp dizin");
+        let cas = CasBlobStore::new(tmp.path()).expect("CAS kurulur");
+
+        let reference = cas.store(b"icerik", true).expect("yazim basarili");
+        assert_eq!(reference.len(), 64, "blake3 hex ozeti 64 karakterdir");
+
+        let loaded = cas.load(&reference).expect("okuma basarili");
+        assert_eq!(loaded.as_deref(), Some(b"icerik".as_slice()));
+
+        assert!(cas.load("yok-boyle-bir-ozet").expect("yok olan None doner").is_none());
+    }
+
+    #[test]
+    fn cas_duplike_icerik_ayni_atfi_verir() {
+        let tmp = tempfile::tempdir().expect("temp dizin");
+        let cas = CasBlobStore::new(tmp.path()).expect("CAS kurulur");
+
+        let first = cas.store(b"ayni-icerik", false).expect("ilk yazim");
+        let second = cas.store(b"ayni-icerik", false).expect("ikinci yazim");
+        assert_eq!(first, second, "ozet tabanli CAS ayni icerige ayni atfi verir");
     }
 }

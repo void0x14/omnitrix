@@ -731,13 +731,13 @@ pub(crate) async fn spawn_session_actor(
         crate::session::persistence::session_dir(&session_info).join("tool_state.json");
     // Omnitrix diff akisi (plan 9.3): gonderici + alici oturum boyunca AYNI
     // kalir, boylece model degisimindeki rebuild'ler de ayni akisa yazar.
-    // CAS deposu veri dizininde acilir; dizin yoksa kendisi olusturur.
+    // CAS deposu ev dizininde acilir; dizin yoksa kendisi olusturur.
     // Acilamazsa akis yine calisir — yalnizca icerik atiflari bos kalir (I6).
-    let (diff_touch_sink, diff_touch_stream) = omni_tools::fs_shim::touch_channel();
-    let diff_cas: Option<omni_storage::cas::CasBlobStore> = match dirs::data_dir() {
-        Some(data_dir) => {
-            let cas_path = data_dir.join("omnitrix").join("cas");
-            match omni_storage::cas::CasBlobStore::new(&cas_path) {
+    let (diff_touch_sink, diff_touch_stream) = crate::session::fs_shim::touch_channel();
+    let diff_cas: Option<crate::session::fs_shim::CasBlobStore> = match dirs::home_dir() {
+        Some(home) => {
+            let cas_path = home.join(".grok").join("omnitrix-cas");
+            match crate::session::fs_shim::CasBlobStore::new(&cas_path) {
                 Ok(cas) => Some(cas),
                 Err(err) => {
                     tracing::warn!(
@@ -750,7 +750,7 @@ pub(crate) async fn spawn_session_actor(
             }
         }
         None => {
-            tracing::warn!("kullanici veri dizini cozulemedi; diff akisi atifsiz calisir");
+            tracing::warn!("kullanici ev dizini cozulemedi; diff akisi atifsiz calisir");
             None
         }
     };
@@ -989,12 +989,13 @@ pub(crate) async fn spawn_session_actor(
         diff_touch_sink: Some(diff_touch_sink),
         diff_touch_stream: Some(diff_touch_stream),
         diff_cas,
-        // Faz 10 / Task 10.1: computer-use gunlugu oturum dizininde tutulur;
-        // shim'lenmis fs uzerinden yazildigi icin masaustu dokunusu diff
-        // akisinda gorunur (R7).
+        // Faz 10 / Task 10.1: computer-use kayit kapisi. Omni-tools tasimasi
+        // sonrasi gunluk dosyasi artik yazilmaz; alan yalnizca yerlesik
+        // `grok_computer` aracının kaydını acar (masaustu dokunusu diff
+        // akisi uzerinden degil, aracin kendi backend'i ile calisir).
         computer_use_journal_path: Some(
             crate::session::persistence::session_dir(&session_info)
-                .join("omni-computer-use.jsonl"),
+                .join("computer-use.jsonl"),
         ),
         tools_notification_handle: tools_notification_handle.clone(),
         bridge_state_path: bridge_state_path.clone(),

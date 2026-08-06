@@ -85,20 +85,20 @@ pub(crate) struct AgentRebuildSpec {
     /// Omnitrix diff akisinin gonderici ucu (plan 9.3). `Some` ise
     /// `build_agent_inner` `fs_backend`'i `DiffShimFs` ile sarar; `None`
     /// (birim testleri) ise ciktilen `fs_backend` aynen kullanilir.
-    pub diff_touch_sink: Option<omni_tools::fs_shim::TouchSink>,
+    pub diff_touch_sink: Option<crate::session::fs_shim::TouchSink>,
     /// Diff akisinin alici ucu. Spec bir `Arc` oldugu surece CANLI tutulur;
     /// duserse shim dokunuslari sessizce birakir (I6: akis hatasi dosya
     /// islemini dusurmez). Tuketim (TUI/olay-log) sonraki gorevlerde olur.
-    pub diff_touch_stream: Option<omni_tools::fs_shim::TouchStream>,
-    /// Icerik atiflarinin yazilacagi CAS deposu (omnitrix data_dir/cas).
+    pub diff_touch_stream: Option<crate::session::fs_shim::TouchStream>,
+    /// Icerik atiflarinin yazilacagi CAS deposu (omnitrix `~/.grok/omnitrix-cas`).
     /// `None` ise shim atifsiz calisir: akis + sayim yine surer.
-    pub diff_cas: Option<omni_storage::cas::CasBlobStore>,
-    /// Faz 10 / Task 10.1: computer-use gunluk yolu. `Some` ise agent
-    /// kurulurken `omni:computer` aracı [`register_mcp_tools`] uzerinden
-    /// toolset'e eklenir (memory araclarının yolu). Gunluk shim'lenmis fs
-    /// uzerinden yazildigi icin her masaustu dokunusu diff akisina duser
-    /// (R7); masaustu yoksa arac yine kayitli kalir ve cagrilar acik hatayla
-    /// doner (I6).
+    pub diff_cas: Option<crate::session::fs_shim::CasBlobStore>,
+    /// Faz 10 / Task 10.1: computer-use kayit kapisi. `Some` ise agent
+    /// kurulurken yerlesik `grok_computer` aracı [`register_mcp_tools`]
+    /// uzerinden toolset'e eklenir (memory araclarının yolu). Omni-tools
+    /// tasimasi sonrasi gunluk dosyasi artik yazilmaz; alan yalnizca
+    /// kayit ac/kapa bayragi olarak durur. Masaustu yoksa arac yine kayitli
+    /// kalir ve cagrilar acik hatayla doner (I6).
     ///
     /// [`register_mcp_tools`]: xai_grok_tools::bridge::ToolBridge::register_mcp_tools
     pub computer_use_journal_path: Option<PathBuf>,
@@ -264,7 +264,7 @@ impl AgentRebuildSpec {
         // Sink yoksa (birim testleri) shim atlanir — davranis degismez.
         let fs_backend: Arc<dyn AsyncFileSystem> = match diff_touch_sink.clone() {
             Some(sink) => {
-                let shim = omni_tools::fs_shim::DiffShimFs::new(
+                let shim = crate::session::fs_shim::DiffShimFs::new(
                     fs_backend.clone(),
                     working_directory.clone(),
                     sink,
@@ -361,18 +361,16 @@ impl AgentRebuildSpec {
         let agent = builder.build().await?;
         // Faz 10 / Task 10.1: computer-use aracını MCP kayit duzlemine takar
         // (memory araclarının `register_mcp_tools` yolu — harici sunucu yok).
-        // Gunluk shim'lenmis `fs_backend` uzerinden yazildigi icin her
-        // dokunus diff akisina duser; masaustu yoksa arac yine kayitli kalir
-        // ve cagrilar acik hatayla doner. Kayit hatasi kurulumu dusurmez (I6).
-        if let Some(journal_path) = computer_use_journal_path.clone() {
-            if let Err(err) =
-                register_computer_use_tool(&agent, fs_backend.clone(), journal_path).await
-            {
+        // Yerlesik `grok_computer` tool'u kullanilir: masaustu yoksa cagrilar
+        // acik hata doner, patlamaz (I6). Kayit hatasi kurulumu dusurmez (I6).
+        if computer_use_journal_path.is_some() {
+            if let Err(err) = register_computer_use_tool(&agent).await {
                 tracing::warn!(
                     error = %err,
                     "computer-use aracı kaydedilemedi; ajan kurulumu surer"
                 );
             }
+        }
         }
         let model_validator = models_manager.clone();
         agent
@@ -446,29 +444,21 @@ impl AgentRebuildSpec {
         Ok(agent)
     }
 }
-/// Faz 10 / Task 10.1: omni-tools `Computer` aracını agent toolset'ine kaydeder.
+/// Faz 10 / Task 10.1: yerlesik `grok_computer` aracını agent toolset'ine kaydeder.
 ///
 /// `ToolBridge::register_mcp_tools` yolu aracı MCP kayit duzlemine
 /// (`ToolNamespace::MCP`) takar; memory araclariyla ayni mekanizma. Harici
 /// bir MCP sunucusu/process GEREKMEZ — arac ajanla ayni surecte calisir ve
-/// gunlugu `fs` (shim'lenmis) uzerinden yazar, boylece masaustu dokunusu
-/// diff akisinda gorunur (R7) ve masaustu yokken hata doner, patlamaz (I6).
-async fn register_computer_use_tool(
-    agent: &Agent,
-    fs: Arc<dyn AsyncFileSystem>,
-    journal_path: PathBuf,
-) -> Result<(), String> {
-    let session = Arc::new(omni_tools::computer::ComputerUseSession::for_omnitrix(
-        fs, journal_path,
-    ));
-    let tool = omni_tools::computer::ComputerUseTool::new(session)
-        .map_err(|err| format!("computer-use oturumu kurulamadi: {err}"))?;
+/// masaustu yokken hata doner, patlamaz (I6). Omni-tools `ComputerUseTool`
+/// tasimasi: gunluk dosyasi omni katmaniyla birlikte dustu; aracin kendi
+/// `ComputerBackend`'i (yerlesik `EnvComputerBackend`) calisir.
+async fn register_computer_use_tool(agent: &Agent) -> Result<(), String> {
     agent
         .tool_bridge()
         .register_mcp_tools(
-            omni_tools::computer::ComputerUseTool::NAME.to_owned(),
-            tool,
-            Some(omni_tools::computer::ComputerUseTool::args_schema()),
+            "computer".to_owned(),
+            xai_grok_tools::computer_tool::GrokComputerTool,
+            None,
         )
         .await
         .map_err(|err| format!("computer-use aracı kaydedilemedi: {err}"))
@@ -629,21 +619,20 @@ mod tests {
     }
 
     /// Faz 10 / Task 10.1 kapisi: computer-use aracı agent toolset'inde
-    /// gorunur, cagri masaustu yokken patlamadan hata doner (I6) ve
-    /// basarisiz eylem bile intent+failed satirlarini diff akisina dusurur
-    /// (R7 — diff_visibility benzeri).
+    /// gorunur ve cagri masaustu yokken patlamadan hata doner (I6).
+    /// Omni-tools tasimasi sonrasi arac yerlesik `grok_computer` tool'udur;
+    /// gunluk akisi (R7) omni katmaniyla birlikte kalkmistir.
     #[tokio::test(flavor = "current_thread")]
-    async fn computer_use_tool_lands_in_toolset_and_diff_stream() {
+    async fn computer_use_tool_lands_in_toolset_and_errors_without_desktop() {
         tokio::task::LocalSet::new()
             .run_until(async {
                 let mut spec = test_rebuild_spec_default();
-                let (sink, mut stream) = omni_tools::fs_shim::touch_channel();
-                let journal = std::env::temp_dir().join("omni-computer-use-agent-test.jsonl");
                 {
                     let spec_ref = Arc::get_mut(&mut spec)
                         .expect("test rebuild spec should be uniquely owned");
-                    spec_ref.diff_touch_sink = Some(sink);
-                    spec_ref.computer_use_journal_path = Some(journal.clone());
+                    spec_ref.computer_use_journal_path = Some(
+                        std::env::temp_dir().join("computer-use-agent-test.jsonl"),
+                    );
                 }
                 let agent = spec
                     .build_agent(AgentDefinition::default_grok_build())
@@ -670,13 +659,6 @@ mod tests {
                     )
                     .await;
                 assert!(result.is_err(), "masaustu olmadan cagri hata donmeli");
-
-                // R7: basarisiz eylem bile intent+failed satirlarini akista birakir.
-                let first = stream.try_recv().expect("intent dokunusu akista");
-                let second = stream.try_recv().expect("failed dokunusu akista");
-                assert_eq!(first.path, journal);
-                assert_eq!(second.path, journal);
-                assert_eq!(second.removed, 0, "intent satiri ilk dokunusta");
             })
             .await;
     }
