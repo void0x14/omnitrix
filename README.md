@@ -9,6 +9,7 @@ erisim ve dayaniklilik** ekler.
 
 [Kurulum](#kurulum) ·
 [Kullanim](#kullanim) ·
+[Provider baglantisi](#provider-baglantisi) ·
 [Mimari](#mimari) ·
 [Config](#config-as8) ·
 [Kapilar](#kapilar) ·
@@ -105,6 +106,78 @@ Ortam degiskenleri (secme):
 
 Durum dizini `dirs::data_dir()/omnitrix`; SQLite dosyasi
 `.../omnitrix/omnitrix.sqlite` — WAL ve `write_journal` niyet tablosu orada yasar.
+
+## Provider baglantisi
+
+Provider baglama = **provider → API key → model → config yazimi** tek akisi.
+API key asla `config.toml`'a duz metin yazilmaz; sifreli keychain'de
+(`~/.grok/keychain.omx`) durur ve calisma zamani key'i runtime store'a itilir.
+Tam kilavuz: [`docs/provider-connect.md`](docs/provider-connect.md).
+
+Uc giris noktasi:
+
+| Yer | Ne |
+|---|---|
+| `/connect` (TUI wizard) | Provider → key → kategori → model → uygula |
+| `grok connect` | Headless/programatik: ayni akis, flag'lerle |
+| `grok keys` | Keychain yonetimi (list/show/add/edit/remove/export/import/categories) |
+
+TUI'da:
+
+- `/connect` wizard modalini acar; ayrica Ctrl+P paletinde **Connect Provider**
+  (kisayol `/connect`), giris yapilmamis welcome menüsünde ilk satir.
+- `/keys` keychain yoneticisini acar (tablo: `Kategori | Provider | Maskeli |
+  Model | Son Kullanim`); Ctrl+P'de **API Keys (Keychain)**.
+- Wizard adimlari: Provider (canli models.dev katalogu, rozet `[key]`/env adi)
+  → Base URL (yalnizca custom) → Key (yeni / keychain kaydi / env) → Kategori
+  → Model → Apply. Custom provider'larda `/models` fetch fallback'i vardir.
+
+`grok connect` flag'leri:
+
+| Flag | Etki |
+|---|---|
+| `--provider <id>` | models.dev provider id (openai, anthropic, deepseek...) |
+| `--api-key <key>` | Keychain'e sifreli kaydedilir |
+| `--base-url <url>` | Custom endpoint (katalogda olmayan id icin gerekli) |
+| `--model <id>` | Secilecek model (yoksa katalogdaki tek/ilk model) |
+| `--keychain-id <id>` | Mevcut keychain kaydini kullan (metadata kaynagi) |
+| `--category <ad>` | Keychain kategorisi (varsayilan: `personal`) |
+| `--no-session` | Oturum baslatma; yalnizca config yaz |
+
+```sh
+grok connect --provider openai --api-key sk-... --model gpt-4o
+grok connect --provider custom --base-url http://localhost:11434/v1 --api-key sk-ollama --model llama3.1
+grok connect --keychain-id k_1 --model deepseek-chat
+```
+
+`grok keys` alt komutlari:
+
+| Komut | Etki |
+|---|---|
+| `grok keys list` | Maskeli kayit listesi (ham key asla gostermez) |
+| `grok keys show <id>` | Tam key (master password ister) |
+| `grok keys add --provider <id> [--api-key] [--category] [--model] [--base-url]` | Yeni kayit |
+| `grok keys edit <id> [--model] [--base-url] [--api-key]` | Kayit duzenle (kategori tasima yok) |
+| `grok keys remove <id>` | Kayit sil |
+| `grok keys export [YOL] [--category <ad> ...]` | Sifreli `.omx` export (ayri export sifresi) |
+| `grok keys import YOL [--overwrite]` | `.omx` import |
+| `grok keys categories` | Kategori listesi (varsayilan isaretli) |
+
+Ilk kullanim: ilk komutta keychain yoksa yeni yaratilir ve **master password**
+istenir (gizli giris, echo kapali). Anahtar Argon2id ile 32 byte'a turetilir ve
+asla diske yazilmaz; RAM'de 15 dakika TTL ile yasar, sonrasi kilitlenir ve sifre
+yeniden istenir.
+
+Custom provider: katalogda olmayan bir id + `--base-url` custom endpoint
+sayilir; backend OpenAI-compatible varsayilir. Ornekler: OpenRouter
+`https://openrouter.ai/api/v1`, DeepSeek `https://api.deepseek.com/v1`, Ollama
+`http://localhost:11434/v1` (OpenAI-compatible) ve Anthropic-compatible
+`https://api.anthropic.com/v1`.
+
+Guvenlik modeli: **AES-256-GCM + Argon2id**; master password kullanicidadir,
+key yalnizca keychain'de sifreli durur; calisma zamani key'i runtime store'da
+(RAM) yasar, config'e duz metin yazilmaz. Ayrintilar:
+[`docs/provider-connect.md`](docs/provider-connect.md).
 
 ## Mimari
 
