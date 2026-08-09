@@ -5,9 +5,11 @@
 //! ve asla diske yazılmaz. RAM'deki hassas değerler `zeroize` ile sıfırlanır.
 
 pub mod crypto;
+mod export;
 mod store;
 mod ttl;
 
+pub use export::{export_keychain, import_keychain, ExportScope, ImportSummary};
 pub use store::{
     BorrowedKey, KeyEntry, KeySource, Keychain, KeychainError, KeychainOptions, KeyId,
 };

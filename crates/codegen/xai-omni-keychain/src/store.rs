@@ -73,6 +73,18 @@ pub struct KeyEntry {
     pub source: KeySource,
 }
 
+/// Export/import akışları için ham key değeriyle düz kayıt görünümü.
+/// `KeyEntry.masked` yalnızca masked; bu yapı `Payload.secrets`'a erişir.
+#[derive(Clone, Debug)]
+pub(crate) struct ExportEntryData {
+    pub category: String,
+    pub provider_id: String,
+    pub api_key: String,
+    pub model_id: Option<String>,
+    pub base_url: Option<String>,
+    pub created_at: String,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct KeychainOptions {
     /// None → `~/.grok/keychain.omx`.
@@ -384,6 +396,29 @@ impl Keychain {
         Ok(self.payload.all_entries())
     }
 
+    /// Export için ham key'lerle salt-okunur kayıt listesi. Payload açılışta
+    /// RAM'e çözüldüğünden cache/TTL kontrolü yapmaz; `reveal` gibi
+    /// `last_used`'a dokunmaz (side-effect'siz).
+    pub(crate) fn export_entries(&self) -> Vec<ExportEntryData> {
+        self.payload
+            .all_entries()
+            .into_iter()
+            .map(|e| ExportEntryData {
+                category: e.category,
+                provider_id: e.provider_id,
+                api_key: self
+                    .payload
+                    .secrets
+                    .get(&e.id)
+                    .map(|s| s.expose().to_string())
+                    .unwrap_or_default(),
+                model_id: e.model_id,
+                base_url: e.base_url,
+                created_at: e.created_at,
+            })
+            .collect()
+    }
+
     /// Tam key'i döner (kullanıcı reveal istediğinde); kopya `Zeroizing` içinde.
     pub fn reveal(&mut self, id: KeyId) -> Result<Zeroizing<String>> {
         self.require_unlocked()?;
@@ -454,6 +489,51 @@ impl Keychain {
             .providers
             .insert(provider_id.to_string(), entry);
         Ok(id)
+    }
+
+    /// (category, provider_id) ikilisinin var olup olmadığını söyler
+    /// (import conflict kararı için).
+    pub(crate) fn has_provider(&self, category: &str, provider_id: &str) -> bool {
+        self.payload.entry_in(category, provider_id).is_some()
+    }
+
+    /// Import akışı: export verisindeki `created_at` korunur; aynı
+    /// (category, provider_id) varsa üzerine yazar (KeyId korunur) ve kaynak
+    /// `Imported` işaretlenir. Skip/overwrite kararı çağıran tarafından
+    /// `has_provider` ile verilir.
+    pub(crate) fn add_key_import(
+        &mut self,
+        category: &str,
+        provider_id: &str,
+        api_key: &str,
+        model_id: Option<String>,
+        base_url: Option<String>,
+        created_at: String,
+    ) -> KeyId {
+        let existing = self.payload.entry_in(category, provider_id);
+        let id = existing.map(|e| e.id.clone()).unwrap_or_else(new_key_id);
+        let entry = KeyEntry {
+            id: id.clone(),
+            category: category.to_string(),
+            provider_id: provider_id.to_string(),
+            provider_label: provider_id.to_string(),
+            masked: mask_key(api_key, &KeySource::Imported),
+            model_id,
+            base_url,
+            created_at,
+            last_used: None,
+            source: KeySource::Imported,
+        };
+        self.payload
+            .secrets
+            .insert(id.clone(), Secret::new(api_key.to_string()));
+        self.payload
+            .categories
+            .entry(category.to_string())
+            .or_insert_with(Category::empty)
+            .providers
+            .insert(provider_id.to_string(), entry);
+        id
     }
 
     /// `Some(v)` → güncelle; `None` → dokunma.
