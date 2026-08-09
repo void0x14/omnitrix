@@ -490,3 +490,30 @@ fn pick_winner_missing_offline_candidate_defaults_to_zero_confidence() {
     let winner = pick_winner(&[slow.clone(), fast.clone()], &[]).expect("winner");
     assert_eq!(winner.base_url, fast.base_url);
 }
+
+/// http_status'u açıkça verilen ok=true sonucu; auth sinyali status'tan
+/// `probe_one` ile aynı kuraldan türetilir (2xx veya 401/403).
+fn result_status(provider: &str, status: u16, latency: u64) -> ProbeResult {
+    ProbeResult {
+        provider_id: provider.to_string(),
+        base_url: format!("https://{provider}.invalid/"),
+        region: None,
+        ok: true,
+        http_status: Some(status),
+        latency_ms: latency,
+        auth_seems_valid: (200..300).contains(&status) || status == 401 || status == 403,
+    }
+}
+
+#[test]
+fn pick_winner_prefers_real_2xx_over_auth_challenge() {
+    // Yüksek confidence'lı 401 (auth challenge) vs düşük confidence'lı 200
+    // (gerçek başarı): gerçek 2xx her zaman üst sıradadır; confidence ve
+    // latency onu geçemez.
+    let challenge = result_status("xai", 401, 50);
+    let success = result_status("deepseek", 200, 200);
+    let offline = vec![candidate("xai", 90), candidate("deepseek", 40)];
+    let winner = pick_winner(&[challenge.clone(), success.clone()], &offline).expect("winner");
+    assert_eq!(winner.provider_id, "deepseek");
+    assert_eq!(winner.base_url, success.base_url);
+}

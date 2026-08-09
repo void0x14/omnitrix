@@ -212,9 +212,10 @@ fn looks_like_region_label(label: &str) -> bool {
 
 /// Sonuçları deterministik sırayla en iyi adaya indirger.
 ///
-/// Sıralama: `ok` (başarılı) → `auth_seems_valid` → eşleşen offline adayın
-/// `confidence`'ı (yüksek önce; aday yoksa 0) → `latency_ms` (düşük önce) →
-/// input sırası (stable sort). Sonuç listesi boşsa `None`.
+/// Sıralama: `ok` (canlı HTTP yanıtı; bağlantı hatası en sonda) → gerçek 2xx
+/// başarı → `auth_seems_valid` (401/403 auth challenge dahil) → eşleşen
+/// offline adayın `confidence`'ı (yüksek önce; aday yoksa 0) → `latency_ms`
+/// (düşük önce) → input sırası (stable sort). Sonuç listesi boşsa `None`.
 pub fn pick_winner(
     results: &[ProbeResult],
     offline: &[xai_omni_keychain::DetectCandidate],
@@ -229,12 +230,33 @@ pub fn pick_winner(
     };
     let mut ranked: Vec<&ProbeResult> = results.iter().collect();
     ranked.sort_by(|a, b| {
-        b.ok.cmp(&a.ok)
-            .then_with(|| b.auth_seems_valid.cmp(&a.auth_seems_valid))
-            .then_with(|| confidence_of(&b.provider_id).cmp(&confidence_of(&a.provider_id)))
-            .then_with(|| a.latency_ms.cmp(&b.latency_ms))
+        probe_rank_key(b, confidence_of(&b.provider_id))
+            .cmp(&probe_rank_key(a, confidence_of(&a.provider_id)))
     });
     ranked.first().map(|r| (*r).clone())
+}
+
+/// Probe sonuçlarının deterministik sıralama anahtarı (yüksek önce): canlı
+/// HTTP yanıtı → gerçek 2xx başarı → auth sinyali (401/403 challenge dahil) →
+/// offline confidence → düşük latency.
+///
+/// `pick_winner` ile `auto_connect`'in ambiguity kontrolü AYNI anahtarı
+/// kullanır; tek kaynak bu fonksiyondur, iki ayrı sıralama tanımı birbirinden
+/// sapamaz. 2xx, 401/403'ün önüne geçer: yüksek confidence'lı bir generic
+/// `sk-` adayının auth challenge'ı, gerçekten çalışan düşük confidence'lı bir
+/// adayı yenemez.
+pub(crate) fn probe_rank_key(
+    r: &ProbeResult,
+    confidence: u8,
+) -> (bool, bool, bool, u8, std::cmp::Reverse<u64>) {
+    (
+        r.ok,
+        // 2xx gerçek başarı: 401/403 auth challenge'ın üstünde.
+        r.http_status.is_some_and(|s| (200..300).contains(&s)),
+        r.auth_seems_valid,
+        confidence,
+        std::cmp::Reverse(r.latency_ms),
+    )
 }
 
 #[cfg(test)]

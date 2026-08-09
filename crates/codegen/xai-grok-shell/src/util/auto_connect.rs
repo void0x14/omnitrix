@@ -12,7 +12,9 @@
 use zeroize::Zeroizing;
 
 use super::models_dev::{base_url_for_provider, provider_models, CatalogCache, ModelInfo};
-use super::provider_probe::{pick_winner, probe_candidates, ProbeRequest, ProbeResult, DEFAULT_TIMEOUT};
+use super::provider_probe::{
+    pick_winner, probe_candidates, probe_rank_key, ProbeRequest, ProbeResult, DEFAULT_TIMEOUT,
+};
 
 /// Auto-connect sonucu: provider + base URL + region + model listesi.
 #[derive(Clone, Debug, PartialEq)]
@@ -111,8 +113,10 @@ where
         _ => return Err(AutoConnectError::NoProbeWinner),
     };
 
-    // Ambiguous kontrolü: P0.2'nin deterministik sıralamasında winner'a
-    // tamamen eşit anahtar taşıyan farklı bir provider varsa tie hatası.
+    // Ambiguous kontrolü: deterministik sıralamada winner'a tamamen eşit
+    // anahtar taşıyan farklı bir provider varsa tie hatası. Anahtar
+    // `probe_rank_key`'ten gelir — `pick_winner` ile aynı kaynak, iki ayrı
+    // sıralama tanımı birbirinden sapamaz.
     let confidence_of = |provider_id: &str| -> u8 {
         candidates
             .iter()
@@ -121,18 +125,13 @@ where
             .max()
             .unwrap_or(0)
     };
-    let rank_key = |r: &ProbeResult| -> (bool, bool, u8, std::cmp::Reverse<u64>) {
-        (
-            r.ok,
-            r.auth_seems_valid,
-            confidence_of(&r.provider_id),
-            std::cmp::Reverse(r.latency_ms),
-        )
-    };
-    let winner_key = rank_key(&winner);
+    let winner_key = probe_rank_key(&winner, confidence_of(&winner.provider_id));
     let mut tied: Vec<String> = results
         .iter()
-        .filter(|r| rank_key(r) == winner_key && r.provider_id != winner.provider_id)
+        .filter(|r| {
+            probe_rank_key(r, confidence_of(&r.provider_id)) == winner_key
+                && r.provider_id != winner.provider_id
+        })
         .map(|r| r.provider_id.clone())
         .collect();
     // Sıralı unique: ambiguity mesajındaki provider listesi deterministik ve

@@ -266,6 +266,111 @@ async fn auto_connect_same_provider_tie_picks_deterministic_winner() {
     assert_eq!(outcome.candidates_considered, 2);
 }
 
+/// Mock probe: `status_for` eşlemesine göre her provider'a HTTP status üretir
+/// (ok=true; auth sinyali status'tan `probe_one` kuralıyla türetilir; eşit
+/// latency). Provider'lar arası sıralama farklarını izole etmek içindir.
+fn mock_probe_status(
+    status_for: impl Fn(&str) -> u16 + 'static,
+) -> impl FnOnce(Vec<ProbeRequest>) -> std::future::Ready<Vec<ProbeResult>> {
+    move |reqs: Vec<ProbeRequest>| {
+        std::future::ready(
+            reqs.into_iter()
+                .map(|req| {
+                    let status = status_for(&req.provider_id);
+                    ProbeResult {
+                        provider_id: req.provider_id,
+                        base_url: req.base_urls.into_iter().next().unwrap_or_default(),
+                        region: None,
+                        ok: true,
+                        http_status: Some(status),
+                        latency_ms: 10,
+                        auth_seems_valid: (200..300).contains(&status)
+                            || status == 401
+                            || status == 403,
+                    }
+                })
+                .collect(),
+        )
+    }
+}
+
+#[tokio::test]
+async fn auto_connect_prefers_2xx_over_higher_confidence_auth_challenge() {
+    // openai 401 (confidence 90) vs deepseek 200 (confidence 40): gerçek 2xx
+    // kazanır; yüksek confidence'lı auth challenge winner olamaz.
+    let mut models = IndexMap::new();
+    models.insert("gpt-4o".to_string(), model("gpt-4o"));
+    let mut providers = IndexMap::new();
+    providers.insert("openai".to_string(), openai_catalog(models));
+    let mut deepseek_models = IndexMap::new();
+    deepseek_models.insert("deepseek-chat".to_string(), model("deepseek-chat"));
+    providers.insert(
+        "deepseek".to_string(),
+        ProviderCatalog {
+            id: "deepseek".to_string(),
+            name: "DeepSeek".to_string(),
+            env: vec!["DEEPSEEK_API_KEY".to_string()],
+            npm: Some("@ai-sdk/openai-compatible".to_string()),
+            api: Some("https://api.deepseek.com".to_string()),
+            doc: None,
+            models: deepseek_models,
+        },
+    );
+    let catalog = catalog_with(providers);
+
+    let candidates = vec![candidate("openai", 90), candidate("deepseek", 40)];
+    let outcome = auto_connect_with(
+        TEST_KEY,
+        candidates,
+        &catalog,
+        mock_probe_status(|p| if p == "openai" { 401 } else { 200 }),
+    )
+    .await
+    .expect("real 2xx must win over a higher-confidence auth challenge");
+    assert_eq!(outcome.provider_id, "deepseek");
+    assert_eq!(outcome.base_url, "https://api.deepseek.com/v1");
+}
+
+#[tokio::test]
+async fn auto_connect_2xx_winner_is_not_ambiguous_with_auth_challenge() {
+    // openai 200 vs deepseek 401, eşit confidence + latency: eski sıralama
+    // anahtarında (ok, auth, confidence, latency) bu ikisi eşitti → yanlış
+    // Ambiguous hatası. Yeni anahtarda 2xx ayırt edici bileşendir: 200'ün
+    // winner'ı tie'sız seçilir (auto_connect ambiguity anahtarı pick_winner
+    // ile aynı kaynaktan türemelidir).
+    let mut models = IndexMap::new();
+    models.insert("gpt-4o".to_string(), model("gpt-4o"));
+    let mut providers = IndexMap::new();
+    providers.insert("openai".to_string(), openai_catalog(models));
+    let mut deepseek_models = IndexMap::new();
+    deepseek_models.insert("deepseek-chat".to_string(), model("deepseek-chat"));
+    providers.insert(
+        "deepseek".to_string(),
+        ProviderCatalog {
+            id: "deepseek".to_string(),
+            name: "DeepSeek".to_string(),
+            env: vec!["DEEPSEEK_API_KEY".to_string()],
+            npm: Some("@ai-sdk/openai-compatible".to_string()),
+            api: Some("https://api.deepseek.com".to_string()),
+            doc: None,
+            models: deepseek_models,
+        },
+    );
+    let catalog = catalog_with(providers);
+
+    let candidates = vec![candidate("openai", 40), candidate("deepseek", 40)];
+    let outcome = auto_connect_with(
+        TEST_KEY,
+        candidates,
+        &catalog,
+        mock_probe_status(|p| if p == "openai" { 200 } else { 401 }),
+    )
+    .await
+    .expect("2xx winner must not be ambiguous with an auth-challenge result");
+    assert_eq!(outcome.provider_id, "openai");
+    assert_eq!(outcome.base_url, "https://api.openai.com/v1");
+}
+
 #[tokio::test]
 async fn auto_connect_empty_models_errors() {
     // Winner provider katalogda var ama model listesi boş → uygulanabilir
