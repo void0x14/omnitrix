@@ -598,12 +598,10 @@ pub struct AppView {
     /// after [`Self::new`] (mirrors the voice channel's `auth_manager`
     /// clone). `None` only before wiring / in tests.
     pub(crate) auth_manager: Option<std::sync::Arc<xai_grok_shell::auth::AuthManager>>,
-    /// Provider-connect wizard placeholder. The full TUI wizard state machine
-    /// arrives with Task 7-8; this flag keeps the action dispatchable and
-    /// forward-compatible (the wizard will replace the flag).
-    pub(crate) connect_flow_open: bool,
-    /// Keys/keychain manager placeholder. The TUI keys manager arrives with
-    /// Task 9; this flag keeps `Action::OpenKeysManager` dispatchable.
+    /// Keys/keychain manager placeholder flag. The TUI keys manager arrives
+    /// with Task 9; this flag keeps `Action::OpenKeysManager` dispatchable.
+    /// (Provider connect wizard Task 7'de `ActiveModal::ProviderConnect`
+    /// olarak gerçek modal akışına taşındı — flag kaldırıldı.)
     pub(crate) keys_manager_open: bool,
     /// Open keychain handle (RAM master key cached, TTL'd). `None` = absent
     /// or locked — the unlock UI (Task 7-8) populates it; dispatch borrows
@@ -1395,7 +1393,6 @@ impl AppView {
             active_view: ActiveView::Welcome,
             auth_return_view: None,
             auth_manager: None,
-            connect_flow_open: false,
             keys_manager_open: false,
             keychain: None,
             keychain_borrow: None,

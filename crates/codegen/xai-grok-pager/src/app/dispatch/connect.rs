@@ -22,14 +22,73 @@ use crate::app::app_view::{ActiveView, AppView};
 pub(super) const KEYCHAIN_LOCKED_MSG: &str = "keychain kilitli; önce keychain'i açın (unlock TUI'si Task 7-8'de; şimdilik `grok keys list` ile açın)";
 
 // ---------------------------------------------------------------------------
-// Placeholder picker/manager (Task 7-8 wizard, Task 9 keys manager)
+// Provider connect wizard (Task 7: durum makinesi modalı) / keys manager
+// (Task 9 placeholder)
 // ---------------------------------------------------------------------------
 
-/// Provider connect wizard'ı açar. Task 7-8 bu flag'i gerçek wizard modal
-/// state makinesiyle değiştirir; şimdilik yalnızca placeholder flag kurulur.
+/// Provider connect wizard'ı açar: aktif ajanda (yoksa placeholder oturumda)
+/// `ProviderConnect` modalını kurar ve katalog yüklemesini async efekte
+/// bırakır.
+///
+/// Akış (Task 7):
+/// 1. Hedef agent (aktif / ilk / yeni placeholder) — `dispatch_open_settings`
+///    deseni.
+/// 2. Keychain kayıtları RAM'den okunur (`list_keys` — disk/network yok).
+/// 3. Flow boş katalogla (`Offline`) kurulur; `Effect::FetchModelsCatalog`
+///    cache/network'ten doldurur → `TaskResult::ModelsCatalogFetched` →
+///    `flow.set_catalog` (satırlar + rozetler tazelenir).
 pub(super) fn dispatch_open_connect_picker(app: &mut AppView) -> Vec<Effect> {
-    app.connect_flow_open = true;
-    vec![]
+    use crate::views::modal::ActiveModal;
+    use crate::views::modal_window::ModalWindowState;
+    use crate::views::provider_picker::ProviderConnectFlow;
+    use xai_grok_shell::util::models_dev::{CacheSource, CatalogCache};
+
+    let mut effects = vec![];
+    let id = match app.active_view {
+        ActiveView::Agent(id) => id,
+        _ => {
+            if let Some(existing) = app.agents.keys().next().copied() {
+                crate::app::dispatch::ctx::switch_to_agent(
+                    app,
+                    existing,
+                    crate::app::dispatch::ctx::SwitchCause::Picker,
+                );
+                existing
+            } else {
+                let (new_id, create_effects) =
+                    crate::app::dispatch::session::lifecycle::dispatch_new_session_inner_with_id(
+                        app, None,
+                    );
+                effects.extend(create_effects);
+                new_id
+            }
+        }
+    };
+
+    // Keychain kayıtları (RAM-only; kilitli/henüz açılmamışsa boş liste —
+    // wizard key giriş adımını gösterir, Task 8).
+    let keychain_entries = match app.keychain.as_mut() {
+        Some(kc) => kc.list_keys().unwrap_or_default(),
+        None => vec![],
+    };
+
+    let flow = ProviderConnectFlow::new(
+        CatalogCache {
+            providers: indexmap::IndexMap::new(),
+            fetched_at: None,
+            source: CacheSource::Offline,
+        },
+        keychain_entries,
+    );
+
+    if let Some(agent) = app.agents.get_mut(&id) {
+        agent.active_modal = Some(ActiveModal::ProviderConnect {
+            flow: Box::new(flow),
+            window: ModalWindowState::new(),
+        });
+    }
+    effects.push(Effect::FetchModelsCatalog);
+    effects
 }
 
 /// Keys/keychain manager'ı açar. Task 9 bu flag'i gerçek keys TUI'siyle
@@ -65,7 +124,8 @@ pub(super) fn dispatch_connect_provider(
             Err(msg) => {
                 app.show_toast(&format!("\u{2717} {msg}"));
                 if msg.contains("kaydı yok") {
-                    app.connect_flow_open = true;
+                    // Kayıt yok → key giriş ekranı için wizard'ı aç.
+                    return dispatch_open_connect_picker(app);
                 }
                 return vec![];
             }
@@ -108,7 +168,6 @@ pub(super) fn dispatch_connect_provider(
         }
     }
 
-    app.connect_flow_open = false;
     app.show_toast(&format!(
         "bağlandı: {provider_id} / {model_id} (keychain: {category_used}) [{key_id}]"
     ));

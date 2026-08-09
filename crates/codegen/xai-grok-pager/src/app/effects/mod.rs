@@ -1881,6 +1881,21 @@ pub(crate) fn execute(
                     }
                 });
         }
+        Effect::FetchModelsCatalog => {
+            tasks
+                .spawn(async move {
+                    let grok_home = xai_grok_shell::util::grok_home::grok_home();
+                    let result =
+                        xai_grok_shell::util::models_dev::fetch_catalog(
+                            &reqwest::Client::new(),
+                            &grok_home,
+                            false,
+                        )
+                        .await
+                        .map_err(|e| e.to_string());
+                    TaskResult::ModelsCatalogFetched { result }
+                });
+        }
         Effect::FetchChangelog => {
             tasks
                 .spawn(async move {

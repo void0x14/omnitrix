@@ -117,6 +117,16 @@ impl AgentView {
             return InputOutcome::Changed;
         };
 
+        // ProviderConnect: the wizard's own step machine owns every key —
+        // Esc is `Cancel` (first step) or `Back` (later steps), Enter selects
+        // a provider row, and the picker handles query/filter/nav. The modal
+        // chrome handles nothing here (no query-clearing dance needed; the
+        // picker config's `esc_clears_query` does that).
+        if matches!(modal, ActiveModal::ProviderConnect { .. }) {
+            let ev = crossterm::event::Event::Key(*key);
+            return self.handle_connect_picker_input(&ev);
+        }
+
         // Picker-based modals: route Esc through ModalWindow chrome first,
         // then delegate remaining keys to the picker input handler.
         if matches!(
@@ -483,6 +493,7 @@ impl AgentView {
             | ActiveModal::ShortcutsHelp { .. }
             | ActiveModal::MemoryBrowser { .. }
             | ActiveModal::Settings { .. }
+            | ActiveModal::ProviderConnect { .. }
             | ActiveModal::ResetSettingsConfirm { .. }
             | ActiveModal::RememberNoteReview { .. } => unreachable!(),
         }
@@ -498,6 +509,9 @@ impl AgentView {
         let event = crossterm::event::Event::Paste(text.to_owned());
         if matches!(self.active_modal, Some(ActiveModal::DocPicker { .. })) {
             return self.handle_doc_input(&event);
+        }
+        if matches!(self.active_modal, Some(ActiveModal::ProviderConnect { .. })) {
+            return self.handle_connect_picker_input(&event);
         }
         if matches!(
             self.active_modal,
@@ -534,6 +548,35 @@ impl AgentView {
             InputOutcome::Changed
         } else {
             InputOutcome::Unchanged
+        }
+    }
+
+    /// Provider connect wizard input. Routes the raw event into the wizard's
+    /// step machine; only `Cancel` closes the modal (every other outcome is
+    /// a state transition inside the flow — Task 8 turns `Apply` /
+    /// `PickModel` into real actions).
+    fn handle_connect_picker_input(&mut self, ev: &crossterm::event::Event) -> InputOutcome {
+        use crate::views::provider_picker::{ConnectOutcome, handle_connect_input};
+
+        let outcome = {
+            let Some(ActiveModal::ProviderConnect { flow, .. }) = self.active_modal.as_mut() else {
+                return InputOutcome::Changed;
+            };
+            handle_connect_input(flow, ev)
+        };
+        match outcome {
+            ConnectOutcome::Cancel => {
+                self.active_modal = None;
+                InputOutcome::Changed
+            }
+            ConnectOutcome::Next
+            | ConnectOutcome::Back
+            | ConnectOutcome::PickProvider(_)
+            | ConnectOutcome::PickBaseUrl(_)
+            | ConnectOutcome::PickKeyMode(_)
+            | ConnectOutcome::PickModel(_)
+            | ConnectOutcome::Apply
+            | ConnectOutcome::Nothing => InputOutcome::Changed,
         }
     }
 
@@ -1547,6 +1590,24 @@ impl AgentView {
             }
         }
 
+        // ProviderConnect: ModalWindow chrome (close button) first, then
+        // content events (row click/hover/scroll) into the wizard picker.
+        if let Some(ActiveModal::ProviderConnect { window, .. }) = &mut self.active_modal {
+            let outcome = mw::handle_modal_mouse(window, mouse.kind, mouse.column, mouse.row);
+            return match outcome {
+                ModalWindowOutcome::CloseRequested => {
+                    self.active_modal = None;
+                    InputOutcome::Changed
+                }
+                ModalWindowOutcome::Handled => InputOutcome::Changed,
+                ModalWindowOutcome::Unhandled => {
+                    let ev = crossterm::event::Event::Mouse(*mouse);
+                    self.handle_connect_picker_input(&ev)
+                }
+                _ => InputOutcome::Changed,
+            };
+        }
+
         // MemoryBrowser: route through ModalWindow chrome, then delegate.
         if let Some(ActiveModal::MemoryBrowser { state }) = &mut self.active_modal {
             let outcome =
@@ -2355,6 +2416,54 @@ impl AgentView {
                 }
             } else if let modal::ActiveModal::MemoryBrowser { state: mem_state } = active_modal {
                 crate::views::memory_modal::render_memory_modal(buf, area, mem_state, compact);
+            } else if let modal::ActiveModal::ProviderConnect { flow, window } = active_modal {
+                // Provider connect wizard: ModalWindow chrome + step content
+                // (provider picker / placeholder adımlar — Task 8 ekranları).
+                let connect_shortcuts: Vec<Shortcut> = vec![
+                    Shortcut {
+                        label: "\u{2191}/\u{2193} nav",
+                        clickable: false,
+                        id: 0,
+                    },
+                    Shortcut {
+                        label: "Enter select",
+                        clickable: false,
+                        id: 0,
+                    },
+                    Shortcut {
+                        label: "Esc back/close",
+                        clickable: false,
+                        id: 0,
+                    },
+                ];
+                let compact = self.scrollback.appearance().prompt.compact;
+                let modal_config = mw::ModalWindowConfig {
+                    title: "Connect provider",
+                    tabs: None,
+                    shortcuts: &connect_shortcuts,
+                    sizing: mw::ModalSizing {
+                        width_pct: 0.60,
+                        max_width: 90,
+                        min_width: 48,
+                        v_margin: 4,
+                        h_pad: 2,
+                        v_pad: 1,
+                        footer_lines: 2,
+                    }
+                    .with_compact(compact),
+                    fold_info: None,
+                };
+                if let Some(mca) = mw::render_modal_window(buf, area, window, &modal_config, &theme)
+                {
+                    crate::views::provider_picker::render_connect_flow(
+                        buf,
+                        mca.content,
+                        mca.inner_x,
+                        mca.inner_width,
+                        &theme,
+                        flow,
+                    );
+                }
             } else if let modal::ActiveModal::Settings {
                 state: settings_state,
             } = active_modal

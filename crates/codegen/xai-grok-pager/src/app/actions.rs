@@ -400,9 +400,9 @@ pub enum Action {
         model_id: acp::ModelId,
         effort: Option<ReasoningEffort>,
     },
-    /// Open the provider connect wizard (modal). The full TUI wizard arrives
-    /// with Task 7-8; for now this sets the `connect_flow_open` placeholder
-    /// flag on [`AppView`](crate::app::app_view::AppView).
+    /// Open the provider connect wizard (modal): `ActiveModal::ProviderConnect`
+    /// with the step machine (Task 7) + async models.dev catalog load via
+    /// [`Effect::FetchModelsCatalog`].
     OpenConnectPicker,
     /// Open the keys/keychain manager (TUI in Task 9; placeholder flag for
     /// now).
@@ -1603,6 +1603,11 @@ pub enum Effect {
         /// `ChatCompletions` for unknown/custom providers.
         api_backend: Option<xai_grok_shell::sampling::ApiBackend>,
     },
+    /// Fetch the models.dev provider catalog for the `/connect` wizard
+    /// (async; cache TTL 24h). Completes with
+    /// [`TaskResult::ModelsCatalogFetched`]; the open `ProviderConnect`
+    /// modal consumes it (fresh provider rows + badges).
+    FetchModelsCatalog,
     /// Fetch changelog from CDN (both markdown + structured JSON).
     /// Runs off the render path via `spawn_blocking`. Result is cached
     /// on `AppView` so `/release-notes` and the welcome screen share it.
@@ -2428,6 +2433,13 @@ pub enum TaskResult {
         model_id: String,
         model_key: String,
         result: Result<(), String>,
+    },
+    /// models.dev provider catalog loaded for the `/connect` wizard
+    /// ([`Effect::FetchModelsCatalog`]). The open `ProviderConnect` modal
+    /// consumes it (fresh rows + badges); failure leaves the wizard on the
+    /// offline catalog (custom rows still selectable).
+    ModelsCatalogFetched {
+        result: Result<xai_grok_shell::util::models_dev::CatalogCache, String>,
     },
     /// Changelog fetched from CDN (both formats).
     ChangelogFetched {

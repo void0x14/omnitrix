@@ -1,5 +1,5 @@
 //! Dispatch tests for the provider connect + keychain borrow flows
-//! (`dispatch::connect`). Written but NOT executed (Task 6 constraint:
+//! (`dispatch::connect`). Written but NOT executed (Task 7 constraint:
 //! no cargo commands).
 
 use super::*;
@@ -40,11 +40,38 @@ fn welcome_toast(app: &AppView) -> Option<&str> {
 }
 
 #[test]
-fn open_connect_picker_sets_placeholder_flag() {
+fn open_connect_picker_opens_wizard_modal_and_requests_catalog() {
     let mut app = test_app();
     let effects = dispatch_open_connect_picker(&mut app);
-    assert!(app.connect_flow_open);
-    assert!(effects.is_empty());
+    // Katalog yüklemesi async efekte bırakıldı.
+    assert!(
+        effects
+            .iter()
+            .any(|e| matches!(e, Effect::FetchModelsCatalog)),
+        "expected FetchModelsCatalog effect, got {effects:?}"
+    );
+    // Wizard, placeholder oturumdaki (agent oluşturuldu) ProviderConnect
+    // modalında açıldı.
+    let agent = app.agents.get(&AgentId(0)).expect("placeholder agent");
+    assert!(
+        matches!(
+            agent.active_modal,
+            Some(crate::views::modal::ActiveModal::ProviderConnect { .. })
+        ),
+        "ProviderConnect modal expected"
+    );
+    if let Some(crate::views::modal::ActiveModal::ProviderConnect { flow, .. }) =
+        &agent.active_modal
+    {
+        assert_eq!(
+            flow.step,
+            crate::views::provider_picker::ConnectStep::Provider
+        );
+        assert!(flow.rows.iter().any(|r| r.is_custom));
+        assert!(flow.keychain_entries.is_empty(), "no keychain in test app");
+    } else {
+        unreachable!();
+    }
 }
 
 #[test]
@@ -112,8 +139,7 @@ fn connect_provider_borrows_pushes_and_persists() {
         }
         other => panic!("expected ConnectProviderWrite, got {other:?}"),
     }
-    // Wizard flag kapandı; başarı toast'ı Welcome overlay'ine kuruldu.
-    assert!(!app.connect_flow_open);
+    // Wizard flag kapatıldı; başarı toast'ı Welcome overlay'ine kuruldu.
     let toast = welcome_toast(&app).expect("success toast");
     assert!(
         toast.contains("bağlandı: openai / gpt-4o"),
@@ -155,9 +181,21 @@ fn connect_provider_no_entry_suggests_add_and_opens_picker() {
         "gpt-4o".to_string(),
         None,
     );
-    assert!(effects.is_empty());
-    // Kayıt yok → key giriş ekranına (placeholder picker) dönülür.
-    assert!(app.connect_flow_open);
+    // Kayıt yok → wizard açılır (katalog fetch efekti döner).
+    assert!(
+        effects
+            .iter()
+            .any(|e| matches!(e, Effect::FetchModelsCatalog)),
+        "expected wizard to open with FetchModelsCatalog, got {effects:?}"
+    );
+    let agent = app.agents.get(&AgentId(0)).expect("placeholder agent");
+    assert!(
+        matches!(
+            agent.active_modal,
+            Some(crate::views::modal::ActiveModal::ProviderConnect { .. })
+        ),
+        "ProviderConnect modal expected after missing key"
+    );
     assert_eq!(runtime_key::runtime_model_key("gpt-4o"), None);
     let toast = welcome_toast(&app).expect("no-entry toast");
     assert!(toast.contains("kaydı yok"), "toast: {toast}");
@@ -189,8 +227,13 @@ fn connect_provider_category_filter_respects_category() {
         "gpt-4o".to_string(),
         None,
     );
-    assert!(effects.is_empty());
-    assert!(app.connect_flow_open);
+    // Wizard'a yönlendirilir (katalog fetch efekti döner).
+    assert!(
+        effects
+            .iter()
+            .any(|e| matches!(e, Effect::FetchModelsCatalog)),
+        "expected wizard to open with FetchModelsCatalog, got {effects:?}"
+    );
     assert_eq!(runtime_key::runtime_model_key("gpt-4o"), None);
     runtime_key::clear_runtime_keys();
 }

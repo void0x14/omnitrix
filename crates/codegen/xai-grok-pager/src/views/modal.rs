@@ -290,6 +290,16 @@ pub enum ActiveModal {
     Settings {
         state: Box<crate::views::settings_modal::SettingsModalState>,
     },
+    /// Provider connect wizard (`Action::OpenConnectPicker` — `/connect`).
+    /// `flow` durum makinesi (provider → key → model → apply; Task 7'de
+    /// provider adımı canlı, kalan adımlar placeholder). Katalog
+    /// `Effect::FetchModelsCatalog` ile async dolar.
+    ProviderConnect {
+        /// Wizard state (katalog, satırlar, picker state, seçim draft'ları).
+        flow: Box<crate::views::provider_picker::ProviderConnectFlow>,
+        /// Shared modal window chrome state.
+        window: ModalWindowState,
+    },
     /// Reset-settings confirmation, stacked above Settings.
     ///
     /// The underlying `SettingsModalState` is moved in/out so cancel
@@ -637,6 +647,7 @@ impl ActiveModal {
             | ActiveModal::ShortcutsHelp { .. }
             | ActiveModal::MemoryBrowser { .. }
             | ActiveModal::Settings { .. }
+            | ActiveModal::ProviderConnect { .. }
             | ActiveModal::RememberNoteReview { .. } => vec![],
         }
     }
@@ -665,6 +676,7 @@ impl ActiveModal {
             ActiveModal::DocViewer { title, .. } => title.as_str(),
             ActiveModal::ShortcutsHelp { .. } => "Keyboard Shortcuts",
             ActiveModal::MemoryBrowser { .. } => "Memory",
+            ActiveModal::ProviderConnect { .. } => "Connect provider",
             ActiveModal::Settings { .. } => crate::views::settings_modal::MODAL_TITLE,
             ActiveModal::ResetSettingsConfirm { .. } => "Reset setting?",
             ActiveModal::RememberNoteReview { .. } => "Memory Note",

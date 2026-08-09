@@ -1219,6 +1219,43 @@ pub(super) fn dispatch_task_result(result: TaskResult, app: &mut AppView) -> Vec
             app.show_toast(&format!("\u{2717} Could not save {key}: {scrubbed}"));
             vec![]
         }
+        TaskResult::ModelsCatalogFetched { result } => {
+            use crate::views::modal::ActiveModal;
+            match result {
+                Ok(cache) => {
+                    tracing::info!(
+                        target: "connect",
+                        providers = cache.providers.len(),
+                        source = ?cache.source,
+                        "models.dev catalog loaded for connect wizard",
+                    );
+                    for agent in app.agents.values_mut() {
+                        if let Some(ActiveModal::ProviderConnect { flow, .. }) =
+                            agent.active_modal.as_mut()
+                        {
+                            flow.set_catalog(cache.clone());
+                        }
+                    }
+                }
+                Err(error) => {
+                    tracing::warn!(
+                        target: "connect",
+                        %error,
+                        "models.dev catalog fetch failed; wizard stays on offline catalog",
+                    );
+                    // Offline katalogla devam: custom/config satırları hâlâ
+                    // seçilebilir; hata mesajı provider adımında gösterilir.
+                    for agent in app.agents.values_mut() {
+                        if let Some(ActiveModal::ProviderConnect { flow, .. }) =
+                            agent.active_modal.as_mut()
+                        {
+                            flow.error = Some(error.clone());
+                        }
+                    }
+                }
+            }
+            vec![]
+        }
         TaskResult::ProviderConnectPersisted {
             provider_id,
             model_id,
@@ -1235,8 +1272,8 @@ pub(super) fn dispatch_task_result(result: TaskResult, app: &mut AppView) -> Vec
                         "provider connection persisted",
                     );
                     // Başarı toast'ı dispatch_connect_provider'da gösterildi;
-                    // wizard placeholder'ı kapanır (Task 7-8 gerçek wizard).
-                    app.connect_flow_open = false;
+                    // wizard Task 8'de Apply adımını kapatır (şimdilik modal
+                    // kullanıcı Esc ile kapatır).
                 }
                 Err(error) => {
                     tracing::warn!(
