@@ -1608,6 +1608,24 @@ pub enum Effect {
     /// [`TaskResult::ModelsCatalogFetched`]; the open `ProviderConnect`
     /// modal consumes it (fresh provider rows + badges).
     FetchModelsCatalog,
+    /// Fetch a custom provider's `/models` list (openai-compatible) for the
+    /// connect wizard Model step. `api_key` is session-scoped and optional
+    /// (many local endpoints list models without auth); the request is built
+    /// in the task and the copy dropped/overwritten after use — it is never
+    /// logged or persisted.
+    FetchProviderModels {
+        base_url: String,
+        api_key: Option<String>,
+    },
+    /// Fetch a custom (openai-compatible) provider's `/models` list for the
+    /// `/connect` wizard's Model step (async). Dispatch resolves the key from
+    /// the wizard flow (keychain borrow / draft / env) and pushes
+    /// [`Effect::FetchProviderModels`]; completes with
+    /// [`TaskResult::ProviderModelsFetched`].
+    FetchProviderModels {
+        /// `GET {base_url}/models`; `data[].id` → wizard model listesi.
+        base_url: String,
+    },
     /// Fetch changelog from CDN (both markdown + structured JSON).
     /// Runs off the render path via `spawn_blocking`. Result is cached
     /// on `AppView` so `/release-notes` and the welcome screen share it.
@@ -2441,6 +2459,14 @@ pub enum TaskResult {
     /// rows still selectable).
     ModelsCatalogFetched {
         result: Result<xai_grok_shell::util::models_dev::CatalogCache, String>,
+    },
+    /// Custom provider `/models` list fetched for the connect wizard Model
+    /// step ([`Effect::FetchProviderModels`]). Success populates the
+    /// selected provider's model list; failure shows an error hint line and
+    /// manual model-ID input stays available.
+    ProviderModelsFetched {
+        base_url: String,
+        result: Result<Vec<String>, String>,
     },
     /// Changelog fetched from CDN (both formats).
     ChangelogFetched {

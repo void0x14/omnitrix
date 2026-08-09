@@ -240,6 +240,53 @@ pub fn provider_models(
     cache.providers.get(provider_id).map(|p| &p.models)
 }
 
+/// OpenAI-compatible bir endpoint'in `/models` listesini getir: `data[].id`
+/// değerlerini döndürür. `api_key` opsiyoneldir (çoğu local endpoint
+/// (vLLM/LM Studio/llama.cpp) auth'suz listeler; 401/403 alınırsa Bearer ile
+/// tekrar dener). Wizard'ın Model adımı (Task 8) offline/custom provider'lar
+/// için kullanır.
+pub async fn fetch_provider_models(
+    client: &reqwest::Client,
+    base_url: &str,
+    api_key: Option<&str>,
+) -> anyhow::Result<Vec<String>> {
+    let url = format!("{}/models", base_url.trim_end_matches('/'));
+    let attempt = |with_key: bool| async {
+        let mut request = client.get(&url);
+        if with_key
+            && let Some(key) = api_key
+        {
+            request = request.header("Authorization", format!("Bearer {key}"));
+        }
+        request.send().await.context("provider /models request failed")
+    };
+    let mut response = attempt(api_key.is_some()).await?;
+    if (response.status() == reqwest::StatusCode::UNAUTHORIZED
+        || response.status() == reqwest::StatusCode::FORBIDDEN)
+        && api_key.is_some()
+    {
+        // Auth gerektiren endpoint: key ile tekrar dene.
+        response = attempt(true).await?;
+    }
+    let status = response.status();
+    if !status.is_success() {
+        anyhow::bail!("{url} returned HTTP {status}");
+    }
+    let body: serde_json::Value = response
+        .json()
+        .await
+        .context("failed to parse provider /models response")?;
+    let ids: Vec<String> = body
+        .get("data")
+        .and_then(|data| data.as_array())
+        .into_iter()
+        .flatten()
+        .filter_map(|m| m.get("id").and_then(|id| id.as_str()))
+        .map(str::to_owned)
+        .collect();
+    Ok(ids)
+}
+
 /// npm paketinden ApiBackend eşlemesi (native/openai-compatible/anthropic).
 pub fn api_backend_for_provider(p: &ProviderCatalog) -> ApiBackend {
     match p.npm.as_deref() {

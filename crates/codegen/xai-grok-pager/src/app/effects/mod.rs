@@ -1896,6 +1896,19 @@ pub(crate) fn execute(
                     TaskResult::ModelsCatalogFetched { result }
                 });
         }
+        Effect::FetchProviderModels { base_url, api_key } => {
+            tasks
+                .spawn(async move {
+                    let result = xai_grok_shell::util::models_dev::fetch_provider_models(
+                            &reqwest::Client::new(),
+                            &base_url,
+                            api_key.as_deref(),
+                        )
+                        .await
+                        .map_err(|e| e.to_string());
+                    TaskResult::ProviderModelsFetched { base_url, result }
+                });
+        }
         Effect::FetchChangelog => {
             tasks
                 .spawn(async move {

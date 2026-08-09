@@ -552,11 +552,21 @@ impl AgentView {
     }
 
     /// Provider connect wizard input. Routes the raw event into the wizard's
-    /// step machine; only `Cancel` closes the modal (every other outcome is
-    /// a state transition inside the flow — Task 8 turns `Apply` /
-    /// `PickModel` into real actions).
+    /// step machine.
+    ///
+    /// - `Cancel` (ilk adımda Esc / Done'da Enter-Esc) → modal kapanır.
+    /// - `Apply` → flow'dan (provider, kategori, model, base_url) veriyi
+    ///   çıkarıp `Action::ConnectProvider` üretir; dispatch keychain
+    ///   borrow/add/env + config yazımını yürütür, sonuç flow'a `Done`/`Error`
+    ///   olarak döner.
+    /// - Diğer adımlar flow içinde döner; yalnızca Model adımına custom
+    ///   provider'la boş liste girildiyse bir kez `Action::FetchProviderModels`
+    ///   tetiklenir (offline/custom fallback).
     fn handle_connect_picker_input(&mut self, ev: &crossterm::event::Event) -> InputOutcome {
-        use crate::views::provider_picker::{ConnectOutcome, handle_connect_input};
+        use crate::views::modal::ActiveModal;
+        use crate::views::provider_picker::{
+            ConnectOutcome, ConnectStep, ModelFetchState, handle_connect_input,
+        };
 
         let outcome = {
             let Some(ActiveModal::ProviderConnect { flow, .. }) = self.active_modal.as_mut() else {
@@ -569,14 +579,70 @@ impl AgentView {
                 self.active_modal = None;
                 InputOutcome::Changed
             }
+            ConnectOutcome::Apply => {
+                let Some(ActiveModal::ProviderConnect { flow, .. }) = self.active_modal.as_mut()
+                else {
+                    return InputOutcome::Changed;
+                };
+                if flow.apply_pending {
+                    return InputOutcome::Changed;
+                }
+                let Some(sel) = flow.selected_provider.as_ref() else {
+                    return InputOutcome::Changed;
+                };
+                let Some(model_id) = flow.selected_model.clone() else {
+                    return InputOutcome::Changed;
+                };
+                flow.apply_pending = true;
+                let category = flow.selected_category.clone();
+                // Builtin provider'larda base_url `None` → config katmanı
+                // katalogdan (URL + backend) çözer; custom'da draft kullanılır.
+                let base_url = if sel.is_custom {
+                    Some(flow.base_url_draft.clone())
+                } else {
+                    None
+                };
+                InputOutcome::Action(Action::ConnectProvider {
+                    provider_id: sel.provider_id.clone(),
+                    category,
+                    model_id,
+                    base_url,
+                })
+            }
             ConnectOutcome::Next
             | ConnectOutcome::Back
             | ConnectOutcome::PickProvider(_)
             | ConnectOutcome::PickBaseUrl(_)
             | ConnectOutcome::PickKeyMode(_)
             | ConnectOutcome::PickModel(_)
-            | ConnectOutcome::Apply
-            | ConnectOutcome::Nothing => InputOutcome::Changed,
+            | ConnectOutcome::Nothing => {
+                // Model adımına custom provider'la boş liste girildiyse
+                // `/models` fetch'ini bir kez tetikle (Idle guard).
+                let mut fetch_url: Option<String> = None;
+                {
+                    let Some(ActiveModal::ProviderConnect { flow, .. }) = self.active_modal.as_mut()
+                    else {
+                        return InputOutcome::Changed;
+                    };
+                    if flow.step == ConnectStep::Model
+                        && flow.models_fetch_state == ModelFetchState::Idle
+                        && let Some(sel) = flow.selected_provider.as_ref()
+                        && sel.is_custom
+                        && sel.models.is_empty()
+                        && let Some(url) = sel.base_url.as_ref()
+                    {
+                        flow.models_fetch_state = ModelFetchState::Fetching;
+                        fetch_url = Some(url.clone());
+                    }
+                }
+                if let Some(url) = fetch_url {
+                    InputOutcome::Action(Action::FetchProviderModels {
+                        base_url: url,
+                    })
+                } else {
+                    InputOutcome::Changed
+                }
+            }
         }
     }
 

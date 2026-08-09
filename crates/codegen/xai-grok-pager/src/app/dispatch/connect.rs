@@ -12,10 +12,14 @@
 //! - `xai_grok_shell::auth::runtime_key` (chat seam — `resolve_credentials`
 //!   → `own_credential` fallback).
 
+use xai_grok_shell::sampling::ApiBackend;
 use xai_omni_keychain::KeychainError;
 
 use crate::app::actions::Effect;
 use crate::app::app_view::{ActiveView, AppView};
+use crate::views::provider_picker::{
+    ConnectStep, KeyMode, ModelFetchState, ProviderConnectFlow,
+};
 
 /// Keychain kilitli / henüz açılmamış durum mesajı. Task 7-8 unlock TUI'si bu
 /// akışı devralır; şimdilik `grok keys` / `grok connect` stdin akışı açar.
@@ -102,12 +106,56 @@ pub(super) fn dispatch_open_keys_manager(app: &mut AppView) -> Vec<Effect> {
 // ConnectProvider
 // ---------------------------------------------------------------------------
 
+/// Wizard flow'unun key ile ilgili anlık görüntüsü (dispatch tarafında
+/// borrow çakışması olmadan key_mode/draft/backend erişimi).
+struct ConnectFlowSnapshot {
+    key_mode: KeyMode,
+    draft_key: zeroize::Zeroizing<String>,
+    api_backend: Option<ApiBackend>,
+}
+
+/// Açık `ProviderConnect` modalını taşıyan ilk agent'ın flow anlık görüntüsü.
+fn snapshot_connect_flow(app: &AppView) -> Option<ConnectFlowSnapshot> {
+    use crate::views::modal::ActiveModal;
+    for agent in app.agents.values() {
+        if let Some(ActiveModal::ProviderConnect { flow, .. }) = &agent.active_modal {
+            return Some(ConnectFlowSnapshot {
+                key_mode: flow.key_mode.clone(),
+                draft_key: flow.draft_key.clone(),
+                api_backend: flow.selected_provider.as_ref().map(|s| s.backend.clone()),
+            });
+        }
+    }
+    None
+}
+
+/// Açık `ProviderConnect` flow'una mutasyona dayalı erişim (ilk modal).
+fn with_connect_flow(app: &mut AppView, f: impl FnOnce(&mut ProviderConnectFlow)) {
+    use crate::views::modal::ActiveModal;
+    for agent in app.agents.values_mut() {
+        if let Some(ActiveModal::ProviderConnect { flow, .. }) = &mut agent.active_modal {
+            f(flow);
+            return;
+        }
+    }
+}
+
 /// Provider bağlama: keychain'den key'i borrow et (RAM; config'e düz metin
 /// YOK) → oturum key'lerine it → config yazımını async efekte bırak → aktif
 /// oturumun modelini değiştir.
 ///
-/// Keychain açık değilse (kilitli) unlock mesajı döner; kayıt yoksa key
-/// giriş ekranına (`OpenConnectPicker`) yönlendirir.
+/// İki yol:
+/// - **Wizard apply** (açık `ProviderConnect` flow): `KeyMode`'a göre key
+///   çözülür — `Keychain(id)` → doğrudan borrow; `New(key)` → keychain'e ekle
+///   (RAM) + borrow (kilitliyse oturumluk key); `Env(name)` → ortam değişkeni.
+///   Hata → `ConnectStep::Error`; başarı flow'u `Apply`'de bırakır (kalıcılık
+///   sonucu `ProviderConnectPersisted` ile `Done`/`Error`).
+/// - **Legacy** (flow yok; Task 6 davranışı): provider+category keychain
+///   kaydını borrow; kayıt yoksa wizard'ı açar.
+///
+/// Keychain'e eklenen yeni key için `save()` doğrudan yapılır — küçük atomik
+/// yazma; aksi halde key app çıkınca kaybolur (invariant istisnası,
+/// transcript export dispatch'inde de aynı model kullanılır).
 pub(super) fn dispatch_connect_provider(
     app: &mut AppView,
     provider_id: String,
@@ -116,11 +164,29 @@ pub(super) fn dispatch_connect_provider(
     base_url: Option<String>,
 ) -> Vec<Effect> {
     let model_key = crate::connect_cmd::model_entry_key(&provider_id, &model_id);
+    let snapshot = snapshot_connect_flow(app);
 
-    // 1) Keychain'den key çöz (RAM-only; handle'ı unlock akışı açar).
-    let (key, key_id, category_used) =
-        match borrow_connect_key(app, &provider_id, category.as_deref()) {
-            Ok(borrowed) => borrowed,
+    // 1) Key'i çöz.
+    let (key, key_id, category_used, session_only) = match &snapshot {
+        Some(s) => match resolve_wizard_key(
+            app,
+            s,
+            &provider_id,
+            category.as_deref(),
+            &model_id,
+            base_url.as_deref(),
+        ) {
+            Ok(v) => v,
+            Err(msg) => {
+                app.show_toast(&format!("\u{2717} {msg}"));
+                with_connect_flow(app, |flow| {
+                    flow.step = ConnectStep::Error(msg);
+                });
+                return vec![];
+            }
+        },
+        None => match borrow_connect_key(app, &provider_id, category.as_deref()) {
+            Ok(borrowed) => (borrowed.0, borrowed.1, borrowed.2, false),
             Err(msg) => {
                 app.show_toast(&format!("\u{2717} {msg}"));
                 if msg.contains("kaydı yok") {
@@ -129,7 +195,8 @@ pub(super) fn dispatch_connect_provider(
                 }
                 return vec![];
             }
-        };
+        },
+    };
 
     // 2) Oturum key'lerini it: process static key (tools/voice) + runtime
     //    model key (chat — `resolve_credentials` fallback). Kilitler kısa
@@ -137,12 +204,14 @@ pub(super) fn dispatch_connect_provider(
     push_session_key(app, &model_id, &key);
 
     // 3) Config yazımı + `[models] default` (async IO — effects katmanı).
+    //    Wizard yolunda backend flow'dan gelir (custom-anthropic → Messages);
+    //    legacy yolunda `None` (katalogdan çözülür).
     let mut effects = vec![Effect::ConnectProviderWrite {
         provider_id: provider_id.clone(),
         model_id: model_id.clone(),
         model_key: model_key.clone(),
         base_url,
-        api_backend: None,
+        api_backend: snapshot.as_ref().and_then(|s| s.api_backend),
     }];
 
     // 4) Aktif oturumun modelini değiştir (router'daki `Action::SwitchModel`
@@ -168,10 +237,120 @@ pub(super) fn dispatch_connect_provider(
         }
     }
 
+    let session_note = if session_only {
+        " (key yalnızca bu oturumda \u{2014} keychain'e yazılmadı)"
+    } else {
+        ""
+    };
     app.show_toast(&format!(
-        "bağlandı: {provider_id} / {model_id} (keychain: {category_used}) [{key_id}]"
+        "bağlandı: {provider_id} / {model_id} (keychain: {category_used}) [{key_id}]{session_note}"
     ));
     effects
+}
+
+/// Wizard flow'una göre key çözümü:
+/// - `Keychain(id)`: ilgili kaydı borrow (RAM).
+/// - `New(key)`: keychain açıksa `add_key` (RAM) + `save` (kalıcılık) ve
+///   kaydı borrow; kilitliyse key'i oturumluk kullan.
+/// - `Env(name)`: ortam değişkenini oku (oturumluk).
+/// Dönüş: `(key, key_id, category, session_only)`.
+fn resolve_wizard_key(
+    app: &mut AppView,
+    s: &ConnectFlowSnapshot,
+    provider_id: &str,
+    category: Option<&str>,
+    model_id: &str,
+    base_url: Option<&str>,
+) -> Result<(String, String, String, bool), String> {
+    match &s.key_mode {
+        KeyMode::Keychain(id) => {
+            let kc = app
+                .keychain
+                .as_mut()
+                .ok_or_else(|| KEYCHAIN_LOCKED_MSG.to_string())?;
+            let entries = kc.list_keys().map_err(|e| keychain_error_msg(&e))?;
+            let entry = entries
+                .iter()
+                .find(|e| e.id == *id)
+                .cloned()
+                .ok_or_else(|| format!("keychain'de '{id}' kaydı yok"))?;
+            let borrowed = kc.borrow(id.clone()).map_err(|e| keychain_error_msg(&e))?;
+            Ok((
+                borrowed.get().to_string(),
+                id.clone(),
+                entry.category,
+                false,
+            ))
+        }
+        KeyMode::New => {
+            let key = s.draft_key.as_str();
+            if let Some(kc) = app.keychain.as_mut() {
+                let cat = category.unwrap_or("personal").to_string();
+                let key_id = kc
+                    .add_key(
+                        &cat,
+                        provider_id,
+                        key,
+                        Some(model_id.to_string()),
+                        base_url.map(String::from),
+                    )
+                    .map_err(|e| keychain_error_msg(&e))?;
+                // RAM insert'ten sonra kalıcılık: küçük atomik yazma
+                // (invariant istisnası; aksi halde yeni key kaybolur).
+                if let Err(e) = kc.save() {
+                    tracing::warn!(target: "connect", error = %e, "keychain save failed for new wizard key");
+                }
+                Ok((key.to_string(), key_id, cat, false))
+            } else {
+                Ok((
+                    key.to_string(),
+                    "draft".to_string(),
+                    category.unwrap_or_default().to_string(),
+                    true,
+                ))
+            }
+        }
+        KeyMode::Env(name) => {
+            let value = std::env::var(name)
+                .map_err(|_| format!("ortam değişkeni '{name}' set değil"))?;
+            Ok((
+                value,
+                name.clone(),
+                category.unwrap_or_default().to_string(),
+                true,
+            ))
+        }
+    }
+}
+
+/// Wizard Model adımı için custom provider `/models` fetch efekti üretir.
+/// Key, flow'dan çözülür (keychain borrow / draft / env — opsiyonel; çoğu
+/// openai-compatible endpoint auth'suz listeler). Key çözülemezse fetch
+/// atlanır ve flow `Failed` durumuna geçer (manuel ID girişi kullanılır).
+pub(super) fn dispatch_fetch_provider_models(app: &mut AppView, base_url: String) -> Vec<Effect> {
+    let Some(s) = snapshot_connect_flow(app) else {
+        return vec![];
+    };
+    let api_key = match &s.key_mode {
+        KeyMode::Keychain(id) => match app.keychain.as_mut() {
+            Some(kc) => match kc.borrow(id.clone()) {
+                Ok(borrowed) => Ok(Some(borrowed.get().to_string())),
+                Err(e) => Err(keychain_error_msg(&e)),
+            },
+            None => Err(KEYCHAIN_LOCKED_MSG.to_string()),
+        },
+        KeyMode::New => Ok(Some(s.draft_key.to_string())),
+        KeyMode::Env(name) => Ok(std::env::var(name).ok()),
+    };
+    match api_key {
+        Ok(key) => vec![Effect::FetchProviderModels { base_url, api_key: key }],
+        Err(msg) => {
+            with_connect_flow(app, |flow| {
+                flow.models_fetch_state = ModelFetchState::Failed(msg);
+            });
+            vec![]
+        }
+    }
 }
 
 /// Keychain'den provider kaydını bulur ve borrow eder. `(key, key_id,

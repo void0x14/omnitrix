@@ -1270,6 +1270,26 @@ pub(super) fn dispatch_task_result(result: TaskResult, app: &mut AppView) -> Vec
             model_key,
             result,
         } => {
+            // Wizard apply hâlâ `Apply` adımındaysa sonucu bağla: kalıcılık
+            // başarılı → `Done` (bağlantı tamamlandı); başarısız → `Error`
+            // (runtime key bu oturumda yine de aktif). Kullanıcı aradaysa
+            // farklı adıma geçtiyse flow'a dokunulmaz.
+            for agent in app.agents.values_mut() {
+                use crate::views::modal::ActiveModal;
+                use crate::views::provider_picker::{ConnectStep, apply_result};
+                if let Some(ActiveModal::ProviderConnect { flow, .. }) = &mut agent.active_modal {
+                    if flow.step == ConnectStep::Apply {
+                        match &result {
+                            Ok(()) => apply_result(flow, true, String::new()),
+                            Err(e) => apply_result(
+                                flow,
+                                false,
+                                format!("bağlantı config'e yazılamadı: {e}"),
+                            ),
+                        }
+                    }
+                }
+            }
             match result {
                 Ok(()) => {
                     tracing::info!(
@@ -1279,9 +1299,6 @@ pub(super) fn dispatch_task_result(result: TaskResult, app: &mut AppView) -> Vec
                         model_key = %model_key,
                         "provider connection persisted",
                     );
-                    // Başarı toast'ı dispatch_connect_provider'da gösterildi;
-                    // wizard Task 8'de Apply adımını kapatır (şimdilik modal
-                    // kullanıcı Esc ile kapatır).
                 }
                 Err(error) => {
                     tracing::warn!(
@@ -1296,6 +1313,60 @@ pub(super) fn dispatch_task_result(result: TaskResult, app: &mut AppView) -> Vec
                     ));
                 }
             }
+            vec![]
+        }
+        TaskResult::ProviderModelsFetched { base_url, result } => {
+            // Custom provider `/models` sonucu: hâlâ Model adımında ve aynı
+            // base URL'deyse listeyi doldur (Loaded) / hata satırını kur
+            // (Failed — manuel ID girişi kullanılır).
+            use crate::views::modal::ActiveModal;
+            use crate::views::provider_picker::{ConnectStep, ModelFetchState};
+            use xai_grok_shell::util::models_dev::ModelInfo;
+            for agent in app.agents.values_mut() {
+                if let Some(ActiveModal::ProviderConnect { flow, .. }) = &mut agent.active_modal {
+                    if flow.step != ConnectStep::Model || flow.models_fetch_state == ModelFetchState::Idle {
+                        continue;
+                    }
+                    let same_url = flow
+                        .selected_provider
+                        .as_ref()
+                        .and_then(|s| s.base_url.as_deref())
+                        .is_some_and(|url| url == base_url);
+                    if !same_url {
+                        continue;
+                    }
+                    match &result {
+                        Ok(ids) => {
+                            let models: Vec<ModelInfo> = ids
+                                .iter()
+                                .map(|id| ModelInfo {
+                                    id: id.clone(),
+                                    name: id.clone(),
+                                    description: None,
+                                    reasoning: false,
+                                    tool_call: true,
+                                    temperature: true,
+                                    limit: None,
+                                    cost: None,
+                                })
+                                .collect();
+                            if let Some(sel) = flow.selected_provider.as_mut() {
+                                sel.models = models;
+                            }
+                            flow.models_fetch_state = ModelFetchState::Loaded;
+                        }
+                        Err(e) => {
+                            flow.models_fetch_state = ModelFetchState::Failed(e.clone());
+                        }
+                    }
+                }
+            }
+            tracing::info!(
+                target: "connect",
+                url = %base_url,
+                models = result.as_ref().map(|v| v.len()).unwrap_or(0),
+                "provider /models fetch completed",
+            );
             vec![]
         }
     }

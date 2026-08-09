@@ -1,10 +1,18 @@
 //! /connect wizard: provider → key → model → apply.
 //!
-//! Task 7 kapsamı: durum makinesi + provider adımı (canlı liste, rozetler,
-//! fuzzy arama). BaseUrl/Key/Category/Model/Apply adımları placeholder
-//! render + Esc→Back navigasyonu üretir; gerçek ekranlar Task 8'de gelir.
+//! Task 7: durum makinesi + provider adımı (canlı liste, rozetler, fuzzy
+//! arama). Task 8: BaseUrl/Key/Category (`key_input`), Model (`model_select`),
+//! Apply/Done (`apply`) gerçek ekranları; Apply → modals katmanı
+//! `Action::ConnectProvider` üretir, sonuç `TaskResult::ProviderConnectPersisted`
+//! ile `Done`/`Error`'a bağlanır.
 
+mod apply;
+mod key_input;
+mod model_select;
 mod providers;
+
+pub use apply::apply_result;
+pub use model_select::ModelFetchState;
 
 use crossterm::event::{Event, KeyCode, KeyEventKind};
 use ratatui::buffer::Buffer;
@@ -20,6 +28,7 @@ use xai_grok_shell::util::models_dev::{
 };
 use xai_omni_keychain::KeyEntry;
 
+use crate::input::line_editor::LineEditor;
 use crate::views::picker::{
     PickerConfig, PickerEntry, PickerOutcome, PickerRow, PickerState, handle_picker_input,
     render_picker_content_with_scrollbar_x,
@@ -92,6 +101,32 @@ pub struct ProviderConnectFlow {
     pub rows: Vec<ProviderRow>,
     /// Provider adımının paylaşılan picker state'i (query, seçim, scroll).
     pub picker: PickerState,
+    // ── Task 8: adım içi durum ──
+    /// Category adımında seçilen kategori (Apply'a `category` olarak gider).
+    pub selected_category: Option<String>,
+    /// Apply onaylandı; sonuç (task result) beklenirken çift tetiklemeyi engeller.
+    pub apply_pending: bool,
+    /// BaseUrl adımı editörü + doğrulama hatası.
+    pub(crate) base_url_editor: LineEditor,
+    pub base_url_error: Option<String>,
+    /// Key adımı: liste cursor'ı + yeni key / env yazım modları + maskeli editör.
+    pub(crate) key_editor: LineEditor,
+    pub key_cursor: usize,
+    pub key_edit_mode: bool,
+    pub key_show: bool,
+    pub key_error: Option<String>,
+    pub(crate) env_editor: LineEditor,
+    pub env_edit_mode: bool,
+    /// Category adımı: satırlar (keychain kategorileri) + yeni kategori girişi.
+    pub category_rows: Vec<String>,
+    pub category_cursor: usize,
+    pub category_edit_mode: bool,
+    pub(crate) category_editor: LineEditor,
+    pub category_error: Option<String>,
+    /// Model adımı: manuel ID editörü + `/models` fetch durumu.
+    pub(crate) model_editor: LineEditor,
+    pub model_manual_mode: bool,
+    pub models_fetch_state: ModelFetchState,
 }
 
 impl ProviderConnectFlow {
@@ -125,6 +160,25 @@ impl ProviderConnectFlow {
             keychain_entries,
             rows,
             picker: PickerState::input_active(),
+            selected_category: None,
+            apply_pending: false,
+            base_url_editor: LineEditor::default(),
+            base_url_error: None,
+            key_editor: LineEditor::default(),
+            key_cursor: 0,
+            key_edit_mode: false,
+            key_show: false,
+            key_error: None,
+            env_editor: LineEditor::default(),
+            env_edit_mode: false,
+            category_rows: Vec::new(),
+            category_cursor: 0,
+            category_edit_mode: false,
+            category_editor: LineEditor::default(),
+            category_error: None,
+            model_editor: LineEditor::default(),
+            model_manual_mode: false,
+            models_fetch_state: ModelFetchState::Idle,
         }
     }
 
@@ -179,9 +233,12 @@ impl ProviderConnectFlow {
         });
         if row.is_custom {
             self.base_url_draft = base_url.unwrap_or_default();
+            self.base_url_editor.set_text(self.base_url_draft.clone());
+            self.base_url_error = None;
             self.step = ConnectStep::BaseUrl;
         } else {
             self.step = ConnectStep::Key;
+            self::key_input::enter_key_step(self);
         }
     }
 }
@@ -209,16 +266,22 @@ pub enum ConnectOutcome {
 /// Wizard input'u: adıma göre yönlendirir.
 ///
 /// - Provider: picker input'u (fuzzy, gezinme, Enter seç, Esc çık).
-/// - Diğer adımlar (Task 8 placeholder): yalnızca Esc → geri.
+/// - BaseUrl: URL editörü (Enter doğrula/ilerle, Esc geri).
+/// - Key: keychain listesi + maskeli yeni key girişi + env seçimi.
+/// - Category: kategori listesi + yeni kategori girişi.
+/// - Model: model picker (fuzzy) + manuel ID girişi.
+/// - Apply: Enter → `Apply` (modals katmanı aksiyon üretir), Esc → Model.
+/// - Done: Enter/Esc → `Cancel` (modal kapanır).
+/// - Error: Esc → Provider'a dön.
 pub fn handle_connect_input(flow: &mut ProviderConnectFlow, ev: &Event) -> ConnectOutcome {
     match flow.step {
         ConnectStep::Provider => handle_provider_step_input(flow, ev),
-        ConnectStep::BaseUrl
-        | ConnectStep::Key
-        | ConnectStep::Category
-        | ConnectStep::Model
-        | ConnectStep::Apply
-        | ConnectStep::Done => handle_placeholder_step_input(flow, ev),
+        ConnectStep::BaseUrl => self::key_input::handle_base_url_input(flow, ev),
+        ConnectStep::Key => self::key_input::handle_key_step_input(flow, ev),
+        ConnectStep::Category => self::key_input::handle_category_step_input(flow, ev),
+        ConnectStep::Model => self::model_select::handle_model_step_input(flow, ev),
+        ConnectStep::Apply => self::apply::handle_apply_input(flow, ev),
+        ConnectStep::Done => self::apply::handle_done_input(ev),
         ConnectStep::Error(_) => {
             // Hata ekranından Esc → provider listesine dön.
             if let Event::Key(key) = ev
@@ -277,35 +340,9 @@ fn handle_provider_step_input(flow: &mut ProviderConnectFlow, ev: &Event) -> Con
     }
 }
 
-/// Task 8 placeholder adımları: yalnızca Esc → geri (Provider'a dön).
-fn handle_placeholder_step_input(flow: &mut ProviderConnectFlow, ev: &Event) -> ConnectOutcome {
-    if let Event::Key(key) = ev
-        && key.kind == KeyEventKind::Press
-        && key.code == KeyCode::Esc
-    {
-        flow.step = ConnectStep::Provider;
-        return ConnectOutcome::Back;
-    }
-    ConnectOutcome::Nothing
-}
-
-/// Adım başlığı (placeholder render için).
-fn step_title(step: &ConnectStep) -> &'static str {
-    match step {
-        ConnectStep::Provider => "Provider",
-        ConnectStep::BaseUrl => "BaseUrl",
-        ConnectStep::Key => "Key",
-        ConnectStep::Category => "Category",
-        ConnectStep::Model => "Model",
-        ConnectStep::Apply => "Apply",
-        ConnectStep::Done => "Done",
-        ConnectStep::Error(_) => "Error",
-    }
-}
-
-/// Wizard'ı modal content alanına çizer. Provider adımı paylaşılan picker
-/// primitifleriyle (arama çubuğu + rozetli satırlar + scrollbar) çizilir;
-/// diğer adımlar ortalanmış placeholder metin üretir (Task 8 gerçek ekranlar).
+/// Wizard'ı modal content alanına çizer. Provider/Model adımları paylaşılan
+/// picker primitifleriyle (arama çubuğu + rozetli satırlar + scrollbar)
+/// çizilir; BaseUrl/Key/Category editör + liste; Apply/Done durum metni.
 pub fn render_connect_flow(
     buf: &mut Buffer,
     content: Rect,
@@ -314,23 +351,34 @@ pub fn render_connect_flow(
     theme: &crate::theme::Theme,
     flow: &mut ProviderConnectFlow,
 ) {
-    // Adımı klonla: placeholder arm'ları `flow`'u `&mut` almazken Provider
-    // arm'ı `&mut flow` ister — scrutinee borrow'u arm'lar arasında canlı
-    // tutmamak için klon üzerinden eşleşiriz (String yalnızca Error'da).
+    // Adımı klonla: bazı arm'lar `flow`'u `&mut` alırken scrutinee borrow'u
+    // arm'lar arasında canlı tutmamak için klon üzerinden eşleşiriz.
     let step = flow.step.clone();
     match step {
         ConnectStep::Provider => {
             render_provider_step(buf, content, inner_x, inner_width, theme, flow);
         }
+        ConnectStep::BaseUrl => {
+            self::key_input::render_base_url_step(buf, content, inner_x, inner_width, theme, flow);
+        }
+        ConnectStep::Key => {
+            self::key_input::render_key_step(buf, content, inner_x, inner_width, theme, flow);
+        }
+        ConnectStep::Category => {
+            self::key_input::render_category_step(buf, content, inner_x, inner_width, theme, flow);
+        }
+        ConnectStep::Model => {
+            self::model_select::render_model_step(buf, content, inner_x, inner_width, theme, flow);
+        }
+        ConnectStep::Apply => {
+            self::apply::render_apply_step(buf, content, inner_x, inner_width, theme, flow);
+        }
+        ConnectStep::Done => {
+            self::apply::render_done_step(buf, content, inner_x, inner_width, theme, flow);
+        }
         ConnectStep::Error(msg) => {
             render_placeholder_step(buf, content, theme, &format!("Hata: {msg}"));
         }
-        step => render_placeholder_step(
-            buf,
-            content,
-            theme,
-            &format!("Adim: {} \u{2014} Task 8", step_title(&step)),
-        ),
     }
 }
 
@@ -694,5 +742,116 @@ mod tests {
         assert_eq!(flow.key_mode, KeyMode::New);
         assert!(flow.draft_key.is_empty());
         assert!(flow.selected_model.is_none());
+    }
+
+    #[test]
+    fn full_wizard_chain_custom_provider() {
+        use crate::views::provider_picker::apply;
+        let mut flow = ProviderConnectFlow::new(empty_catalog(), vec![]);
+        // Provider (custom-openai) → BaseUrl.
+        let _ = handle_connect_input(&mut flow, &key_enter());
+        assert_eq!(flow.step, ConnectStep::BaseUrl);
+        assert_eq!(flow.base_url_draft, "https://api.openai.com/v1");
+        // BaseUrl (önerilen geçerli) → Key.
+        let _ = handle_connect_input(&mut flow, &key_enter());
+        assert_eq!(flow.step, ConnectStep::Key);
+        // Key: keychain yok → cursor 0 = "yeni key gir".
+        let _ = handle_connect_input(&mut flow, &key_enter());
+        assert!(flow.key_edit_mode);
+        for c in "sk-test-123".chars() {
+            let _ = handle_connect_input(&mut flow, &press(KeyCode::Char(c)));
+        }
+        assert!(flow.draft_key.is_empty(), "onay öncesi draft boş");
+        let out = handle_connect_input(&mut flow, &key_enter());
+        assert_eq!(out, ConnectOutcome::PickKeyMode(KeyMode::New));
+        assert_eq!(flow.step, ConnectStep::Category);
+        assert_eq!(flow.draft_key.as_str(), "sk-test-123");
+        // Category: default "personal" → Model.
+        let out = handle_connect_input(&mut flow, &key_enter());
+        assert_eq!(out, ConnectOutcome::Next);
+        assert_eq!(flow.step, ConnectStep::Model);
+        assert_eq!(flow.selected_category.as_deref(), Some("personal"));
+        // Model: boş liste (offline) → Enter manuel moda; ID gir → Apply.
+        let _ = handle_connect_input(&mut flow, &key_enter());
+        assert!(flow.model_manual_mode);
+        for c in "my-model".chars() {
+            let _ = handle_connect_input(&mut flow, &press(KeyCode::Char(c)));
+        }
+        let out = handle_connect_input(&mut flow, &key_enter());
+        assert_eq!(out, ConnectOutcome::PickModel("my-model".to_string()));
+        assert_eq!(flow.step, ConnectStep::Apply);
+        assert_eq!(flow.selected_model.as_deref(), Some("my-model"));
+        // Apply: Enter → Apply outcome; başarı simülasyonu → Done → Cancel.
+        let out = handle_connect_input(&mut flow, &key_enter());
+        assert_eq!(out, ConnectOutcome::Apply);
+        assert_eq!(flow.step, ConnectStep::Apply);
+        apply::apply_result(&mut flow, true, String::new());
+        assert_eq!(flow.step, ConnectStep::Done);
+        let out = handle_connect_input(&mut flow, &key_enter());
+        assert_eq!(out, ConnectOutcome::Cancel);
+    }
+
+    #[test]
+    fn back_navigation_returns_correctly() {
+        let mut flow = ProviderConnectFlow::new(empty_catalog(), vec![]);
+        // custom: Provider → BaseUrl → Key → Category → Model.
+        let _ = handle_connect_input(&mut flow, &key_enter());
+        assert_eq!(flow.step, ConnectStep::BaseUrl);
+        let _ = handle_connect_input(&mut flow, &key_enter());
+        assert_eq!(flow.step, ConnectStep::Key);
+        // Yeni key gir + onayla → Category.
+        let _ = handle_connect_input(&mut flow, &key_enter());
+        for c in "sk-x".chars() {
+            let _ = handle_connect_input(&mut flow, &press(KeyCode::Char(c)));
+        }
+        let _ = handle_connect_input(&mut flow, &key_enter());
+        assert_eq!(flow.step, ConnectStep::Category);
+        let _ = handle_connect_input(&mut flow, &key_enter());
+        assert_eq!(flow.step, ConnectStep::Model);
+        // Model ← Category ← Key ← BaseUrl ← Provider.
+        let out = handle_connect_input(&mut flow, &key_esc());
+        assert_eq!(out, ConnectOutcome::Back);
+        assert_eq!(flow.step, ConnectStep::Category);
+        let out = handle_connect_input(&mut flow, &key_esc());
+        assert_eq!(out, ConnectOutcome::Back);
+        assert_eq!(flow.step, ConnectStep::Key);
+        let out = handle_connect_input(&mut flow, &key_esc());
+        assert_eq!(out, ConnectOutcome::Back);
+        assert_eq!(flow.step, ConnectStep::BaseUrl);
+        let out = handle_connect_input(&mut flow, &key_esc());
+        assert_eq!(out, ConnectOutcome::Back);
+        assert_eq!(flow.step, ConnectStep::Provider);
+    }
+
+    #[test]
+    fn apply_esc_returns_to_model() {
+        let mut flow = ProviderConnectFlow::new(empty_catalog(), vec![]);
+        flow.step = ConnectStep::Apply;
+        flow.selected_model = Some("m".to_string());
+        let out = handle_connect_input(&mut flow, &key_esc());
+        assert_eq!(out, ConnectOutcome::Back);
+        assert_eq!(flow.step, ConnectStep::Model);
+        assert!(!flow.apply_pending);
+    }
+
+    #[test]
+    fn done_step_enter_closes_modal() {
+        let mut flow = ProviderConnectFlow::new(empty_catalog(), vec![]);
+        flow.step = ConnectStep::Done;
+        let out = handle_connect_input(&mut flow, &key_enter());
+        assert_eq!(out, ConnectOutcome::Cancel);
+    }
+
+    #[test]
+    fn model_step_enter_without_provider_does_not_panic() {
+        // selected_provider yokken Model adımına Enter → manuel moda geçer,
+        // adım değişmez (test: placeholder_steps_ignore_other_keys davranışı
+        // korunuyor; burada adım ilerlemesi beklenmez).
+        let mut flow = ProviderConnectFlow::new(empty_catalog(), vec![]);
+        flow.step = ConnectStep::Model;
+        let out = handle_connect_input(&mut flow, &key_enter());
+        assert_eq!(out, ConnectOutcome::Nothing);
+        assert_eq!(flow.step, ConnectStep::Model);
+        assert!(flow.model_manual_mode);
     }
 }

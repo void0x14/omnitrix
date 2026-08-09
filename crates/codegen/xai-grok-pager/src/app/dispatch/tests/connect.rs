@@ -4,8 +4,8 @@
 
 use super::*;
 use crate::app::dispatch::connect::{
-    dispatch_connect_provider, dispatch_keychain_borrow, dispatch_open_connect_picker,
-    dispatch_open_keys_manager,
+    dispatch_connect_provider, dispatch_fetch_provider_models, dispatch_keychain_borrow,
+    dispatch_open_connect_picker, dispatch_open_keys_manager,
 };
 use xai_grok_shell::auth::runtime_key;
 use xai_omni_keychain::{Keychain, KeychainOptions, MasterKeyTtl};
@@ -364,6 +364,408 @@ fn connect_provider_emits_switch_model_when_in_catalog() {
     assert!(
         has_switch,
         "active session must switch to the connected model"
+    );
+    runtime_key::clear_runtime_keys();
+}
+
+// ---------------------------------------------------------------------------
+// Task 8: wizard apply yolu (KeyMode + draft key + backend flow'dan)
+// ---------------------------------------------------------------------------
+
+use crate::views::provider_picker::{
+    ConnectStep, KeyMode, ProviderSelection,
+};
+use xai_grok_shell::sampling::ApiBackend;
+use zeroize::Zeroizing;
+
+/// Wizard'ı açıp flow'u Apply adımına hazırlar (custom provider + New key).
+fn wizard_at_apply(app: &mut AppView, key: &str) {
+    use crate::views::modal::ActiveModal;
+    use crate::views::provider_picker::{ConnectStep, KeyMode, ProviderConnectFlow, ProviderSelection};
+    let _ = dispatch_open_connect_picker(app);
+    let flow: &mut ProviderConnectFlow = match &mut app.agents.get_mut(&AgentId(0)).unwrap().active_modal
+    {
+        Some(ActiveModal::ProviderConnect { flow, .. }) => flow,
+        _ => panic!("ProviderConnect modal expected"),
+    };
+    flow.selected_provider = Some(ProviderSelection {
+        provider_id: "custom-openai".to_string(),
+        label: "Custom OpenAI".to_string(),
+        is_custom: true,
+        backend: ApiBackend::ChatCompletions,
+        base_url: Some("http://localhost:8000/v1".to_string()),
+        models: vec![],
+    });
+    flow.base_url_draft = "http://localhost:8000/v1".to_string();
+    flow.key_mode = KeyMode::New;
+    flow.draft_key = Zeroizing::new(key.to_string());
+    flow.selected_category = Some("personal".to_string());
+    flow.selected_model = Some("my-model".to_string());
+    flow.step = ConnectStep::Apply;
+    flow.apply_pending = true;
+}
+
+#[test]
+fn wizard_apply_new_key_uses_draft_and_emits_write() {
+    runtime_key::clear_runtime_keys();
+    let mut app = test_app();
+    wizard_at_apply(&mut app, "sk-wizard-draft");
+    let effects = dispatch_connect_provider(
+        &mut app,
+        "custom-openai".to_string(),
+        Some("personal".to_string()),
+        "my-model".to_string(),
+        Some("http://localhost:8000/v1".to_string()),
+    );
+    // Keychain kilitli (app.keychain None) → key oturumluk kullanılır.
+    assert_eq!(
+        runtime_key::runtime_model_key("my-model").as_deref(),
+        Some("sk-wizard-draft")
+    );
+    assert_eq!(effects.len(), 1);
+    match &effects[0] {
+        Effect::ConnectProviderWrite {
+            provider_id,
+            model_id,
+            model_key,
+            base_url,
+            api_backend,
+        } => {
+            assert_eq!(provider_id, "custom-openai");
+            assert_eq!(model_id, "my-model");
+            assert_eq!(model_key, "omni-custom-openai-my-model");
+            assert_eq!(base_url.as_deref(), Some("http://localhost:8000/v1"));
+            assert_eq!(*api_backend, Some(ApiBackend::ChatCompletions));
+        }
+        other => panic!("expected ConnectProviderWrite, got {other:?}"),
+    }
+    // Başarı toast'ı; flow Apply'de bekler (Done → ProviderConnectPersisted).
+    let toast = welcome_toast(&app).expect("success toast");
+    assert!(toast.contains("bağlandı: custom-openai / my-model"), "toast: {toast}");
+    let flow = match &app.agents[&AgentId(0)].active_modal {
+        Some(crate::views::modal::ActiveModal::ProviderConnect { flow, .. }) => flow,
+        _ => panic!("ProviderConnect modal expected"),
+    };
+    assert_eq!(flow.step, ConnectStep::Apply);
+    runtime_key::clear_runtime_keys();
+}
+
+#[test]
+fn wizard_apply_persist_result_moves_flow_to_done_or_error() {
+    runtime_key::clear_runtime_keys();
+    let mut app = test_app();
+    wizard_at_apply(&mut app, "sk-wizard-draft");
+    let _ = dispatch_connect_provider(
+        &mut app,
+        "custom-openai".to_string(),
+        Some("personal".to_string()),
+        "my-model".to_string(),
+        Some("http://localhost:8000/v1".to_string()),
+    );
+    // Kalıcılık başarılı → Done.
+    let _ = dispatch_task_result(
+        TaskResult::ProviderConnectPersisted {
+            provider_id: "custom-openai".to_string(),
+            model_id: "my-model".to_string(),
+            model_key: "omni-custom-openai-my-model".to_string(),
+            result: Ok(()),
+        },
+        &mut app,
+    );
+    let flow = match &app.agents[&AgentId(0)].active_modal {
+        Some(crate::views::modal::ActiveModal::ProviderConnect { flow, .. }) => flow,
+        _ => panic!("ProviderConnect modal expected"),
+    };
+    assert_eq!(flow.step, ConnectStep::Done, "kalıcılık başarısı → Done");
+    assert!(!flow.apply_pending);
+    runtime_key::clear_runtime_keys();
+}
+
+#[test]
+fn wizard_apply_persist_failure_moves_flow_to_error() {
+    runtime_key::clear_runtime_keys();
+    let mut app = test_app();
+    wizard_at_apply(&mut app, "sk-wizard-draft");
+    let _ = dispatch_connect_provider(
+        &mut app,
+        "custom-openai".to_string(),
+        Some("personal".to_string()),
+        "my-model".to_string(),
+        Some("http://localhost:8000/v1".to_string()),
+    );
+    let _ = dispatch_task_result(
+        TaskResult::ProviderConnectPersisted {
+            provider_id: "custom-openai".to_string(),
+            model_id: "my-model".to_string(),
+            model_key: "omni-custom-openai-my-model".to_string(),
+            result: Err("disk dolu".to_string()),
+        },
+        &mut app,
+    );
+    let flow = match &app.agents[&AgentId(0)].active_modal {
+        Some(crate::views::modal::ActiveModal::ProviderConnect { flow, .. }) => flow,
+        _ => panic!("ProviderConnect modal expected"),
+    };
+    assert_eq!(
+        flow.step,
+        ConnectStep::Error("bağlantı config'e yazılamadı: disk dolu".to_string()),
+        "kalıcılık hatası → Error"
+    );
+    // Runtime key bu oturumda yine de aktif.
+    assert_eq!(
+        runtime_key::runtime_model_key("my-model").as_deref(),
+        Some("sk-wizard-draft")
+    );
+    let toast = welcome_toast(&app).expect("error toast");
+    assert!(toast.contains("yazılamadı"), "toast: {toast}");
+    runtime_key::clear_runtime_keys();
+}
+
+#[test]
+fn wizard_apply_keychain_mode_borrows_by_id() {
+    runtime_key::clear_runtime_keys();
+    let (kc, key_id, _dir) = open_keychain_with_entry("custom-openai");
+    let mut app = test_app();
+    app.keychain = Some(kc);
+    let _ = dispatch_open_connect_picker(&mut app);
+    let flow = match &mut app.agents.get_mut(&AgentId(0)).unwrap().active_modal {
+        Some(crate::views::modal::ActiveModal::ProviderConnect { flow, .. }) => flow,
+        _ => panic!("ProviderConnect modal expected"),
+    };
+    flow.selected_provider = Some(ProviderSelection {
+        provider_id: "custom-openai".to_string(),
+        label: "Custom OpenAI".to_string(),
+        is_custom: true,
+        backend: ApiBackend::ChatCompletions,
+        base_url: Some("http://localhost:8000/v1".to_string()),
+        models: vec![],
+    });
+    flow.key_mode = KeyMode::Keychain(key_id.clone());
+    flow.selected_category = Some("personal".to_string());
+    flow.selected_model = Some("my-model".to_string());
+    flow.step = ConnectStep::Apply;
+
+    let effects = dispatch_connect_provider(
+        &mut app,
+        "custom-openai".to_string(),
+        Some("personal".to_string()),
+        "my-model".to_string(),
+        Some("http://localhost:8000/v1".to_string()),
+    );
+    assert_eq!(
+        runtime_key::runtime_model_key("my-model").as_deref(),
+        Some("sk-test-secret"),
+        "keychain kaydı id ile borrow edilir"
+    );
+    assert_eq!(effects.len(), 1);
+    let toast = welcome_toast(&app).expect("success toast");
+    assert!(toast.contains(&key_id), "toast: {toast}");
+    runtime_key::clear_runtime_keys();
+}
+
+#[test]
+fn wizard_apply_keychain_locked_reports_error_step() {
+    runtime_key::clear_runtime_keys();
+    let mut app = test_app();
+    let _ = dispatch_open_connect_picker(&mut app);
+    let flow = match &mut app.agents.get_mut(&AgentId(0)).unwrap().active_modal {
+        Some(crate::views::modal::ActiveModal::ProviderConnect { flow, .. }) => flow,
+        _ => panic!("ProviderConnect modal expected"),
+    };
+    flow.key_mode = KeyMode::Keychain("k_bulunamayan".to_string());
+    flow.step = ConnectStep::Apply;
+    let effects = dispatch_connect_provider(
+        &mut app,
+        "custom-openai".to_string(),
+        None,
+        "my-model".to_string(),
+        None,
+    );
+    assert!(effects.is_empty());
+    let flow = match &app.agents[&AgentId(0)].active_modal {
+        Some(crate::views::modal::ActiveModal::ProviderConnect { flow, .. }) => flow,
+        _ => panic!("ProviderConnect modal expected"),
+    };
+    assert!(
+        matches!(&flow.step, ConnectStep::Error(msg) if msg.contains("kilitli")),
+        "kilitli keychain → Error step, got {:?}",
+        flow.step
+    );
+    assert!(!flow.apply_pending);
+    runtime_key::clear_runtime_keys();
+}
+
+#[test]
+fn wizard_apply_env_mode_uses_environment() {
+    runtime_key::clear_runtime_keys();
+    let mut app = test_app();
+    // Ortamda kesinlikle olmayan bir değişken → Error step.
+    let _ = dispatch_open_connect_picker(&mut app);
+    let flow = match &mut app.agents.get_mut(&AgentId(0)).unwrap().active_modal {
+        Some(crate::views::modal::ActiveModal::ProviderConnect { flow, .. }) => flow,
+        _ => panic!("ProviderConnect modal expected"),
+    };
+    flow.key_mode = KeyMode::Env("OMNITRIX_ASLA_SET_OLMAYAN_VAR".to_string());
+    flow.step = ConnectStep::Apply;
+    let effects = dispatch_connect_provider(
+        &mut app,
+        "custom-openai".to_string(),
+        None,
+        "my-model".to_string(),
+        None,
+    );
+    assert!(effects.is_empty());
+    assert_eq!(runtime_key::runtime_model_key("my-model"), None);
+    let flow = match &app.agents[&AgentId(0)].active_modal {
+        Some(crate::views::modal::ActiveModal::ProviderConnect { flow, .. }) => flow,
+        _ => panic!("ProviderConnect modal expected"),
+    };
+    assert!(
+        matches!(&flow.step, ConnectStep::Error(msg) if msg.contains("set değil")),
+        "env yok → Error step, got {:?}",
+        flow.step
+    );
+    runtime_key::clear_runtime_keys();
+}
+
+#[test]
+fn wizard_apply_new_key_persists_to_keychain_when_open() {
+    runtime_key::clear_runtime_keys();
+    let (kc, _id, _dir) = open_keychain_with_entry("anthropic");
+    let mut app = test_app();
+    app.keychain = Some(kc);
+    wizard_at_apply(&mut app, "sk-kalici-yeni-key");
+    let effects = dispatch_connect_provider(
+        &mut app,
+        "custom-openai".to_string(),
+        Some("personal".to_string()),
+        "my-model".to_string(),
+        Some("http://localhost:8000/v1".to_string()),
+    );
+    assert_eq!(
+        runtime_key::runtime_model_key("my-model").as_deref(),
+        Some("sk-kalici-yeni-key")
+    );
+    // Yeni key keychain'e eklendi (RAM) ve borçlandı.
+    let entries = app.keychain.as_mut().unwrap().list_keys().expect("list");
+    let entry = entries
+        .iter()
+        .find(|e| e.provider_id == "custom-openai")
+        .expect("new entry added");
+    assert_eq!(entry.category, "personal");
+    assert_eq!(effects.len(), 1);
+    let toast = welcome_toast(&app).expect("success toast");
+    assert!(toast.contains("bağlandı: custom-openai / my-model"), "toast: {toast}");
+    runtime_key::clear_runtime_keys();
+}
+
+#[test]
+fn wizard_fetch_provider_models_dispatches_effect_with_key() {
+    runtime_key::clear_runtime_keys();
+    let mut app = test_app();
+    wizard_at_apply(&mut app, "sk-fetch-key");
+    // Apply'e girmeden önce Model adımındaymış gibi key çözümü test edilir.
+    let effects = dispatch_fetch_provider_models(&mut app, "http://localhost:8000/v1".to_string());
+    assert_eq!(effects.len(), 1);
+    match &effects[0] {
+        Effect::FetchProviderModels { base_url, api_key } => {
+            assert_eq!(base_url, "http://localhost:8000/v1");
+            assert_eq!(api_key.as_deref(), Some("sk-fetch-key"));
+        }
+        other => panic!("expected FetchProviderModels, got {other:?}"),
+    }
+    runtime_key::clear_runtime_keys();
+}
+
+#[test]
+fn wizard_fetch_provider_models_keychain_locked_marks_failed() {
+    runtime_key::clear_runtime_keys();
+    let mut app = test_app();
+    let _ = dispatch_open_connect_picker(&mut app);
+    let flow = match &mut app.agents.get_mut(&AgentId(0)).unwrap().active_modal {
+        Some(crate::views::modal::ActiveModal::ProviderConnect { flow, .. }) => flow,
+        _ => panic!("ProviderConnect modal expected"),
+    };
+    flow.key_mode = KeyMode::Keychain("k_yok".to_string());
+    flow.step = ConnectStep::Model;
+    let effects = dispatch_fetch_provider_models(&mut app, "http://localhost:8000/v1".to_string());
+    assert!(effects.is_empty(), "kilitliyken fetch efekti üretilmez");
+    let flow = match &app.agents[&AgentId(0)].active_modal {
+        Some(crate::views::modal::ActiveModal::ProviderConnect { flow, .. }) => flow,
+        _ => panic!("ProviderConnect modal expected"),
+    };
+    assert!(
+        matches!(
+            &flow.models_fetch_state,
+            crate::views::provider_picker::ModelFetchState::Failed(msg) if msg.contains("kilitli")
+        ),
+        "kilitli → Failed state"
+    );
+    runtime_key::clear_runtime_keys();
+}
+
+#[test]
+fn wizard_models_fetched_populates_list_when_in_model_step() {
+    use crate::views::provider_picker::ModelFetchState;
+    runtime_key::clear_runtime_keys();
+    let mut app = test_app();
+    wizard_at_apply(&mut app, "sk-x");
+    let flow = match &mut app.agents.get_mut(&AgentId(0)).unwrap().active_modal {
+        Some(crate::views::modal::ActiveModal::ProviderConnect { flow, .. }) => flow,
+        _ => panic!("ProviderConnect modal expected"),
+    };
+    flow.step = ConnectStep::Model;
+    flow.models_fetch_state = ModelFetchState::Fetching;
+    flow.selected_provider.as_mut().unwrap().models.clear();
+
+    let _ = dispatch_task_result(
+        TaskResult::ProviderModelsFetched {
+            base_url: "http://localhost:8000/v1".to_string(),
+            result: Ok(vec!["m1".to_string(), "m2".to_string()]),
+        },
+        &mut app,
+    );
+    let flow = match &app.agents[&AgentId(0)].active_modal {
+        Some(crate::views::modal::ActiveModal::ProviderConnect { flow, .. }) => flow,
+        _ => panic!("ProviderConnect modal expected"),
+    };
+    assert_eq!(flow.models_fetch_state, ModelFetchState::Loaded);
+    let sel = flow.selected_provider.as_ref().unwrap();
+    assert_eq!(sel.models.len(), 2);
+    assert_eq!(sel.models[0].id, "m1");
+    assert_eq!(sel.models[1].name, "m2");
+    runtime_key::clear_runtime_keys();
+}
+
+#[test]
+fn wizard_models_fetched_failure_marks_failed_hint() {
+    use crate::views::provider_picker::ModelFetchState;
+    runtime_key::clear_runtime_keys();
+    let mut app = test_app();
+    wizard_at_apply(&mut app, "sk-x");
+    let flow = match &mut app.agents.get_mut(&AgentId(0)).unwrap().active_modal {
+        Some(crate::views::modal::ActiveModal::ProviderConnect { flow, .. }) => flow,
+        _ => panic!("ProviderConnect modal expected"),
+    };
+    flow.step = ConnectStep::Model;
+    flow.models_fetch_state = ModelFetchState::Fetching;
+    let _ = dispatch_task_result(
+        TaskResult::ProviderModelsFetched {
+            base_url: "http://localhost:8000/v1".to_string(),
+            result: Err("HTTP 401".to_string()),
+        },
+        &mut app,
+    );
+    let flow = match &app.agents[&AgentId(0)].active_modal {
+        Some(crate::views::modal::ActiveModal::ProviderConnect { flow, .. }) => flow,
+        _ => panic!("ProviderConnect modal expected"),
+    };
+    assert!(
+        matches!(
+            &flow.models_fetch_state,
+            ModelFetchState::Failed(msg) if msg == "HTTP 401"
+        ),
+        "hata → Failed hint"
     );
     runtime_key::clear_runtime_keys();
 }
