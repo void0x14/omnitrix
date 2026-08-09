@@ -44,13 +44,18 @@ impl FlowCheckpointTool {
 }
 
 /// `Tool::id` için sabit kimlik.
+///
+/// I6: uretim yolunda `unwrap` / `expect` / `panic!` yoktur. Adaylar derleme
+/// aninda sabit statik dizelerdir ("flow_checkpoint"; bos degil,
+/// `[a-zA-Z0-9_-]+` biciminde) — kullanicidan gelen hicbir deger buradan
+/// gecmez; son hata dali gerceklesemez (computer_tool.rs deseni).
 fn tool_id() -> xai_tool_protocol::ToolId {
     static ID: std::sync::OnceLock<xai_tool_protocol::ToolId> = std::sync::OnceLock::new();
     ID.get_or_init(|| {
         xai_tool_protocol::ToolId::new("flow_checkpoint").unwrap_or_else(|_| {
             xai_tool_protocol::ToolId::new("flow_checkpoint_tool").unwrap_or_else(|_| {
                 xai_tool_protocol::ToolId::new("flow").unwrap_or_else(|_| {
-                    unreachable!("statik tool id adaylari gecerlidir")
+                    xai_tool_protocol::ToolId::new("flow_checkpoint_tool_fallback")
                 })
             })
         })

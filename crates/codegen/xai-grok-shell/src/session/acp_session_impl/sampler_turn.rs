@@ -216,7 +216,7 @@ impl SessionActor {
         // gizle — model yasak aracı "üretemez". (meta/All her aşamada açık.)
         self.flow_governor.lock().tool_definitions_filter(
             defs,
-            |d: &ToolDefinition| d.name.as_str(),
+            |d: &ToolDefinition| d.function.name.as_str(),
         )
     }
     pub(super) fn model_auth_facts(&self, model_id: &str) -> crate::agent::config::ModelAuthFacts {

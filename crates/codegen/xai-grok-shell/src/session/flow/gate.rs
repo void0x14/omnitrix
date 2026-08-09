@@ -23,7 +23,9 @@ pub fn tool_group_of(tool_id: &str) -> Option<ToolGroup> {
         "bash" | "opencode_bash" => ToolGroup::Bash,
         "web_search" | "web_fetch" => ToolGroup::Web,
         "grok_research" => ToolGroup::Research,
-        "grok_computer" => ToolGroup::Computer,
+        // client adi "computer" (agent_rebuild.rs register_mcp_tools("computer", ...));
+        // "grok_computer" geriye dönük aday olarak korunur.
+        "computer" | "grok_computer" => ToolGroup::Computer,
         "enter_plan_mode" | "exit_plan_mode" => ToolGroup::Plan,
         "task" | "task_output" | "wait_tasks" | "workflow" | "scheduler_create"
         | "scheduler_delete" | "scheduler_list" => ToolGroup::Task,

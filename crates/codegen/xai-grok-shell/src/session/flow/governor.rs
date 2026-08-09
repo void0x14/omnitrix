@@ -12,10 +12,10 @@ use parking_lot::Mutex;
 
 use super::classifier::{ClassifiedFlow, FlowClassifier, FlowRules, UserMode};
 use super::definition::{ArtifactId, FlowDefinition, StageId};
-use super::duration::{DurationDecision, FlowDurationSystem};
+use super::duration::FlowDurationSystem;
 use super::events::FlowEvents;
 use super::gate::FlowGate;
-use super::state::{FlowPhase, FlowStateMachine};
+use super::state::FlowStateMachine;
 use super::store::FlowStore;
 
 /// Checkpoint aracı ile session arasındaki paylaşımlı köprü.
@@ -158,9 +158,17 @@ impl FlowGovernor {
     }
 
     // ── C) stop gate danışmanı ────────────────────────────────────────────
-    /// Some(direktif) = KeepWorking (aşama kanıtı eksik), None = dur.
-    pub fn stop_decision(&mut self) -> Option<String> {
+    /// Bash komut denetimi (S4-bash): akış aktifse aşama kuralları uygulanır
+    /// (commit akışı: force/hard/push/reset vb. reddedilir). Akış yoksa Allow.
+    pub fn bash_verdict(&self, command: &str) -> super::gate::BashVerdict {
         if !self.is_active() {
+            return super::gate::BashVerdict::Allow;
+        }
+        super::gate::FlowGate::bash_command_allowed(command, &self.machine)
+    }
+
+    /// Some(direktif) = KeepWorking (aşama kanıtı eksik), None = dur.
+    pub fn stop_decision(&mut self) -> Option<String> {        if !self.is_active() {
             return None;
         }
         if self.machine.bump_redirect() {
@@ -182,7 +190,15 @@ impl FlowGovernor {
         }
         match self.machine.current_stage() {
             None => RoundVerdict::EndTurn,
-            Some(stage) => RoundVerdict::Continue(self.machine.stage_directive(stage).to_string()),
+            Some(stage) => {
+                // Kilit açma (deterministik): aşama başına 3 tur direktif; model
+                // flow_checkpoint çağırmazsa tur sonlandırılır (stop gate'e düşer).
+                if self.machine.bump_redirect() {
+                    RoundVerdict::Continue(self.machine.stage_directive(stage).to_string())
+                } else {
+                    RoundVerdict::EndTurn
+                }
+            }
         }
     }
 

@@ -945,6 +945,34 @@ impl SessionActor {
                 .await?;
             return Ok(Err(ToolLoop::Continue));
         }
+        // Flow Governor (S4-bash): bash komut kuralları — commit akışında
+        // force/hard/push/reset vb. reddedilir; aşama dışı git komutları da.
+        // (Derin koruma için mevcut CompiledPolicy ikinci savunma olarak kalır.)
+        if matches!(call.function.name.as_str(), "bash" | "opencode_bash") {
+            let command = raw_input
+                .get("command")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            if let crate::session::flow::gate::BashVerdict::Deny(reason) =
+                self.flow_governor.lock().bash_verdict(command)
+            {
+                tracing::info_span!(
+                    "tool.decision",
+                    tool_name = %call.function.name,
+                    tool_use_id = %call.id,
+                    decision = "deny",
+                    source = "flow_governor",
+                    wait_ms = 0_i64,
+                )
+                .in_scope(|| {});
+                let msg = format!(
+                    "<system-reminder>\nBash komutu akış kuralı tarafından reddedildi: {reason}\n</system-reminder>"
+                );
+                self.handle_tool_not_executed(&call.id, &tool_call_id, msg)
+                    .await?;
+                return Ok(Err(ToolLoop::Continue));
+            }
+        }
         let tool_call_display = self
             .send_tool_call_start(&tool_call_id, &call.function.name, tool_input.clone())
             .await;

@@ -480,7 +480,7 @@ async fn register_flow_checkpoint_tool(agent: &Agent) -> Result<(), String> {
     agent
         .tool_bridge()
         .register_mcp_tools(
-            "flow".to_owned(),
+            "flow_checkpoint".to_owned(),
             xai_grok_tools::flow_checkpoint::FlowCheckpointTool,
             None,
         )
