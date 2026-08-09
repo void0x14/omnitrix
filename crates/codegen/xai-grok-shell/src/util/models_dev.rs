@@ -139,7 +139,7 @@ pub fn write_cache(grok_home: &Path, cache: &CatalogCache) -> anyhow::Result<()>
 
 /// Cache-vs-network kararının sonucu.
 #[derive(Debug, PartialEq)]
-pub enum LoadDecision {
+pub(crate) enum LoadDecision {
     /// Cache yeterince taze — olduğu gibi kullan.
     UseCache(CatalogCache),
     /// Ağ fetch'i gerekli; `fallback`, başarısız fetch'te kullanılacak bayat
@@ -149,7 +149,7 @@ pub enum LoadDecision {
 
 /// Cache'in kullanılıp kullanılmayacağına karar ver. Saf fonksiyon; testler
 /// ağsız her dalı koşturabilir. `force_refresh` tazeliği yok sayar.
-pub fn decide_cache(cache: Option<CatalogCache>, force_refresh: bool) -> LoadDecision {
+pub(crate) fn decide_cache(cache: Option<CatalogCache>, force_refresh: bool) -> LoadDecision {
     match (cache, force_refresh) {
         (Some(cache), false) if is_fresh(cache.fetched_at) => LoadDecision::UseCache(cache),
         (cache, _) => LoadDecision::Fetch { fallback: cache },
