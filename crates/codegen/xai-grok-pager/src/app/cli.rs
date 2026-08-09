@@ -21,6 +21,10 @@ pub enum Command {
     Leader(LeaderMgmtArgs),
     /// Sign out and clear cached credentials
     Logout,
+    /// Connect a provider (interactive wizard) or configure via flags
+    Connect(ConnectArgs),
+    /// Manage the encrypted API key keychain
+    Keys(KeysArgs),
     /// Sign in to Grok
     Login {
         /// Ignored (kept for backwards compatibility). OAuth2 is now the only auth method.
@@ -249,6 +253,90 @@ pub struct WorkspaceStartArgs {
     #[arg(long)]
     pub json: bool,
 }
+/// Arguments for the `connect` subcommand: wire a provider into
+/// config.toml and store its API key in the encrypted keychain.
+#[derive(Debug, Clone, clap::Args)]
+pub struct ConnectArgs {
+    /// Provider id from models.dev (e.g. openai, anthropic, deepseek)
+    #[arg(long)]
+    pub provider: Option<String>,
+    /// API key to store in the keychain
+    #[arg(long)]
+    pub api_key: Option<String>,
+    /// Base URL for a custom OpenAI/Anthropic-compatible endpoint
+    #[arg(long)]
+    pub base_url: Option<String>,
+    /// Model id to select after connecting
+    #[arg(long)]
+    pub model: Option<String>,
+    /// Use an existing keychain entry by id
+    #[arg(long)]
+    pub keychain_id: Option<String>,
+    /// Keychain category (default: keychain default category)
+    #[arg(long)]
+    pub category: Option<String>,
+    /// Do not start an agent session; only persist config
+    #[arg(long)]
+    pub no_session: bool,
+}
+/// Arguments for the `keys` subcommand.
+#[derive(Debug, Clone, clap::Args)]
+pub struct KeysArgs {
+    #[command(subcommand)]
+    pub command: KeysCommand,
+}
+/// Keychain management sub-subcommands.
+#[derive(Debug, Clone, clap::Subcommand)]
+pub enum KeysCommand {
+    /// List keychain entries (masked)
+    List,
+    /// Reveal a full key (requires master password)
+    Show { id: String },
+    /// Add a key (prompts for values)
+    Add {
+        #[arg(long)]
+        category: Option<String>,
+        #[arg(long)]
+        provider: String,
+        #[arg(long)]
+        api_key: Option<String>,
+        #[arg(long)]
+        model: Option<String>,
+        #[arg(long)]
+        base_url: Option<String>,
+    },
+    /// Edit a key entry
+    Edit {
+        id: String,
+        #[arg(long)]
+        model: Option<String>,
+        #[arg(long)]
+        base_url: Option<String>,
+        #[arg(long)]
+        api_key: Option<String>,
+        #[arg(long)]
+        category: Option<String>,
+    },
+    /// Remove a key entry
+    Remove { id: String },
+    /// Export keys to an encrypted .omx file
+    Export {
+        /// File path (default: ~/.grok/keychain-export-<ts>.omx)
+        path: Option<PathBuf>,
+        /// Only export this category (repeatable)
+        #[arg(long)]
+        category: Vec<String>,
+    },
+    /// Import keys from an encrypted .omx file
+    Import {
+        path: PathBuf,
+        /// Overwrite conflicting (category, provider) entries
+        #[arg(long)]
+        overwrite: bool,
+    },
+    /// List keychain categories
+    Categories,
+}
 /// Arguments for the `agent` subcommand.
 #[derive(Debug, clap::Args, Clone)]
 pub struct AgentArgs {
@@ -262,6 +350,21 @@ pub struct AgentArgs {
     /// Model ID to use
     #[arg(short = 'm', long = "model", value_name = "MODEL")]
     pub model: Option<String>,
+    /// Provider id from models.dev to use for this session
+    #[arg(long = "provider", value_name = "PROVIDER")]
+    pub provider: Option<String>,
+    /// API key for the selected provider (stored encrypted in the keychain)
+    #[arg(long = "api-key", value_name = "KEY")]
+    pub api_key: Option<String>,
+    /// Base URL override for a custom OpenAI/Anthropic-compatible endpoint
+    #[arg(long = "base-url", value_name = "URL")]
+    pub base_url: Option<String>,
+    /// Use an existing keychain entry by id for this session
+    #[arg(long = "keychain-id", value_name = "KEY_ID")]
+    pub keychain_id: Option<String>,
+    /// Keychain category to store/read the provider key
+    #[arg(long = "category", value_name = "CATEGORY")]
+    pub category: Option<String>,
     /// Reasoning effort for reasoning models
     #[clap(
         long = "reasoning-effort",
@@ -1406,5 +1509,209 @@ mod tests {
             panic!("expected agent subcommand");
         };
         assert_eq!(agent.reasoning_effort.as_deref(), Some("max"));
+    }
+    #[test]
+    fn connect_parses_flags_and_bare() {
+        let bare = PagerArgs::try_parse_from(["grok", "connect"]).expect("bare connect parses");
+        assert!(matches!(
+            bare.command,
+            Some(Command::Connect(ConnectArgs {
+                provider: None,
+                api_key: None,
+                base_url: None,
+                model: None,
+                keychain_id: None,
+                category: None,
+                no_session: false,
+            }))
+        ));
+        let full = PagerArgs::try_parse_from([
+            "grok",
+            "connect",
+            "--provider",
+            "openai",
+            "--api-key",
+            "sk-test",
+            "--base-url",
+            "https://gateway.example/v1",
+            "--model",
+            "gpt-4o",
+            "--keychain-id",
+            "k_1234",
+            "--category",
+            "work",
+            "--no-session",
+        ])
+        .expect("connect flags parse");
+        assert!(matches!(
+            full.command,
+            Some(Command::Connect(ConnectArgs {
+                provider: Some(ref p),
+                api_key: Some(ref k),
+                base_url: Some(ref b),
+                model: Some(ref m),
+                keychain_id: Some(ref kid),
+                category: Some(ref c),
+                no_session: true,
+            })) if p == "openai" && k == "sk-test" && b == "https://gateway.example/v1"
+                && m == "gpt-4o" && kid == "k_1234" && c == "work"
+        ));
+    }
+    #[test]
+    fn keys_subcommands_parse() {
+        let list = PagerArgs::try_parse_from(["grok", "keys", "list"]).expect("keys list parses");
+        assert!(matches!(
+            list.command,
+            Some(Command::Keys(KeysArgs {
+                command: KeysCommand::List,
+            }))
+        ));
+        let show = PagerArgs::try_parse_from(["grok", "keys", "show", "k_abc"])
+            .expect("keys show parses");
+        assert!(matches!(
+            show.command,
+            Some(Command::Keys(KeysArgs {
+                command: KeysCommand::Show { id },
+            })) if id == "k_abc"
+        ));
+        let add = PagerArgs::try_parse_from([
+            "grok",
+            "keys",
+            "add",
+            "--provider",
+            "openai",
+            "--api-key",
+            "sk-x",
+            "--category",
+            "work",
+            "--model",
+            "gpt-5",
+            "--base-url",
+            "https://api.openai.com/v1",
+        ])
+        .expect("keys add parses");
+        assert!(matches!(
+            add.command,
+            Some(Command::Keys(KeysArgs {
+                command: KeysCommand::Add {
+                    category: Some(ref c),
+                    provider: ref p,
+                    api_key: Some(ref k),
+                    model: Some(ref m),
+                    base_url: Some(ref b),
+                },
+            })) if c == "work" && p == "openai" && k == "sk-x" && m == "gpt-5" && b == "https://api.openai.com/v1"
+        ));
+        let edit = PagerArgs::try_parse_from([
+            "grok",
+            "keys",
+            "edit",
+            "k_1",
+            "--model",
+            "gpt-4o",
+            "--base-url",
+            "https://x/v1",
+            "--api-key",
+            "sk-y",
+            "--category",
+            "personal",
+        ])
+        .expect("keys edit parses");
+        assert!(matches!(
+            edit.command,
+            Some(Command::Keys(KeysArgs {
+                command: KeysCommand::Edit {
+                    id,
+                    model: Some(ref m),
+                    base_url: Some(ref b),
+                    api_key: Some(ref k),
+                    category: Some(ref c),
+                },
+            })) if id == "k_1" && m == "gpt-4o" && b == "https://x/v1" && k == "sk-y" && c == "personal"
+        ));
+        let remove = PagerArgs::try_parse_from(["grok", "keys", "remove", "k_1"])
+            .expect("keys remove parses");
+        assert!(matches!(
+            remove.command,
+            Some(Command::Keys(KeysArgs {
+                command: KeysCommand::Remove { id },
+            })) if id == "k_1"
+        ));
+        let export = PagerArgs::try_parse_from([
+            "grok",
+            "keys",
+            "export",
+            "/tmp/out.omx",
+            "--category",
+            "work",
+            "--category",
+            "personal",
+        ])
+        .expect("keys export parses");
+        assert!(matches!(
+            export.command,
+            Some(Command::Keys(KeysArgs {
+                command: KeysCommand::Export {
+                    path: Some(ref p),
+                    category: ref cats,
+                },
+            })) if p == std::path::Path::new("/tmp/out.omx") && cats == &["work".to_string(), "personal".to_string()]
+        ));
+        let import = PagerArgs::try_parse_from(["grok", "keys", "import", "/tmp/in.omx", "--overwrite"])
+            .expect("keys import parses");
+        assert!(matches!(
+            import.command,
+            Some(Command::Keys(KeysArgs {
+                command: KeysCommand::Import { path, overwrite: true },
+            })) if path == std::path::PathBuf::from("/tmp/in.omx")
+        ));
+        let categories = PagerArgs::try_parse_from(["grok", "keys", "categories"])
+            .expect("keys categories parses");
+        assert!(matches!(
+            categories.command,
+            Some(Command::Keys(KeysArgs {
+                command: KeysCommand::Categories,
+            }))
+        ));
+        assert!(PagerArgs::try_parse_from(["grok", "keys"]).is_err(), "bare keys must fail");
+    }
+    #[test]
+    fn agent_args_omni_provider_flags_parse() {
+        let args = PagerArgs::try_parse_from([
+            "grok",
+            "agent",
+            "--provider",
+            "openai",
+            "--api-key",
+            "sk-test",
+            "--base-url",
+            "https://gateway.example/v1",
+            "--keychain-id",
+            "k_999",
+            "--category",
+            "work",
+        ])
+        .expect("agent omni flags parse");
+        let Command::Agent(agent) = args.command.expect("agent subcommand") else {
+            panic!("expected agent subcommand");
+        };
+        assert_eq!(agent.provider.as_deref(), Some("openai"));
+        assert_eq!(agent.api_key.as_deref(), Some("sk-test"));
+        assert_eq!(agent.base_url.as_deref(), Some("https://gateway.example/v1"));
+        assert_eq!(agent.keychain_id.as_deref(), Some("k_999"));
+        assert_eq!(agent.category.as_deref(), Some("work"));
+        assert!(agent.model.is_none(), "unrelated model flag must stay unset");
+    }
+    #[test]
+    fn agent_args_omni_flags_default_to_none() {
+        let args = PagerArgs::try_parse_from(["grok", "agent"]).expect("bare agent parses");
+        let Command::Agent(agent) = args.command.expect("agent subcommand") else {
+            panic!("expected agent subcommand");
+        };
+        assert!(agent.provider.is_none());
+        assert!(agent.api_key.is_none());
+        assert!(agent.base_url.is_none());
+        assert!(agent.keychain_id.is_none());
+        assert!(agent.category.is_none());
     }
 }
