@@ -1330,6 +1330,17 @@ impl SessionActor {
     }
 
     pub(super) async fn run_goal_round_end(&self) -> GoalRoundDecision {
+        // Flow Governor (S5): akış aktifken AI-güdümlü goal döngüsü devre dışı;
+        // devam kararını akış durum makinesi verir (deterministik).
+        {
+            use crate::session::flow::governor::RoundVerdict;
+            match self.flow_governor.lock().round_decision() {
+                RoundVerdict::EndTurn => return GoalRoundDecision::EndTurn,
+                RoundVerdict::Continue(directive) => {
+                    return GoalRoundDecision::Continue(directive);
+                }
+            }
+        }
         use crate::session::goal_evaluator::GoalEvaluatorDecision;
         if !laziness_injection_active(
             self.goal_harness_enabled(),

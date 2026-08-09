@@ -2314,6 +2314,35 @@ impl SessionActor {
                 pdf.total_pages,
             );
         }
+        // Flow Governor (S6): aşama kanıtı + checkpoint kararı. flow_checkpoint
+        // aracının yankıladığı metin, gerçek karar metniyle değiştirilir;
+        // model yalnızca gerçek kararı görür (echo'ya değil).
+        if effective_tool_name == "flow_checkpoint" {
+            let stage = tool_parsed_args
+                .get("stage")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            let summary = tool_parsed_args
+                .get("summary")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            let files = tool_parsed_args
+                .get("files")
+                .and_then(|v| v.as_array())
+                .map(|arr| {
+                    arr.iter()
+                        .filter_map(|v| v.as_str().map(str::to_string))
+                        .collect()
+                })
+                .unwrap_or_default();
+            prompt_text = self
+                .flow_governor
+                .lock()
+                .process_checkpoint_call(&stage, &summary, files);
+        }
+        self.flow_governor.lock().on_tool_success(effective_tool_name);
         let tool_chat = if inline_images.is_empty() {
             ConversationItem::tool_result(call_id.to_string(), prompt_text)
         } else {
