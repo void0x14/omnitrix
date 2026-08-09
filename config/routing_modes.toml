@@ -1,0 +1,1072 @@
+# config/routing_modes.toml — RoutingModeDef kataloğu (P1.2)
+#
+# Okuyan: crates/codegen/xai-grok-shell/src/util/routing_catalog.rs
+# Kaynak: .superpowers/sdd/routing-research.md (P1.1, 65 unique ID)
+#
+# Şema:
+#   [[modes]]                          # her kayıt bir routing modu
+#     id         = "<unique-id>"       # zorunlu, boş olamaz, katalog içinde unique
+#     family     = "<aile>"            # zorunlu: Balance | Failover | RoleSplit | Hybrid | Specialty | Cost | Privacy
+#     class      = "<sınıf>"           # zorunlu: primitive | policy | composition
+#                                      #   primitive   -> tek seçim kuralı (SelectorKind::Primitive)
+#                                      #   policy      -> koşullu tetikleyici-kısıt (SelectorKind::Policy)
+#                                      #   composition -> seçici + policy veya öğrenilmiş/dış sistem (SelectorKind::Composite)
+#     selector   = "<tanımlayıcı>"     # zorunlu: P1.3'te SelectorKind ile birlikte somut implementasyona eşlenir
+#     title      = "<kısa başlık>"     # zorunlu
+#     blurb      = "<1 cümle>"         # zorunlu; TUI picker
+#     long_help  = "<uzun yardım>"     # zorunlu; `/routing help <id>`
+#     [[modes.params]]                 # opsiyonel parametre şeması (ModeParams)
+#       name     = "<param adı>"
+#       type     = "<bool|number|string|list|map>"
+#       optional = true|false          # varsayılan: true
+#       default  = "<string gösterim>" # opsiyonel
+#       help     = "<açıklama>"        # opsiyonel
+#
+# Katalog veridir: model adı veya fiyat literal'i İÇERMEZ (uygulama mantığından
+# ayrık tutulur; değerler çalışma zamanında kullanıcı/endpoint verisinden gelir).
+
+# ---------------------------------------------------------------------------
+# Balance (13) — yük dağıtımı
+# ---------------------------------------------------------------------------
+
+[[modes]]
+id = "rr"
+family = "Balance"
+class = "primitive"
+selector = "round_robin"
+title = "Round Robin"
+blurb = "Sağlıklı endpoint'lere sırayla gönderir, listeyi döngüsel dolaşır."
+long_help = "Sıradaki sağlıklı endpoint'e sırayla yönlendirir; liste sonuna gelince başa döner. Dağıtık sayaç gerektirmez, tekrarlanabilir sıralama sağlar ve eşit yük dağılımı için en basit başlangıç noktasıdır."
+
+[[modes]]
+id = "wrr"
+family = "Balance"
+class = "primitive"
+selector = "weighted_round_robin"
+title = "Ağırlıklı Round Robin"
+blurb = "Endpoint'lere ağırlık verir, ağırlık oranında weighted seçim yapar."
+long_help = "Her endpoint'e bir ağırlık atanır; seçim olasılığı ağırlıkla orantılıdır. Kapasite farkı olan havuzlarda round robin'i dengeler; ağırlıklar çalışma zamanında endpoint meta verisinden (limit/ölçüm) türetilebilir."
+[[modes.params]]
+name = "weights"
+type = "map"
+optional = true
+default = "{}"
+help = "Endpoint → ağırlık haritası; boşsa eşit ağırlık."
+
+[[modes]]
+id = "random"
+family = "Balance"
+class = "primitive"
+selector = "uniform_random"
+title = "Uniform Random"
+blurb = "Sağlıklı havuzdan eşit olasılıkla rastgele endpoint seçer."
+long_help = "Sağlıklı endpoint havuzundan uniform dağılımla rastgele seçim yapar. Sıra/state gerektirmez; trafiği doğal olarak yayar ancak performans veya maliyet sinyali kullanmaz."
+
+[[modes]]
+id = "least-busy"
+family = "Balance"
+class = "primitive"
+selector = "least_in_flight"
+title = "En Az Meşgul"
+blurb = "Anlık en az in-flight isteği olan endpoint'e yönlendirir."
+long_help = "Her endpoint için süren istek sayısını izler ve en az yüklü olanı seçer. Kuyruk derinliğini dengeleyerek uzun süren isteklerin tek endpoint'e yığılmasını önler."
+
+[[modes]]
+id = "ewma-latency"
+family = "Balance"
+class = "primitive"
+selector = "ewma_latency"
+title = "EWMA Gecikme"
+blurb = "Kayıtlı yanıt süresi geçmişinin ortalaması en düşük endpoint'i seçer."
+long_help = "Yanıt süresi ölçümlerini üstel ağırlıklı hareketli ortalama (EWMA) ile izler ve en düşük ortalamaya sahip endpoint'i seçer. Akış modunda ilk token süresi (TTFT) ölçümü kullanılır; ani dalgalanmalara karşı yumuşatılmıştır."
+[[modes.params]]
+name = "decay"
+type = "number"
+optional = true
+default = "0.5"
+help = "EWMA yumuşatma katsayısı (0-1); yüksek değer yeni ölçümlere daha hızlı tepki verir."
+
+[[modes]]
+id = "latency-buffer"
+family = "Balance"
+class = "primitive"
+selector = "latency_buffer"
+title = "Gecikme Tamponu"
+blurb = "En hızlının buffer eşiği yakınındaki endpoint'lere rastgele dağıtır."
+long_help = "En düşük gecikmeli endpoint'in buffer oranı yakınına düşen adaylara random dağıtım yapar. Tek en hızlı kutuya yüklenmeyi önlerken gecikmeyi en iyiye yakın tutar; limit aşımı olan adaylar elenir."
+[[modes.params]]
+name = "buffer_ratio"
+type = "number"
+optional = true
+default = "0.5"
+help = "En hızlının bu oranı kadar yakınındaki adaylar havuza girer (0-1)."
+
+[[modes]]
+id = "usage-based-tpm"
+family = "Balance"
+class = "primitive"
+selector = "lowest_tpm"
+title = "Kullanıma Göre (TPM)"
+blurb = "Dakikalık sayaçlarla en düşük TPM kullanımlı, kota limitini aşmayacak endpoint'i seçer."
+long_help = "Dakikalık token sayacıyla en düşük kullanımı olan, kota limitini aşmayacak endpoint'i seçer. Rastgelelik yoktur; ilk uygun aday kazanır ve böylece kotaya dayalı kullanım dengelenir."
+[[modes.params]]
+name = "window_minutes"
+type = "number"
+optional = true
+default = "1"
+help = "Kullanım sayacının penceresi (dakika)."
+[[modes.params]]
+name = "max_tpm"
+type = "number"
+optional = false
+help = "Endpoint başına dakikalık token tavanı."
+
+[[modes]]
+id = "usage-based-v2"
+family = "Balance"
+class = "primitive"
+selector = "usage_headroom"
+title = "Kullanıma Göre (v2)"
+blurb = "TPM/RPM headroom'unu daha dengeli kullanan gelişmiş kullanım stratejisi."
+long_help = "Token ve istek sayaçlarını birlikte değerlendirir; kalan kotası en yüksek endpoint'i seçerek tüketimi hem TPM hem RPM ekseninde dengeler. Yüksek hacimli çok endpoint'li havuzlarda v1'e göre daha düzgün dağılım sağlar."
+[[modes.params]]
+name = "window_minutes"
+type = "number"
+optional = true
+default = "1"
+help = "Kullanım sayacının penceresi (dakika)."
+[[modes.params]]
+name = "max_tpm"
+type = "number"
+optional = true
+help = "Endpoint başına dakikalık token tavanı."
+[[modes.params]]
+name = "max_rpm"
+type = "number"
+optional = true
+help = "Endpoint başına dakikalık istek tavanı."
+
+[[modes]]
+id = "rate-limit-aware"
+family = "Balance"
+class = "primitive"
+selector = "rate_limit_filter"
+title = "Limit Bilinçli Seçici"
+blurb = "Endpoint rpm/tpm limitlerini istek öncesi kontrol edip aşacak adayları eler."
+long_help = "Seçim yapmadan önce endpoint'lerin rpm/tpm limitlerini istek başına tahmini tüketimle karşılaştırır; sınırı aşacak adaylar aday havuzundan elenir. Rate-limit hatalarını kaynağında azaltır."
+
+[[modes]]
+id = "token-bucket-fair"
+family = "Balance"
+class = "primitive"
+selector = "token_bucket"
+title = "Token Bucket Adalet"
+blurb = "Her endpoint'e token-bucket havuzu verir, boş bucket'ları atlar."
+long_help = "Her endpoint'e ayrı token-bucket havuzu tutar; havuzu boşalan aday seçime giremez. Sınırlı kotaya sahip endpoint'lerin trafiği tekelleştirmesini engeller ve uzun vadede kullanım ahlakını dengeler."
+
+[[modes]]
+id = "sticky-session"
+family = "Balance"
+class = "policy"
+selector = "sticky"
+title = "Oturum Sabitleme"
+blurb = "Aynı oturum/prompt-hash'i aynı endpoint'e sabitler."
+long_help = "Aynı oturum tanımı (oturum kimliği veya prompt özeti) her zaman aynı endpoint'e yönlendirilir. Önbellek yakınlığı ve tekrarlanabilir davranış sağlar; dağıtık kurulumda paylaşılan durum gerektirir."
+[[modes.params]]
+name = "sticky_ttl"
+type = "number"
+optional = true
+default = "300"
+help = "Sabitlemenin geçerlilik süresi (saniye)."
+[[modes.params]]
+name = "hash_key"
+type = "string"
+optional = true
+help = "Sabitleme anahtarı (ör. session_id); varsayılan prompt özeti."
+
+[[modes]]
+id = "hash-prompt"
+family = "Balance"
+class = "primitive"
+selector = "consistent_hash"
+title = "Prompt Hash"
+blurb = "Prompt özeti üzerinden deterministik endpoint seçer."
+long_help = "Prompt içeriğinin özetini alır ve consistent hashing ile endpoint seçer; aynı prompt her zaman aynı endpoint'e gider. Test tekrarlanabilirliği ve önbellek yakınlığı için kullanılır; ring boyutu parametriktir."
+[[modes.params]]
+name = "hash_ring_points"
+type = "number"
+optional = true
+default = "1000"
+help = "Consistent hash halkasındaki sanal nokta sayısı."
+
+[[modes]]
+id = "model-group-alias"
+family = "Balance"
+class = "policy"
+selector = "alias_map"
+title = "Model Grubu Alias"
+blurb = "Bir model grubu isteğini başka bir gruba yönlendiren alias haritası."
+long_help = "İstekteki model grubu adını yapılandırılmış bir alias tablosu üzerinden başka bir gruba eşler. Böylece istemci kodunu değiştirmeden model grubu yönlendirmesi yapılabilir; eşleşme yoksa istek orijinal adıyla gider."
+[[modes.params]]
+name = "aliases"
+type = "map"
+optional = false
+help = "Kaynak grup → hedef grup eşlemesi."
+
+# ---------------------------------------------------------------------------
+# Failover (12) — hata/kesinti kaskadları
+# ---------------------------------------------------------------------------
+
+[[modes]]
+id = "fallback-strict"
+family = "Failover"
+class = "policy"
+selector = "ordered_fallback"
+title = "Katı Fallback"
+blurb = "Öncelik sıralı zinciri sırayla dener, ilk başarıda durur."
+long_help = "Öncelik sıralı endpoint listesini sırayla yürür ve ilk başarılı cevapta durur. Liste yalnızca bir kez taranır; son aday da başarısızsa istek hata döner. Kademeli hizmet düşüşü (tier kaskadı) için temel yapı taşıdır."
+[[modes.params]]
+name = "max_fallbacks"
+type = "number"
+optional = true
+default = "5"
+help = "En fazla kaç fallback adımı deneneceği."
+
+[[modes]]
+id = "fallback-soft"
+family = "Failover"
+class = "policy"
+selector = "classified_fallback"
+title = "Yumuşak Fallback"
+blurb = "Yalnızca sınıflandırılmış hatalarda fallback yapar; malformed istek geri döner."
+long_help = "Fallback yalnızca sınıflandırılmış hata tiplerinde (limit, kesinti, bağlam aşımı, içerik ihlali) tetiklenir. Hatalı istek (malformed) asla fallback başlatmaz ve hata doğrudan çağrıcıya döner; bozuk 200 cevapları da fallback sayılmaz."
+[[modes.params]]
+name = "max_fallbacks"
+type = "number"
+optional = true
+default = "5"
+help = "En fazla kaç fallback adımı deneneceği."
+[[modes.params]]
+name = "classified_errors"
+type = "list"
+optional = true
+default = "[\"429\",\"5xx\",\"context\",\"moderation\"]"
+help = "Fallback tetikleyen hata sınıfları."
+
+[[modes]]
+id = "backup-only-on-429"
+family = "Failover"
+class = "policy"
+selector = "rate_limit_fallback"
+title = "Yalnızca 429 Yedeği"
+blurb = "Yalnızca rate-limit hatalarında yedek endpoint zincirine geçer."
+long_help = "Rate-limit (429) dışındaki hatalarda normal akış değişmez; yalnızca 429'da yedek zincir devreye girer. Limit odaklı senaryolarda gereksiz failover'ı önler ve asıl kesintilerin üst katmana taşınmasını sağlar."
+[[modes.params]]
+name = "backup_order"
+type = "list"
+optional = true
+help = "429'da denenecek yedek endpoint sırası."
+
+[[modes]]
+id = "backup-on-5xx"
+family = "Failover"
+class = "policy"
+selector = "server_error_fallback"
+title = "5xx Yedeği"
+blurb = "Yalnızca sunucu hatası (5xx) durumunda yedeklere geçer."
+long_help = "5xx sınıfı sunucu hatalarında yedek zincir devreye girer; diğer hatalar standart akışta kalır. Sunucu çökmesi senaryolarında ikinci provider'a hızlı geçiş sağlar."
+[[modes.params]]
+name = "backup_order"
+type = "list"
+optional = true
+help = "5xx'te denenecek yedek endpoint sırası."
+
+[[modes]]
+id = "circuit-break-cascade"
+family = "Failover"
+class = "policy"
+selector = "circuit_breaker"
+title = "Devre Kesici Kaskadı"
+blurb = "Hata eşiği aşılınca endpoint'i cooldown boyunca havuzdan çıkarır."
+long_help = "Pencere içinde izin verilen hata sayısı aşılınca endpoint cooldown süresi boyunca aday havuzundan çıkarılır; kalan sağlıklı endpoint'lerle kaskad devam eder. Aşırı hatalı endpoint'lere trafik göndermeyi engeller."
+[[modes.params]]
+name = "allowed_fails"
+type = "number"
+optional = true
+default = "3"
+help = "Pencere başına izin verilen hata sayısı."
+[[modes.params]]
+name = "cooldown_secs"
+type = "number"
+optional = true
+default = "5"
+help = "Endpoint'in havuzdan çıkarılacağı süre (saniye)."
+
+[[modes]]
+id = "provider-failover"
+family = "Failover"
+class = "policy"
+selector = "provider_failover"
+title = "Provider Failover"
+blurb = "Aynı modeli farklı provider'da canlı tutar; 5xx/429'da diğerine düşer."
+long_help = "Aynı modelin birden çok provider'daki kopyalarını izler; son ölçüm penceresinde önemli kesinti yaşayan provider'lar öncelikten düşer ve 5xx/429'da otomatik olarak diğer provider'a geçilir."
+[[modes.params]]
+name = "allow_fallbacks"
+type = "bool"
+optional = true
+default = "true"
+help = "Provider failover'ın açık/kapalı olması."
+[[modes.params]]
+name = "outage_deprioritize_secs"
+type = "number"
+optional = true
+default = "30"
+help = "Kesinti yaşayan provider'ın öncelikten düştüğü pencere (saniye)."
+
+[[modes]]
+id = "order-level-fallback"
+family = "Failover"
+class = "policy"
+selector = "order_level_fallback"
+title = "Seviye Sıralı Fallback"
+blurb = "Order seviyelerinde dener; seviye tamamen fail edince sonraki seviyeye geçer."
+long_help = "Endpoint'ler order seviyelerine ayrılır; mevcut seviyedeki tüm adaylar başarısız olunca bir sonraki seviyeye geçilir. Seviyeler arası geçiş tektir (geri dönüş yok) ve seviye içi denemeler bağımsız stratejiyle çalışabilir."
+[[modes.params]]
+name = "order_groups"
+type = "list"
+optional = false
+help = "Sıralı seviye grupları (her eleman bir seviyedeki endpoint listesi)."
+
+[[modes]]
+id = "context-window-fallback"
+family = "Failover"
+class = "policy"
+selector = "context_window_fallback"
+title = "Bağlam Penceresi Fallback"
+blurb = "Bağlam aşımında daha geniş context'li modele düşer, çağrı öncesi de yakalar."
+long_help = "Bağlam penceresi aşımı hatasında daha geniş context'li endpoint'e geçer. Çağrı öncesi kontroller açıksa, istek gönderilmeden önce bağlam tahmini yapılır ve taşma önceden doğru endpoint'e yönlendirilir."
+[[modes.params]]
+name = "pre_call_checks"
+type = "bool"
+optional = true
+default = "true"
+help = "İstek öncesi bağlam penceresi kontrolü."
+
+[[modes]]
+id = "content-policy-fallback"
+family = "Failover"
+class = "policy"
+selector = "content_policy_fallback"
+title = "İçerik Politikası Fallback"
+blurb = "İçerik politikası ihlalinde alternatif modele geçer."
+long_help = "Moderation/içerik politikası ihlali hatasında farklı bir endpoint'e yönlendirir. İçerik politikaları farklı olan provider'lar arasında isteklerin gereksiz yere reddedilmesini azaltır."
+
+[[modes]]
+id = "default-fallback"
+family = "Failover"
+class = "policy"
+selector = "default_fallback"
+title = "Varsayılan Fallback"
+blurb = "Gruba özel fallback yoksa genel wildcard zinciri kullanır."
+long_help = "Gruba özel fallback tanımlı olmadığında genel (wildcard) fallback zincirini devreye sokar. Zincir uzunluğu üst sınıra bağlanır; böylece katalogdaki her grup tanımı olmasa bile temel kurtarma davranışı garanti edilir."
+[[modes.params]]
+name = "max_fallbacks"
+type = "number"
+optional = true
+default = "5"
+help = "Genel zincirde en fazla kaç adım deneneceği."
+
+[[modes]]
+id = "weighted-failover"
+family = "Failover"
+class = "composition"
+selector = "weighted_failover"
+title = "Ağırlıklı Failover"
+blurb = "Retryable hatada önce grup içinde weighted re-pick, tükenirse çapraz grup fallback."
+long_help = "Retryable bir hata oluştuğunda önce aynı grup içinde ağırlıklara göre yeniden seçim yapar; grup tükenirse çapraz grup fallback zinciri devreye girer. İki aşamalı yapısı nedeniyle seçim + kaskad state machine'i birlikte yürütür."
+[[modes.params]]
+name = "weights"
+type = "map"
+optional = true
+default = "{}"
+help = "Grup içi endpoint → ağırlık haritası."
+[[modes.params]]
+name = "max_fallbacks"
+type = "number"
+optional = true
+default = "5"
+help = "Çapraz grup adım sınırı."
+
+[[modes]]
+id = "hedge-p95"
+family = "Failover"
+class = "composition"
+selector = "hedge"
+title = "P95 Hedge"
+blurb = "P95 gecikme riskinde ikinci endpoint'e paralel kopya gönderir, ilk biteni kullanır."
+long_help = "Birincil istek gecikme eşiğini aştığında ikinci endpoint'e paralel kopya gönderilir ve ilk tamamlanan cevap kullanılır. Yan etkili (tool-call) isteklerde çift faturalanma/yan etki riski nedeniyle kopyalama kapatılabilmelidir; seçim + yarış döngüsü birlikte yürütülür."
+[[modes.params]]
+name = "p95_budget_ms"
+type = "number"
+optional = false
+help = "Kopyanın başlatılacağı gecikme eşiği (milisaniye)."
+[[modes.params]]
+name = "duplicate_calls"
+type = "bool"
+optional = true
+default = "false"
+help = "Yan etkili isteklerde kopya gönderimine izin verilip verilmemesi."
+
+# ---------------------------------------------------------------------------
+# RoleSplit (7) — JEP rol ayrımı
+# ---------------------------------------------------------------------------
+
+[[modes]]
+id = "jep-classic"
+family = "RoleSplit"
+class = "policy"
+selector = "role_policy"
+title = "Klasik JEP"
+blurb = "Judge/executor/planner rollerini sabit endpoint sınıflarına bağlar."
+long_help = "Judge, executor ve planner rolleri yapılandırılmış endpoint sınıflarına sabitlenir; her rol kendi havuzundan hizmet alır. Rol → endpoint çözümü çalışma zamanında rol katalogu üzerinden yapılır."
+[[modes.params]]
+name = "roles"
+type = "map"
+optional = true
+default = "{\"judge\":\"judge\",\"executor\":\"executor\",\"planner\":\"planner\"}"
+help = "Rol → endpoint grubu eşlemesi."
+
+[[modes]]
+id = "jep-cheap-plan"
+family = "RoleSplit"
+class = "policy"
+selector = "role_policy"
+title = "Ucuz Planlayıcı JEP"
+blurb = "Planner küçük/ucuz modele, judge ve executor güçlü kalır."
+long_help = "Planlama aşamasını küçük/ucuz bir endpoint sınıfına, doğrulama ve yürütmeyi güçlü sınıflara yönlendirir. Basit işe küçük model prensibiyle maliyeti düşürürken kritik aşamaların kalitesini korur."
+[[modes.params]]
+name = "roles"
+type = "map"
+optional = true
+default = "{\"judge\":\"judge\",\"executor\":\"executor\",\"planner\":\"cheap\"}"
+help = "Rol → endpoint grubu eşlemesi (planner ucuz gruba)."
+
+[[modes]]
+id = "jep-strong-judge"
+family = "RoleSplit"
+class = "policy"
+selector = "role_policy"
+title = "Güçlü Judge JEP"
+blurb = "Judge her zaman en güçlü/doğruluk lideri grupta, gerisi maliyete göre."
+long_help = "Doğruluk açısından kritik olan judge rolü daima en güçlü endpoint sınıfına sabitlenir; executor ve planner maliyete göre daha küçük sınıflara düşebilir. Son karar kalitesini garanti altına almayı hedefler."
+[[modes.params]]
+name = "roles"
+type = "map"
+optional = true
+default = "{\"judge\":\"strong\",\"executor\":\"executor\",\"planner\":\"cheap\"}"
+help = "Rol → endpoint grubu eşlemesi (judge güçlü grupta)."
+
+[[modes]]
+id = "planner-only-chain"
+family = "RoleSplit"
+class = "policy"
+selector = "role_policy"
+title = "Yalnız Planlayıcı Zinciri"
+blurb = "İlk aşama yalnızca planner modelinden geçer, alt aşamalar diğer rollerden."
+long_help = "İş akışının ilk aşaması yalnızca planner endpoint sınıfından hizmet alır; sonraki aşamalar kendi rol sınıflarına geçer. Aşama düzeyinde rol kısıtı ile aşırı güçlü (ve pahalı) model kullanımını sınırlar."
+[[modes.params]]
+name = "roles"
+type = "map"
+optional = true
+default = "{\"plan\":\"planner\",\"execute\":\"executor\",\"judge\":\"judge\"}"
+help = "Aşama → endpoint grubu eşlemesi."
+
+[[modes]]
+id = "executor-swarm"
+family = "RoleSplit"
+class = "composition"
+selector = "executor_swarm"
+title = "Executor Sürüsü"
+blurb = "Görevi birden çok executor endpoint'ine böler, sonuçları karşılaştırır."
+long_help = "Aynı görev birden çok executor'a dağıtılır ve cevaplar çoğunluk/karşılaştırma kuralıyla birleştirilir. Çok katmanlı deferral (conformal) yaklaşımlarla birleştiğinde kalite güvencesini artırır; ek maliyet karşılığında sağlamlık sunar."
+[[modes.params]]
+name = "executor_count"
+type = "number"
+optional = true
+default = "3"
+help = "Paralel executor sayısı."
+[[modes.params]]
+name = "quorum"
+type = "string"
+optional = true
+default = "majority"
+help = "Birleştirme kuralı (majority/consensus)."
+
+[[modes]]
+id = "role-sticky"
+family = "RoleSplit"
+class = "policy"
+selector = "sticky_role"
+title = "Rol Sabitleme"
+blurb = "Rol başına endpoint affinity: aynı rol hep aynı endpoint havuzunda kalır."
+long_help = "Her rol kendi sabit endpoint havuzuna bağlanır; rolün kullandığı endpoint'ler pencere boyunca değişmez. Önbellek ve bağlam yakınlığı sağlar; rol değişimi yalnızca havuz tükenince tetiklenir."
+[[modes.params]]
+name = "sticky_ttl"
+type = "number"
+optional = true
+default = "300"
+help = "Rol bağlamasının geçerlilik süresi (saniye)."
+
+[[modes]]
+id = "prompt-role-classify"
+family = "RoleSplit"
+class = "composition"
+selector = "role_classifier"
+title = "Role Sınıflandırıcı"
+blurb = "Prompt'u role göre sınıflandırır, sonra o role ait havuzdan seçer."
+long_help = "Prompt içeriği önce role sınıflandırıcıdan geçer (özet anahtarlı önbellek destekli); bulunan role göre uygun endpoint havuzundan seçim yapılır. Sınıflandırma + seçim ardışık çalıştığı için kompozisyon modudur."
+[[modes.params]]
+name = "classifier_cache"
+type = "bool"
+optional = true
+default = "true"
+help = "Tekrar eden prompt özetlerinde sınıflandırma önbelleği."
+[[modes.params]]
+name = "roles"
+type = "list"
+optional = true
+default = "[\"judge\",\"executor\",\"planner\"]"
+help = "Sınıflandırıcının tanıdığı roller."
+
+# ---------------------------------------------------------------------------
+# Hybrid (8) — seçici + kaskad/koşul kompozisyonları
+# ---------------------------------------------------------------------------
+
+[[modes]]
+id = "balance-then-fallback"
+family = "Hybrid"
+class = "composition"
+selector = "balance_then_fallback"
+title = "Önce Denge, Sonra Fallback"
+blurb = "Sağlıklı havuzda dengeli dağıtır, zincir tükenince sıralı fallback kaskadına geçer."
+long_help = "Sağlıklı havuzda seçici (örn. ağırlıklı) dağıtım yapar; tüm havuz başarısız olursa sıralı fallback kaskadı devreye girer. Dengeli normal akış ile kurtarma akışı ayrı state machine'lerde yürütülür."
+[[modes.params]]
+name = "max_fallbacks"
+type = "number"
+optional = true
+default = "5"
+help = "Kaskad adım sınırı."
+
+[[modes]]
+id = "jep-with-rr-executors"
+family = "Hybrid"
+class = "composition"
+selector = "jep_rr_executors"
+title = "Round Robin Executor'lı JEP"
+blurb = "JEP rollerine round-robin executor havuzu ekler."
+long_help = "JEP rol ayrımını korurken executor rolünü round-robin ile dönen bir endpoint havuzuna bağlar. Rol politikası ile dengeleme stratejisini birleştiren kompozisyon modudur."
+[[modes.params]]
+name = "roles"
+type = "map"
+optional = true
+default = "{\"judge\":\"judge\",\"executor\":\"executor\",\"planner\":\"planner\"}"
+help = "Rol → endpoint grubu eşlemesi."
+[[modes.params]]
+name = "executor_count"
+type = "number"
+optional = true
+default = "3"
+help = "Round-robin havuzundaki executor endpoint sayısı."
+
+[[modes]]
+id = "canary-10"
+family = "Hybrid"
+class = "composition"
+selector = "canary"
+title = "Canary"
+blurb = "Trafiğin bir kısmını aday endpoint'e gönderir, hata oranına göre geri alır."
+long_help = "Trafiğin yapılandırılan oranı aday endpoint'e, geri kalanı stabil hatta gider; adayın hata oranı eşiği aşarsa oran otomatik düşürülür. Adayı üretim trafiğinde risksiz denemek için kullanılır."
+[[modes.params]]
+name = "canary_ratio"
+type = "number"
+optional = false
+default = "0.1"
+help = "Adaya gönderilecek trafik oranı (0-1)."
+[[modes.params]]
+name = "rollback_error_rate"
+type = "number"
+optional = true
+default = "0.05"
+help = "Aşılınca canary oranı sıfırlanan hata oranı eşiği."
+
+[[modes]]
+id = "shadow-mirror"
+family = "Hybrid"
+class = "composition"
+selector = "shadow"
+title = "Shadow Mirror"
+blurb = "Üretim isteğinin kopyasını shadow endpoint'e gönderir ama cevabı kullanmaz."
+long_help = "Üretim isteği aynen işlenirken bir kopyası shadow endpoint'e de iletilir; shadow cevabı yalnızca ölçüm için saklanır. Yeni endpoint davranışını kullanıcıyı etkilemeden ölçmek için kullanılır."
+[[modes.params]]
+name = "shadow_ratio"
+type = "number"
+optional = true
+default = "1.0"
+help = "Kopyalanacak istek oranı (0-1)."
+
+[[modes]]
+id = "hedge-on-latency"
+family = "Hybrid"
+class = "composition"
+selector = "hedge_on_latency"
+title = "Gecikme Bütçeli Hedge"
+blurb = "Primary latency budget'ı aşınca hedge başlatır."
+long_help = "Birincil endpoint için gecikme bütçesi tanımlanır; bütçe aşılırsa ikinci endpoint'e kopya gider. İstek öncesi tahmini gecikme de bütçe kararına katılır; yan etkili isteklerde kopya kapatılabilir."
+[[modes.params]]
+name = "latency_budget_ms"
+type = "number"
+optional = false
+help = "Kopyanın başlatılacağı gecikme bütçesi (milisaniye)."
+[[modes.params]]
+name = "duplicate_calls"
+type = "bool"
+optional = true
+default = "false"
+help = "Yan etkili isteklerde kopya gönderimine izin verilip verilmemesi."
+
+[[modes]]
+id = "tier-cascade"
+family = "Hybrid"
+class = "composition"
+selector = "tier_cascade"
+title = "Tier Kaskadı"
+blurb = "Abonelik → ucuz → ücretsiz tier'ları arasında kota/bütçe bitince düşer."
+long_help = "Endpoint'ler tier'lara ayrılır; mevcut tier'ın kotası/bütçesi tükenince bir alt tier'a geçilir. Aynı provider içinde çoklu hesap round-robin'i ile birleştirilerek limit kesintileri önlenir."
+[[modes.params]]
+name = "tiers"
+type = "list"
+optional = true
+default = "[\"subscription\",\"cheap\",\"free\"]"
+help = "Öncelik sıralı tier listesi."
+
+[[modes]]
+id = "frugal-cascade"
+family = "Hybrid"
+class = "composition"
+selector = "frugal_cascade"
+title = "Frugal Kaskad"
+blurb = "Query başına model zinciri; düşük güven tahmininde güçlü modele defer eder."
+long_help = "Ucuz model önce yanıtlar; yanıt güveni eşiğin altındaysa istek daha güçlü modele devredilir. Öğrenilmiş veya kural tabanlı güven tahminiyle her istek için maliyet-kalite dengesini optimize eder; veri yoksa kural tabanlı güvene düşer."
+[[modes.params]]
+name = "max_steps"
+type = "number"
+optional = true
+default = "3"
+help = "Kaskaddaki en fazla adım sayısı."
+[[modes.params]]
+name = "confidence_threshold"
+type = "number"
+optional = true
+default = "0.8"
+help = "Deferral tetikleyen güven eşiği (0-1)."
+
+[[modes]]
+id = "conformal-cascade"
+family = "Hybrid"
+class = "composition"
+selector = "conformal_cascade"
+title = "Conformal Kaskad"
+blurb = "Conformal set boyutu tek elemana inince kabul, değilse üst tiera defer eder."
+long_help = "Conformal prediction seti hesaplanır; set tek adaya inerse cevap kabul edilir, aksi halde üst tier'a devredilir. Kalibrasyon gerektirmeden dağıtımdan bağımsız doğruluk garantisi sağlar; eşik ayarı derdini ortadan kaldırır."
+[[modes.params]]
+name = "alpha"
+type = "number"
+optional = true
+default = "0.1"
+help = "Conformal hata payı (1 - güven düzeyi)."
+
+# ---------------------------------------------------------------------------
+# Specialty (10) — özel yetenek/bağlam odaklı
+# ---------------------------------------------------------------------------
+
+[[modes]]
+id = "research-ocean-prefer"
+family = "Specialty"
+class = "policy"
+selector = "research_depth_filter"
+title = "Derin Araştırma Önceliği"
+blurb = "Derin/ocean araştırma modlarında o derinliğe uygun endpoint'leri öncelikle seçer."
+long_help = "Araştırma derinliği (surface/deep/ocean) isteğe işaretlenir; seçim, o derinliği destekleyen endpoint'leri önceliklendirir ve desteklemeyenleri eleyebilir. Araştırma iş akışlarının kalite kısıtını seçiciye taşır."
+[[modes.params]]
+name = "depth"
+type = "string"
+optional = true
+default = "deep"
+help = "Hedef araştırma derinliği (surface/deep/ocean)."
+
+[[modes]]
+id = "coding-long-context"
+family = "Specialty"
+class = "policy"
+selector = "context_window_filter"
+title = "Uzun Bağlam Kodlama"
+blurb = "Uzun bağlamlı kodlama istekleri için yeterli context penceresi olan endpoint'leri filtreler."
+long_help = "İsteğin tahmini bağlam ihtiyacı ölçülür; penceresi bu ihtiyacı karşılamayan endpoint'ler aday havuzundan elenir. Kod tabanı büyük isteklerde bağlam taşmasını daha istek gönderilmeden önler."
+[[modes.params]]
+name = "min_context_tokens"
+type = "number"
+optional = false
+help = "Adayların en az karşılaması gereken bağlam penceresi."
+
+[[modes]]
+id = "json-strict-model"
+family = "Specialty"
+class = "policy"
+selector = "json_strict_filter"
+title = "Katı JSON"
+blurb = "JSON/tool-call şeması ispatlanmış endpoint'lere sabitler."
+long_help = "Yalnızca yapılandırılmış çıktı (JSON/tool-call) uyumluluğu ispatlanmış endpoint'ler seçilir; uyumsuz adaylar elenir. Şema gerektiren isteklerde ayrıştırma hatası riskini düşürür."
+
+[[modes]]
+id = "vision-capable-only"
+family = "Specialty"
+class = "policy"
+selector = "vision_filter"
+title = "Yalnızca Görüntü Uyumlu"
+blurb = "Görüntü girişi olan istekleri yalnızca görüntü destekleyen endpoint'lere yönlendirir."
+long_help = "İstek görsel girdi içeriyorsa aday havuzu görüntü desteği olan endpoint'lerle sınırlanır. Görsel girdi olmayan isteklerde kısıt uygulanmaz."
+
+[[modes]]
+id = "tool-call-reliable"
+family = "Specialty"
+class = "policy"
+selector = "tool_call_reliability"
+title = "Tool-Call Güvenilirlik"
+blurb = "Tool-call başarı oranı yüksek endpoint'leri öncelikle seçer."
+long_help = "Tool-call içeren isteklerde endpoint'lerin geçmiş tool-call başarı oranına göre önceliklendirme yapar; oranı eşiğin altındaki adaylar elenir. Çok adımlı ajan akışlarında araç çağrılarının güvenilirliğini korur."
+[[modes.params]]
+name = "min_success_rate"
+type = "number"
+optional = true
+default = "0.9"
+help = "Adayların sağlaması gereken asgari tool-call başarı oranı (0-1)."
+
+[[modes]]
+id = "router-llm"
+family = "Specialty"
+class = "composition"
+selector = "router_llm"
+title = "Router LLM"
+blurb = "Küçük bir LLM prompt içeriğine göre endpoint seçer."
+long_help = "İstek içeriği küçük bir yönlendirme modeline gönderilir; model endpoint sınıfını önerir ve seçim o sınıfın havuzundan yapılır. Sınıflandırma pahalı olduğundan özet anahtarlı önbellek ile tekrar eden isteklerde maliyeti düşürür."
+[[modes.params]]
+name = "classifier_cache"
+type = "bool"
+optional = true
+default = "true"
+help = "Tekrar eden prompt özetlerinde sınıflandırma önbelleği."
+
+[[modes]]
+id = "keyword-rules"
+family = "Specialty"
+class = "primitive"
+selector = "keyword_table"
+title = "Anahtar Kelime Kuralları"
+blurb = "Keyword → endpoint kural tablosu; ilk eşleşen kural kazanır."
+long_help = "Prompt'ta aranacak anahtar kelimelerle endpoint eşlemesi yapan kural tablosunu sırayla tarar; ilk eşleşen kural seçimi belirler. Deterministik ve hızlıdır; özel istek tiplerini kurala bağlamak için idealdir."
+[[modes.params]]
+name = "rules"
+type = "map"
+optional = false
+help = "Anahtar kelime → endpoint grubu eşlemesi (ilk eşleşen kazanır)."
+
+[[modes]]
+id = "auto-router"
+family = "Specialty"
+class = "composition"
+selector = "auto_router"
+title = "Auto Router"
+blurb = "Harici prompt-bazlı router: görev tipi + geçmiş harcama payı + maliyet kadranı."
+long_help = "Görev tipi, geçmiş harcama payı ve maliyet/kalite kadranı gibi sinyalleri harici bir yönlendirme servisine gönderir; servis her istek için model seçer. Dış sistem çağrısı yaptığı için servis erişilemezse tanımlı degrade davranışa (örn. katı fallback) düşer."
+[[modes.params]]
+name = "cost_quality_dial"
+type = "number"
+optional = true
+default = "7"
+help = "Maliyet/kalite kadranı (0 = güçlü, 10 = ucuz)."
+[[modes.params]]
+name = "cost_tier"
+type = "string"
+optional = true
+default = "medium"
+help = "Harcama yüzdelik bandı (low/medium/high/xhigh/max)."
+
+[[modes]]
+id = "quality-diff-router"
+family = "Specialty"
+class = "composition"
+selector = "quality_diff_router"
+title = "Kalite Farkı Router"
+blurb = "Adaylara cevap kalitesi tahmini yapar, eşiği aşanı seçer."
+long_help = "Aynı aile içindeki adaylar için istek başına beklenen cevap kalitesi tahmin edilir; güçlü adayın tahmini farkı eşiği aşıyorsa o aday seçilir, aksi halde ucuz/çapa aday kullanılır. Kalite tahmini olmadan iki aday da eşit sayılır."
+[[modes.params]]
+name = "response_quality_diff"
+type = "number"
+optional = true
+default = "0.5"
+help = "Güçlü adayın seçilmesi için gereken asgari kalite farkı."
+
+[[modes]]
+id = "learned-router"
+family = "Specialty"
+class = "composition"
+selector = "learned_router"
+title = "Öğrenilmiş Router"
+blurb = "Eğitilmiş ML router veya online reward predictor ile istek→endpoint ataması yapar."
+long_help = "İstek özniteliklerini eğitilmiş bir modele (sınıflandırıcı, online reward predictor vb.) besler; model her istek için endpoint önerir. Öğrenme verisi veya model yoksa kural tabanlı degrade davranışa düşer."
+[[modes.params]]
+name = "model_path"
+type = "string"
+optional = true
+help = "Eğitilmiş model/bilet dosyası yolu (yoksa degrade davranış)."
+[[modes.params]]
+name = "top_k"
+type = "number"
+optional = true
+default = "1"
+help = "Modelin önerdiği aday sayısı."
+
+# ---------------------------------------------------------------------------
+# Cost (7) — maliyet odaklı
+# ---------------------------------------------------------------------------
+
+[[modes]]
+id = "cheapest-alive"
+family = "Cost"
+class = "primitive"
+selector = "cheapest"
+title = "En Ucuz Canlı"
+blurb = "Sağlıklı endpoint'lerden en ucuzunu seçer."
+long_help = "Sağlıklı endpoint havuzunda birim maliyeti en düşük olanı seçer. Maliyet verisi endpoint meta verisinden gelir; katalogda fiyat sabiti yoktur."
+
+[[modes]]
+id = "budget-aware"
+family = "Cost"
+class = "policy"
+selector = "budget_policy"
+title = "Bütçe Bilinçli"
+blurb = "Zaman pencereli bütçe takibi; bütçe tükenince grubu baypas eder."
+long_help = "Provider/grup bazında zaman pencereli bütçe tüketimi izlenir; bütçesi tükenen grup aday havuzundan çıkarılır. Bütçe penceresi dolunca grup yeniden havuza girer."
+[[modes.params]]
+name = "budget_period_secs"
+type = "number"
+optional = true
+default = "3600"
+help = "Bütçe penceresi (saniye)."
+[[modes.params]]
+name = "budget_cap"
+type = "number"
+optional = false
+help = "Pencere başına bütçe tavanı (endpoint meta verisiyle aynı birimde)."
+
+[[modes]]
+id = "quality-floor"
+family = "Cost"
+class = "composition"
+selector = "quality_floor"
+title = "Kalite Tabanlı En Ucuz"
+blurb = "En ucuz ama asgari kalite/verim eşiğini karşılayan endpoint'i seçer."
+long_help = "Adaylar önce kalite/verim eşiklerinden (asgari verim, asgari kalite puanı) geçer; kalan adaylar arasından en ucuzu seçilir. Taban eşiklerini geçemeyen aday yoksa seçim başarısız sayılır (garbage-200 tuzağına karşı ayrı doğrulama katmanı önerilir)."
+[[modes.params]]
+name = "min_throughput_tokens"
+type = "number"
+optional = true
+help = "Adayın sağlaması gereken asgari verim."
+[[modes.params]]
+name = "min_quality"
+type = "number"
+optional = true
+default = "0.7"
+help = "Adayın sağlaması gereken asgari kalite puanı (0-1)."
+
+[[modes]]
+id = "deadline-aware"
+family = "Cost"
+class = "policy"
+selector = "deadline_policy"
+title = "Süre Bilinçli"
+blurb = "SLO/deadline'a yetişebilecek en ucuz endpoint'i seçer."
+long_help = "İstek için hedef süre (deadline) tanımlanır; yetişemeyecek endpoint'ler elenir ve kalanlar arasından en ucuzu seçilir. Tahmini süre eşiği aşıyorsa daha hızlı (ama pahalı) adaylara geçilir; yetişebilen yoksa en hızlı aday seçilir."
+[[modes.params]]
+name = "deadline_ms"
+type = "number"
+optional = false
+help = "İstek için hedef süre (milisaniye)."
+[[modes.params]]
+name = "slack_ratio"
+type = "number"
+optional = true
+default = "0.2"
+help = "Tahmin belirsizliği payı (0-1); yüksek değer daha temkinli seçim yapar."
+
+[[modes]]
+id = "price-cap"
+family = "Cost"
+class = "policy"
+selector = "price_cap"
+title = "Fiyat Tavanı"
+blurb = "Maliyet tavanı: üstünde endpoint yoksa isteği çalıştırmaz."
+long_help = "İstek için maliyet tavanı tanımlanır; tavanı karşılayan endpoint yoksa istek hiç gönderilmez ve açık bir hata döner. Bütçe disiplinini yumuşak tercihten çıkarıp sert kurala dönüştürür."
+[[modes.params]]
+name = "max_cost"
+type = "number"
+optional = false
+help = "İstek başına maliyet tavanı (endpoint meta verisiyle aynı birimde)."
+
+[[modes]]
+id = "cost-quality-dial"
+family = "Cost"
+class = "policy"
+selector = "cost_quality_dial"
+title = "Maliyet/Kalite Kadranı"
+blurb = "0-10 maliyet/kalite kadranıyla aday havuzunu maliyet bandına göre daraltır."
+long_help = "Kadran değerine göre aday havuzu maliyet yüzdelik bandına daraltılır; düşük değer güçlü (pahalı) adaylara, yüksek değer ucuz adaylara öncelik verir. Bant içi seçim altta yatan stratejiye bırakılır."
+[[modes.params]]
+name = "dial"
+type = "number"
+optional = true
+default = "7"
+help = "Kadran değeri (0 = güçlü, 10 = ucuz)."
+
+[[modes]]
+id = "quota-aware"
+family = "Cost"
+class = "policy"
+selector = "quota_policy"
+title = "Kota Bilinçli"
+blurb = "Abonelik kotası dolana kadar o tiera yönlendirir, sonra diğer havuzlara geçer."
+long_help = "Abonelik tier'ının kotası dolana kadar istekler oraya yönlendirilir; kota dolunca diğer havuzlara geçilir. Abonelik haklarının sıfırlanana dek tam kullanılmasını hedefler."
+[[modes.params]]
+name = "quota_period_secs"
+type = "number"
+optional = true
+default = "3600"
+help = "Kota sıfırlanma penceresi (saniye)."
+[[modes.params]]
+name = "tier_order"
+type = "list"
+optional = true
+default = "[\"subscription\",\"backup\"]"
+help = "Kota dolunca geçilecek havuz sırası."
+
+# ---------------------------------------------------------------------------
+# Privacy (8) — veri/bölge/gizlilik kısıtları
+# ---------------------------------------------------------------------------
+
+[[modes]]
+id = "local-first"
+family = "Privacy"
+class = "policy"
+selector = "local_first"
+title = "Önce Lokal"
+blurb = "Önce lokal/self-hosted endpoint'ler, cloud yalnızca lokal havuz boşsa."
+long_help = "Aday seçimi önce lokal/self-hosted endpoint havuzundan yapılır; havuz boşsa (sağlık filtresi sonrası) cloud endpoint'lere geçilir. Verinin kuruluş dışına çıkmasını en aza indirir."
+[[modes.params]]
+name = "cloud_fallback"
+type = "bool"
+optional = true
+default = "false"
+help = "Lokal havuz boşken cloud'a geçişe izin verilip verilmemesi."
+
+[[modes]]
+id = "no-train-providers"
+family = "Privacy"
+class = "policy"
+selector = "data_policy"
+title = "Eğitim Dışı"
+blurb = "Eğitim/veri toplama yapan provider'ları dışlar."
+long_help = "Veri toplama/eğitim politikası gereği istenmeyen provider'lar aday havuzundan çıkarılır. İstek verisi kullanımını kısıtlamak isteyen kurulumlar için temel gizlilik filtresidir."
+[[modes.params]]
+name = "data_collection"
+type = "string"
+optional = true
+default = "deny"
+help = "Veri toplama politikası (deny/allow)."
+
+[[modes]]
+id = "eu-region-only"
+family = "Privacy"
+class = "policy"
+selector = "region_policy"
+title = "Yalnızca AB Bölgesi"
+blurb = "Yalnızca AB bölgesindeki endpoint'lere yönlendirir."
+long_help = "Aday havuzu yalnızca AB bölgesinde konumlanan endpoint'lerle sınırlanır. Bölge kısıtını yalnızca ilk seçime değil fallback zincirine de uygular (coğrafi sızıntıyı önler)."
+[[modes.params]]
+name = "regions"
+type = "list"
+optional = true
+default = "[\"eu\"]"
+help = "İzin verilen bölge kodları."
+
+[[modes]]
+id = "in-region-strict"
+family = "Privacy"
+class = "policy"
+selector = "in_region_policy"
+title = "Bölgede Kal (Katı)"
+blurb = "İstek kaynak bölgeyi asla terk etmesin."
+long_help = "İstek kaynağının bulunduğu bölge dışındaki endpoint'ler tamamen elenir; fallback zinciri dahil hiçbir adım bölge dışına çıkamaz. Veri egemenliği gereksinimlerini sert biçimde uygular."
+
+[[modes]]
+id = "geo-profile"
+family = "Privacy"
+class = "policy"
+selector = "geo_profile_policy"
+title = "Coğrafya Profili"
+blurb = "Coğrafi kapsam kısıtı: belirlenen coğrafya profilleri arasında seçim yapar."
+long_help = "Bölge grupları (coğrafya profilleri) arasından yapılandırılan profili kullanır; istekler o profilin bölgeleriyle sınırlanır. Kıta içi kısıt ile küresel kullanım arasında esnek denge sağlar."
+[[modes.params]]
+name = "profile"
+type = "string"
+optional = true
+default = "us"
+help = "Kullanılacak coğrafya profili."
+
+[[modes]]
+id = "zdr-only"
+family = "Privacy"
+class = "policy"
+selector = "zdr_policy"
+title = "Yalnızca Veri Saklamayan"
+blurb = "Yalnızca zero-data-retention (veri saklamayan) provider'ları kullanır."
+long_help = "İstek ve cevap verisini saklamadığı doğrulanmış provider'lar dışındaki adaylar elenir. Gizlilik gereksinimi yüksek iş yükleri için istek kalıntılarının kalıcı depolanmasını engeller."
+
+[[modes]]
+id = "secure-compute"
+family = "Privacy"
+class = "policy"
+selector = "secure_compute_policy"
+title = "Güvenli Hesaplama"
+blurb = "Hassas işleri parçalı/güvenli hesaplama uçlarına yönlendirir."
+long_help = "Hassas olarak işaretlenen istekler yalnızca parçalı/güvenli hesaplama destekleyen endpoint'lere gider. Veriyi tek varlık görmeyecek biçimde parçalayan altyapılar için seçim kısıtı sağlar."
+[[modes.params]]
+name = "min_shards"
+type = "number"
+optional = true
+default = "2"
+help = "Güvenli hesaplamanın gerektirdiği asgari parça sayısı."
+
+[[modes]]
+id = "no-fallback-offshore"
+family = "Privacy"
+class = "composition"
+selector = "no_offshore_fallback"
+title = "Kıyı Dışı Fallback Yok"
+blurb = "Bölge kısıtı + fallback kompozisyonu: fallback zinciri bile coğrafya dışına çıkmaz."
+long_help = "Bölge kısıtı filtresi (örn. AB) ile sıralı fallback politikasını birleştirir; fallback zincirinin her adımı da aynı bölge filtresinden geçer. İlk seçime uygulanan filtrenin fallback'te delinmesini engeller."
+[[modes.params]]
+name = "regions"
+type = "list"
+optional = true
+default = "[\"eu\"]"
+help = "Fallback zinciri dahil izin verilen bölge kodları."

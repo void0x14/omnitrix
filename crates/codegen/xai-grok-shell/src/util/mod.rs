@@ -6,11 +6,14 @@ pub mod key_balance;
 pub mod limits;
 pub mod models_dev;
 pub mod provider_probe;
+pub mod routing_catalog;
 pub(crate) mod subprocess;
 pub(crate) mod user_identity;
 
 #[cfg(test)]
 mod models_dev_tests;
+#[cfg(test)]
+mod routing_catalog_tests;
 
 // The foundation utilities live in `xai-grok-shell-base` (upstream of this
 // crate so they build in parallel). Re-exported at the original paths so
