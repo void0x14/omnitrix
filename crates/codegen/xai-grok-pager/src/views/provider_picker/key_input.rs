@@ -589,7 +589,7 @@ fn render_masked_editor(
         buf.set_span(
             input_x,
             y,
-            &Span::styled(shown, style(Style::default().fg(theme.text_primary))),
+            &Span::styled(&shown, style(Style::default().fg(theme.text_primary))),
             shown.width() as u16,
         );
     }
@@ -868,6 +868,9 @@ mod tests {
     #[test]
     fn empty_base_url_is_invalid() {
         let mut flow = flow_at_base_url();
+        // custom satır seçilince draft default URL önceden doldurulur; boş
+        // girdi senaryosunu test etmek için editörü temizliyoruz.
+        flow.base_url_editor.set_text("");
         let out = handle_base_url_input(&mut flow, &press(KeyCode::Enter));
         assert_eq!(out, ConnectOutcome::Nothing);
         assert_eq!(flow.step, ConnectStep::BaseUrl);

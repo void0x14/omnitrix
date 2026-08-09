@@ -4248,7 +4248,7 @@ impl AgentView {
                 buf,
                 overlay_rect,
                 &events,
-                theme,
+                &theme,
             );
             self.frame_occluder_rects.push(overlay_rect);
         }

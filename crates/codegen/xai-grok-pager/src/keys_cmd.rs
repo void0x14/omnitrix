@@ -69,8 +69,8 @@ fn cmd_list(grok_home: &Path) -> anyhow::Result<()> {
     let mut kc = prompt_and_open_keychain(grok_home)?;
     let entries = kc.list_keys()?;
     println!("{}", format_list_header());
-    for entry in entries {
-        println!("{}", format_list_row(&entry));
+    for entry in &entries {
+        println!("{}", format_list_row(entry));
     }
     println!();
     println!("{} kayıt (grok keys show <id> ile tam key)", entries.len());
@@ -300,7 +300,6 @@ fn disable_terminal_echo() -> Option<std::os::fd::RawFd> {
 /// Echo'yu tekrar açar (yalnızca biz kapattıysak).
 #[cfg(unix)]
 fn restore_terminal_echo(fd: Option<std::os::fd::RawFd>) {
-    use std::os::fd::RawFd;
     let Some(fd) = fd else { return };
     let mut termios: libc::termios = unsafe { std::mem::zeroed() };
     if unsafe { libc::tcgetattr(fd, &mut termios) } != 0 {

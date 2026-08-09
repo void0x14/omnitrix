@@ -10,6 +10,7 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Context as _, Result};
 use clap::ValueEnum;
+use std::io::IsTerminal;
 use tokio_util::sync::CancellationToken;
 
 use agent_client_protocol as acp;

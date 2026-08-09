@@ -122,15 +122,15 @@ mod tests {
 
     /// A temp-dir OMNI_DATA_HOME so the test never touches the real store and
     /// is hermetic. Restored by `Drop`.
-    struct ScopedDataDir(std::path::PathBuf);
+    struct ScopedDataDir(tempfile::TempDir);
 
     impl ScopedDataDir {
         fn new() -> Self {
-            let dir = tempfile::tempdir().expect("tempdir").into_path();
+            let dir = tempfile::tempdir().expect("tempdir");
             // Unsafe in edition 2024; single-threaded test scope (serialized
             // against other env-touching tests via `#[serial_test::serial]`).
             unsafe {
-                std::env::set_var("XDG_DATA_HOME", &dir);
+                std::env::set_var("XDG_DATA_HOME", dir.path());
             }
             Self(dir)
         }

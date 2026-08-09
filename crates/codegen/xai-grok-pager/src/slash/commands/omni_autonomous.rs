@@ -35,11 +35,11 @@ impl Default for OmniAutonomousCommand {
 
 impl crate::slash::command::SlashCommand for OmniAutonomousCommand {
     fn name(&self) -> &'static str {
-        "/omni-autonomous"
+        "omni-autonomous"
     }
 
     fn aliases(&self) -> &'static [&'static str] {
-        &["/omni-auto"]
+        &["omni-auto"]
     }
 
     fn description(&self) -> &'static str {
@@ -133,7 +133,7 @@ mod tests {
     #[test]
     fn empty_args_prints_usage() {
         let cmd = OmniAutonomousCommand::new();
-        assert_eq!(cmd.name(), "/omni-autonomous");
+        assert_eq!(cmd.name(), "omni-autonomous");
         let models = ModelState::default();
         let bundle = BundleState::default();
         let mut c = ctx(&models, &bundle);

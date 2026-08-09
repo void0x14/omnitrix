@@ -5690,6 +5690,9 @@ pub(crate) mod tests {
             project_picker_disabled: false,
             cwd_has_git_ancestor: false,
             acp_tx: tx,
+            auth_manager: None,
+            keychain: None,
+            keychain_borrow: None,
             scratch: crate::scrollback::render::ScratchBuffer::new(),
             cursor: CursorState::new(),
             pending_action: None,
@@ -6181,7 +6184,12 @@ pub(crate) mod tests {
         );
         let mut delivered = false;
         for _ in 0..1000 {
-            if app.tick() && app.agents[&id].prompt.history_search.result_count() == 2 {
+            // `needs_redraw` doğruluğu poll'un *yeni* sonuç yayınladığı ana
+            // bağlıdır; daemon SetItems'i activate'tan önce işlerse snapshot
+            // hazırdır ve tick() hiç `true` dönmeyebilir — teslimatı sonuç
+            // sayısından okuyoruz (poll da yine her tick'te çağrılır).
+            app.tick();
+            if app.agents[&id].prompt.history_search.result_count() == 2 {
                 delivered = true;
                 break;
             }

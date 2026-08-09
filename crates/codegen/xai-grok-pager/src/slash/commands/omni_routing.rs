@@ -64,11 +64,11 @@ enum Parse {
 
 impl SlashCommand for OmniRoutingCommand {
     fn name(&self) -> &str {
-        "/omni-routing"
+        "omni-routing"
     }
 
     fn aliases(&self) -> &'static [&'static str] {
-        &["/omni-route"]
+        &["omni-route"]
     }
 
     fn description(&self) -> &'static str {

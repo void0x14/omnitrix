@@ -15,7 +15,7 @@ use ratatui::text::{Line, Span};
 use xai_grok_shell::util::models_dev::ModelInfo;
 
 use crate::views::picker::{
-    PickerConfig, PickerEntry, PickerHitAreas, PickerOutcome, PickerRow, PickerState,
+    PickerConfig, PickerEntry, PickerHitAreas, PickerOutcome, PickerRow,
     handle_picker_input, render_picker_content_with_scrollbar_x,
 };
 

@@ -1038,6 +1038,10 @@ fn configured_report_reaches_pass_state_only_for_exact_managed_alias() {
 #[cfg(unix)]
 #[test]
 fn shell_aliases_expand_to_exact_argv_and_bypass_is_explicit() {
+    use std::time::Duration;
+    use xai_grok_pager_pty_harness::pty::{PtyController, PtyExitPoll};
+    use portable_pty::PtySize;
+
     let temp = tempfile::tempdir().unwrap();
     let capture = temp.path().join("capture");
     let grok = temp.path().join("grok");
@@ -1052,32 +1056,43 @@ fn shell_aliases_expand_to_exact_argv_and_bypass_is_explicit() {
     use std::os::unix::fs::PermissionsExt as _;
     std::fs::set_permissions(&grok, std::fs::Permissions::from_mode(0o755)).unwrap();
 
+    // Alias expansion only happens in shells reading from a real tty — spawn
+    // under a pty so `alias ssh='grok wrap ssh'` actually expands (bash/zsh
+    // skip alias expansion for eval/pipe input without a terminal).
+    let path = format!(
+        "{}:{}",
+        temp.path().display(),
+        std::env::var("PATH").unwrap()
+    );
+    let size = PtySize {
+        rows: 24,
+        cols: 100,
+        pixel_width: 0,
+        pixel_height: 0,
+    };
+
     if let Some(bash) = find_on_path("bash") {
         let rc = temp.path().join("bashrc");
         std::fs::write(&rc, "alias ssh='grok wrap ssh'\n").unwrap();
-        let command = format!(
-            "source '{}'; source '{}'; eval 'ssh -p 2222 host'",
-            rc.display(),
-            rc.display()
-        );
-        let mut shell = std::process::Command::new(bash);
+        // bash 5.3: long options must precede `-i` (else `--: invalid option`).
+        let mut shell = PtyController::spawn_inherited_env(
+            &bash,
+            size,
+            &["--noprofile", "--rcfile", rc.to_str().unwrap(), "-i"],
+            &[("PATH", &path), ("TERM", "xterm-256color")],
+            Some(temp.path()),
+        )
+        .expect("spawn bash under pty");
         shell
-            .args(["-ic", &command])
-            .env(
-                "PATH",
-                format!(
-                    "{}:{}",
-                    temp.path().display(),
-                    std::env::var("PATH").unwrap()
-                ),
-            )
-            .stdin(std::process::Stdio::null())
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .envs(xai_tty_utils::pager_env());
-        xai_tty_utils::detach_std_command(&mut shell);
-        let status = shell.status().unwrap();
-        assert!(status.success());
+            .inject_keys(b"ssh -p 2222 host\nexit\n")
+            .expect("inject bash commands");
+        assert!(
+            matches!(
+                shell.wait_exit_code(Duration::from_secs(15)).unwrap(),
+                PtyExitPoll::Exited(0)
+            ),
+            "bash alias expansion must run grok wrap with the exact argv"
+        );
         assert_eq!(
             std::fs::read_to_string(&capture).unwrap(),
             "wrap\nssh\n-p\n2222\nhost\n"
@@ -1086,29 +1101,26 @@ fn shell_aliases_expand_to_exact_argv_and_bypass_is_explicit() {
     if let Some(zsh) = find_on_path("zsh") {
         let rc = temp.path().join("zshrc");
         std::fs::write(&rc, "alias ssh='grok wrap ssh'\n").unwrap();
-        let command = format!(
-            "source '{}'; source '{}'; eval 'ssh -p 2222 host'",
-            rc.display(),
-            rc.display()
-        );
-        let mut shell = std::process::Command::new(zsh);
+        let mut shell = PtyController::spawn_inherited_env(
+            &zsh,
+            size,
+            &["-f", "-i"],
+            &[("PATH", &path), ("TERM", "xterm-256color")],
+            Some(temp.path()),
+        )
+        .expect("spawn zsh under pty");
         shell
-            .args(["-dfc", &command])
-            .env(
-                "PATH",
-                format!(
-                    "{}:{}",
-                    temp.path().display(),
-                    std::env::var("PATH").unwrap()
-                ),
+            .inject_keys(
+                format!("source '{}'\nssh -p 2222 host\nexit\n", rc.display()).as_bytes(),
             )
-            .stdin(std::process::Stdio::null())
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .envs(xai_tty_utils::pager_env());
-        xai_tty_utils::detach_std_command(&mut shell);
-        let status = shell.status().unwrap();
-        assert!(status.success());
+            .expect("inject zsh commands");
+        assert!(
+            matches!(
+                shell.wait_exit_code(Duration::from_secs(15)).unwrap(),
+                PtyExitPoll::Exited(0)
+            ),
+            "zsh alias expansion must run grok wrap with the exact argv"
+        );
         assert_eq!(
             std::fs::read_to_string(&capture).unwrap(),
             "wrap\nssh\n-p\n2222\nhost\n"
@@ -1123,26 +1135,29 @@ fn shell_aliases_expand_to_exact_argv_and_bypass_is_explicit() {
     let Some(bash) = find_on_path("bash") else {
         return;
     };
-    let mut shell = std::process::Command::new(bash);
+    let bypass_path = format!("{}:{}", fake_bin.display(), path);
+    let mut shell = PtyController::spawn_inherited_env(
+        &bash,
+        size,
+        &["--noprofile", "--rcfile", "/dev/null", "-i"],
+        &[
+            ("PATH", &bypass_path),
+            ("TERM", "xterm-256color"),
+            ("CAPTURE", capture.to_str().unwrap()),
+        ],
+        Some(temp.path()),
+    )
+    .expect("spawn bypass bash under pty");
     shell
-        .args(["-ic", "alias ssh='grok wrap ssh'; command ssh host"])
-        .env("CAPTURE", &capture)
-        .env(
-            "PATH",
-            format!(
-                "{}:{}:{}",
-                fake_bin.display(),
-                temp.path().display(),
-                std::env::var("PATH").unwrap()
-            ),
-        )
-        .stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .envs(xai_tty_utils::pager_env());
-    xai_tty_utils::detach_std_command(&mut shell);
-    let status = shell.status().unwrap();
-    assert!(status.success());
+        .inject_keys(b"alias ssh='grok wrap ssh'\ncommand ssh host\nexit\n")
+        .expect("inject bypass commands");
+    assert!(
+        matches!(
+            shell.wait_exit_code(Duration::from_secs(15)).unwrap(),
+            PtyExitPoll::Exited(0)
+        ),
+        "command ssh must bypass the wrap alias"
+    );
     assert_eq!(std::fs::read_to_string(&capture).unwrap(), "bypass");
 
     if let Some(fish) = find_on_path("fish") {

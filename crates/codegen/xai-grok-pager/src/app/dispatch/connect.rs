@@ -454,7 +454,7 @@ pub(super) fn dispatch_keychain_export(
     let result: Result<(PathBuf, usize), String> = (|| {
         let kc = app
             .keychain
-            .as_ref()
+            .as_mut()
             .ok_or_else(|| KEYCHAIN_LOCKED_MSG.to_string())?;
         let count = match kc.list_keys() {
             Ok(entries) => entries
@@ -653,7 +653,7 @@ pub(super) fn dispatch_connect_provider(
         model_id: model_id.clone(),
         model_key: model_key.clone(),
         base_url,
-        api_backend: snapshot.as_ref().and_then(|s| s.api_backend),
+        api_backend: snapshot.as_ref().and_then(|s| s.api_backend.clone()),
     }];
 
     // 4) Aktif oturumun modelini değiştir (router'daki `Action::SwitchModel`

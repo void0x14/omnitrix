@@ -37,11 +37,38 @@ fn open_keychain_with_entry(provider: &str) -> (Keychain, String, tempfile::Temp
             None,
         )
         .expect("add_key");
+    kc.save().expect("save");
     (kc, id, dir)
 }
 
 fn welcome_toast(app: &AppView) -> Option<&str> {
+    // Wizard modalları agent üzerinde açılır; show_toast o görüşe gider.
+    if let crate::app::app_view::ActiveView::Agent(id) = app.active_view
+        && let Some(agent) = app.agents.get(&id)
+        && let Some((msg, _)) = &agent.toast
+    {
+        return Some(msg.as_str());
+    }
     app.welcome_toast.as_ref().map(|(m, _)| m.as_str())
+}
+
+/// Panic mesajı için `ActiveModal` varyant adı (Debug derive'ı gerektirmez).
+fn active_modal_kind(m: &crate::views::modal::ActiveModal) -> &'static str {
+    match m {
+        crate::views::modal::ActiveModal::KeysManager { .. } => "KeysManager",
+        crate::views::modal::ActiveModal::ProviderConnect { .. } => "ProviderConnect",
+        crate::views::modal::ActiveModal::EditConfirm { .. } => "EditConfirm",
+        crate::views::modal::ActiveModal::CommandPalette { .. } => "CommandPalette",
+        crate::views::modal::ActiveModal::ArgPicker { .. } => "ArgPicker",
+        crate::views::modal::ActiveModal::SessionPicker { .. } => "SessionPicker",
+        crate::views::modal::ActiveModal::DocPicker { .. } => "DocPicker",
+        crate::views::modal::ActiveModal::DocViewer { .. } => "DocViewer",
+        crate::views::modal::ActiveModal::ShortcutsHelp { .. } => "ShortcutsHelp",
+        crate::views::modal::ActiveModal::MemoryBrowser { .. } => "MemoryBrowser",
+        crate::views::modal::ActiveModal::Settings { .. } => "Settings",
+        crate::views::modal::ActiveModal::ResetSettingsConfirm { .. } => "ResetSettingsConfirm",
+        crate::views::modal::ActiveModal::RememberNoteReview { .. } => "RememberNoteReview",
+    }
 }
 
 #[test]
@@ -156,7 +183,7 @@ fn open_keys_manager_opens_modal_with_entries() {
             );
             assert!(state.entries.is_empty());
         }
-        other => panic!("KeysManager bekleniyor, {other:?}"),
+        other => panic!("KeysManager bekleniyor, {}", active_modal_kind(other)),
     }
 }
 
@@ -177,7 +204,7 @@ fn open_keys_manager_unlocked_keychain_lists_entries() {
             assert_eq!(state.entries.len(), 1);
             assert_eq!(state.entries[0].provider_id, "openai");
         }
-        other => panic!("KeysManager bekleniyor, {other:?}"),
+        other => panic!("KeysManager bekleniyor, {}", active_modal_kind(other)),
     }
 }
 
@@ -211,7 +238,6 @@ fn connect_provider_borrows_pushes_and_persists() {
     // Tools/voice seam: process static key itildi (tmp AuthManager üzerinden;
     // `shared_api_key_provider` static fallthrough'u okur).
     {
-        use xai_grok_tools::types::ApiKeyProvider;
         let provider = xai_grok_shell::auth::shared_api_key_provider(
             app.auth_manager.as_ref().expect("auth manager").clone(),
         );
@@ -344,7 +370,7 @@ fn keychain_borrow_stashes_for_session() {
     app.keychain = Some(kc);
     let effects = dispatch_keychain_borrow(&mut app, key_id);
     assert!(effects.is_empty());
-    let stash = app.keychain_borrow.expect("stash");
+    let stash = app.keychain_borrow.as_ref().expect("stash");
     assert_eq!(stash.get(), "sk-test-secret");
     let toast = welcome_toast(&app).expect("borrow toast");
     assert!(toast.contains("borçlandı"), "toast: {toast}");
@@ -411,7 +437,6 @@ fn connect_provider_emits_switch_model_when_in_catalog() {
 
 use crate::views::provider_picker::{ConnectStep, KeyMode, ProviderSelection};
 use xai_grok_shell::sampling::ApiBackend;
-use zeroize::Zeroizing;
 
 /// Wizard'ı açıp flow'u Apply adımına hazırlar (custom provider + New key).
 fn wizard_at_apply(app: &mut AppView, key: &str) {
@@ -717,7 +742,7 @@ fn wizard_fetch_provider_models_dispatches_effect_with_key() {
     match &effects[0] {
         Effect::FetchProviderModels { base_url, api_key } => {
             assert_eq!(base_url, "http://localhost:8000/v1");
-            assert_eq!(api_key.as_deref(), Some("sk-fetch-key"));
+            assert_eq!(api_key.as_ref().map(|s| s.as_str()), Some("sk-fetch-key"));
         }
         other => panic!("expected FetchProviderModels, got {other:?}"),
     }
@@ -826,7 +851,10 @@ fn keys_manager_state(app: &AppView) -> &KeysManagerState {
     let agent = app.agents.values().next().expect("agent");
     match &agent.active_modal {
         Some(crate::views::modal::ActiveModal::KeysManager { state }) => state,
-        other => panic!("KeysManager modal expected, got {other:?}"),
+        other => panic!(
+            "KeysManager modal expected, got {}",
+            other.as_ref().map(active_modal_kind).unwrap_or("None")
+        ),
     }
 }
 
@@ -834,7 +862,10 @@ fn keys_manager_state_mut(app: &mut AppView) -> &mut KeysManagerState {
     let agent = app.agents.values_mut().next().expect("agent");
     match &mut agent.active_modal {
         Some(crate::views::modal::ActiveModal::KeysManager { state }) => state,
-        other => panic!("KeysManager modal expected, got {other:?}"),
+        other => panic!(
+            "KeysManager modal expected, got {}",
+            other.as_ref().map(active_modal_kind).unwrap_or("None")
+        ),
     }
 }
 
@@ -872,7 +903,7 @@ fn keys_unlock_action_wrong_password_stays_locked_with_error() {
     open_keys_manager_locked(&mut app, path);
     let _ = dispatch_keychain_unlock(&mut app, Zeroizing::new("wrong".to_string()));
     assert!(app.keychain.is_none());
-    match keys_manager_state(&app).mode {
+    match &keys_manager_state(&app).mode {
         KeysManagerMode::Unlock { error } => {
             assert!(error.is_some(), "hata mesajı olmalı");
         }

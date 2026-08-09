@@ -22,7 +22,7 @@ use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
-use unicode_width::UnicodeWidthStr;
+use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 use zeroize::Zeroizing;
 
 use xai_omni_keychain::{ExportScope, ImportSummary, KeyEntry};
@@ -221,7 +221,7 @@ impl KeysManagerState {
 /// Modal girdisi çıktısı: modal katmanı (`app/modals.rs`) bunları
 /// `InputOutcome`'a çevirir; `Action` varyantları AppView dispatch'ine gider
 /// (keychain yalnızca dispatch katmanında dokunulur — invariant).
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub enum KeysManagerOutcome {
     /// Modal kapanmalı (browse'ta Esc / close butonu).
     Close,
@@ -1202,7 +1202,7 @@ fn render_masked_input(
         buf.set_span(
             input_x,
             y,
-            &Span::styled(shown, Style::default().fg(theme.text_primary)),
+            &Span::styled(&shown, Style::default().fg(theme.text_primary)),
             shown.width() as u16,
         );
     }
@@ -1293,11 +1293,12 @@ fn render_unlock(
     }
 }
 
-/// Tablo sütun genişlikleri (keys_cmd formatıyla uyumlu).
-const COL_KATEGORI: usize = 16;
-const COL_PROVIDER: usize = 16;
-const COL_MASKELI: usize = 24;
-const COL_MODEL: usize = 20;
+/// Tablo sütun genişlikleri (modal iç genişliğine sığar; keys_cmd formatıyla
+/// uyumlu — ID sütunu modalda yok).
+const COL_KATEGORI: usize = 12;
+const COL_PROVIDER: usize = 14;
+const COL_MASKELI: usize = 16;
+const COL_MODEL: usize = 14;
 const COL_LAST: usize = 12;
 
 fn render_browse(
@@ -1474,7 +1475,7 @@ fn wrap_key(key: &str, width: usize) -> Vec<String> {
         let mut take = 0;
         let mut w = 0;
         for ch in rest.chars() {
-            let cw = ch.width().max(1);
+            let cw = ch.width().unwrap_or(0).max(1);
             if w + cw > width {
                 break;
             }

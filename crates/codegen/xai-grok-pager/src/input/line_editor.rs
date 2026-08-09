@@ -13,7 +13,7 @@ pub(crate) enum LineEditOutcome {
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub(crate) struct LineEditor {
+pub struct LineEditor {
     buffer: EditBuffer,
 }
 
