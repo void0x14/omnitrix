@@ -8,8 +8,8 @@
 pub mod classifier;
 pub mod definition;
 pub mod duration;
+pub mod events;
 pub mod gate;
+pub mod governor;
 pub mod state;
-// pub mod events;      // Task 3
-// pub mod governor;    // Task 3
-// pub mod store;       // Task 3
+pub mod store;
