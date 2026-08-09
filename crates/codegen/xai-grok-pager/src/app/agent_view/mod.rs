@@ -906,6 +906,12 @@ pub struct AgentView {
     /// Toggled by `Action::ToggleGoalDetail`. Only shown when
     /// `goal_state` is `Some`.
     pub show_goal_detail: bool,
+    /// Whether the Flow Governor detail overlay is visible.
+    /// Toggled by `Action::ToggleFlowDetail` (`F`).
+    pub show_flow_detail: bool,
+    /// flow_events.jsonl okuma önbelleği: (mtime, satırlar). Dosya değişmedikçe
+    /// her karede tekrar okunmaz (TUI performansı).
+    pub flow_events_cache: Option<(std::time::SystemTime, Vec<crate::views::flow_detail::FlowEventLine>)>,
     /// UTC ms when the current turn started (`turnStartMs` from notification meta).
     /// Used for turn elapsed display.
     pub turn_start_ms: Option<i64>,

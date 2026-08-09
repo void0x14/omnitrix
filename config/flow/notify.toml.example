@@ -1,0 +1,33 @@
+# Bildirim kanalları — notify aşaması (system-triggered, AI DEĞİL).
+# Görev tamamlandığında SİSTEM bu kanallara bildirim gönderir; kanal hatası
+# akışı asla düşürmez (fail-soft — ihlal/rapor kaydına yazılır).
+# Yol: $OMNITRIX_CONFIG_DIR/flow/notify.toml veya <cwd>/config/flow/notify.toml
+
+[telegram]
+enabled = false
+# Bot API token + hedef sohbet/kanal id'si
+token = "123456:ABC-DEF..."
+chat_id = "@benim_kanal"
+
+[webhook]
+enabled = false
+url = "https://example.com/hook/omnitrix"
+# İsteğe bağlı: ek başlıklar (JSON nesnesi)
+headers_json = '{"X-Omnitrix": "flow"}'
+
+[sms]
+enabled = false
+# NetGSM uyumlu uç (Twilio vb. de bu şemaya uyarlanabilir)
+url = "https://api.netgsm.com.tr/sms/send/get"
+username = "netgsm_kullanici"
+password = "netgsm_sifre"
+msgheader = "OMNITRIX"
+gsmno = "5xxxxxxxxx"
+
+[call]
+enabled = false
+# Çağrı sağlayıcı ucu (ör. NetGSM sesli arama)
+url = "https://api.netgsm.com.tr/voice/call/get"
+username = "netgsm_kullanici"
+password = "netgsm_sifre"
+gsmno = "5xxxxxxxxx"

@@ -5,6 +5,26 @@ pub enum ToolGroup {
     Read, Search, Write, Bash, Web, Research, Computer, Plan, Task, Meta, All,
 }
 
+impl ToolGroup {
+    /// TOML/yapılandırma dizesinden grup çözer (flows.toml override'ları için).
+    pub fn from_str(s: &str) -> Option<Self> {
+        Some(match s {
+            "read" => Self::Read,
+            "search" => Self::Search,
+            "write" => Self::Write,
+            "bash" => Self::Bash,
+            "web" => Self::Web,
+            "research" => Self::Research,
+            "computer" => Self::Computer,
+            "plan" => Self::Plan,
+            "task" => Self::Task,
+            "meta" => Self::Meta,
+            "all" => Self::All,
+            _ => return None,
+        })
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum ArtifactId {
     ProblemList, FindingsArchive, DigestNote, StackChoice, StackVerified,
@@ -135,7 +155,7 @@ pub fn default_flows() -> &'static [FlowDefinition] {
             id: StageId::Decompose,
             tool_groups: &[ToolGroup::Read, ToolGroup::Plan, ToolGroup::Write, ToolGroup::Meta],
             produces: &[ArtifactId::BuildingBlocks],
-            directive: "ADIM 8/12 — YAPI TAŞLARI: Planı küçük yapı taşlarına böl; her taş için dosya yollarıyla birlikte building_blocks dosyasına yaz. Bitince flow_checkpoint ile 'decompose' aşamasını kapat (dosya yolunu ver).",
+            directive: "ADIM 8/12 — YAPI TAŞLARI: Planı küçük yapı taşlarına böl; building_blocks dosyasına JSONL satırları olarak yaz. Her satır: {\"id\":\"b1\",\"task\":\"<bu taşta yapılacak iş>\",\"files\":[\"<etkilenen dosyalar>\"],\"depends\":[\"<bağımlı olduğu taş id'leri>\"]}. 'task' alanı ZORUNLUDUR (sistem bu metinle alt ajan görevlendirir). Bitince flow_checkpoint ile 'decompose' aşamasını kapat (dosya yolunu ver).",
         },
         StageDefinition {
             id: StageId::ParallelQuery,

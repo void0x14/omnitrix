@@ -1065,6 +1065,8 @@ pub enum Action {
     EditPromptExternal,
     /// Toggle the expanded goal detail overlay.
     ToggleGoalDetail,
+    /// Toggle the Flow Governor detail overlay (flow_events.jsonl).
+    ToggleFlowDetail,
     ToggleWorkflows,
     Rewind,
     RewindShowPicker,

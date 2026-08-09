@@ -57,10 +57,31 @@ impl FlowGate {
         use super::definition::StageId;
         // universal akış: yalnızca execute/verify aşamalarında bash açık (grup zaten
         // kapıyor) — burada yalnızca commit akışının komut kuralları.
+        // Yerleşik araç zorunluluğu (TÜM akışlarda geçerli): dosya okuma/yazma
+        // ve arama, yerleşik read_file/search_replace/grep araçlarıyla yapılır;
+        // bash ile "tembellik" yolları yasak (kullanıcı direktifi).
+        let lower = command.to_lowercase();
+        let builtin_tool_deny: &[(&str, &str)] = &[
+            ("cat ", "cat yasak: dosya okuma için read_file aracını kullan"),
+            ("less ", "less yasak: dosya okuma için read_file aracını kullan"),
+            ("more ", "more yasak: dosya okuma için read_file aracını kullan"),
+            ("head ", "head yasak: dosya okuma için read_file aracını kullan"),
+            ("tail ", "tail yasak: dosya okuma için read_file aracını kullan"),
+            ("grep ", "grep yasak: arama için yerleşik grep/search araçlarını kullan"),
+            ("sed ", "sed yasak: düzenleme için search_replace aracını kullan"),
+            ("awk ", "awk yasak: düzenleme/okuma için yerleşik araçları kullan"),
+            ("echo >", "echo yönlendirme yasak: yazma için write/search_replace aracını kullan"),
+            (">>", "yönlendirme yasak: yazma için write/search_replace aracını kullan"),
+            ("rm ", "rm yasak: silme yerleşik dosya araçlarıyla yapılır"),
+        ];
+        for (pat, reason) in builtin_tool_deny {
+            if lower.contains(pat) {
+                return BashVerdict::Deny(reason);
+            }
+        }
         if sm.flow().name != "commit" {
             return BashVerdict::Allow;
         }
-        let lower = command.to_lowercase();
         let deny: &[(&str, &str)] = &[
             ("--force", "force komutları yasak: geçmişe saygı (I-kural)"),
             ("--hard", "hard reset yasak"),

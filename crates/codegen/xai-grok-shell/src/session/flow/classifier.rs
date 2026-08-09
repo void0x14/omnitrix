@@ -13,30 +13,37 @@ pub enum UserMode {
 #[derive(Debug, Clone)]
 pub struct FlowRules {
     /// commit akışını tetikleyen kelimeler (küçük harfe çevrilmiş prompt'ta aranır)
-    pub commit_keywords: Vec<&'static str>,
+    pub commit_keywords: Vec<String>,
     /// araştırma sinyali kelimeleri
-    pub research_keywords: Vec<&'static str>,
+    pub research_keywords: Vec<String>,
     /// yazma sinyali kelimeleri (dosya/kod değişikliği isteyen görev)
-    pub write_keywords: Vec<&'static str>,
+    pub write_keywords: Vec<String>,
     /// direct akış eşiği: bu değerden kısa ve araştırma/yazma sinyali yoksa direct
     pub direct_max_len: usize,
     /// commit akışı için minimal uzunluk üst sınırı (uzun metin = universal)
     pub commit_max_len: usize,
     /// mvp kararı için task uzunluk üst sınırı
     pub mvp_max_len: usize,
+    /// Aşama başına maksimum düzeltme (KeepWorking) sayısı; governor'daki
+    /// MAX_REDIRECTS_PER_STAGE ile aynıdır, rules.toml ile ezilebilir.
+    pub max_redirects_per_stage: u32,
 }
 
 impl Default for FlowRules {
     fn default() -> Self {
         Self {
-            commit_keywords: vec!["commit", "commit et", "commit at", "git commit", "değişiklikleri kaydet"],
+            commit_keywords: vec!["commit", "commit et", "commit at", "git commit", "değişiklikleri kaydet"]
+                .into_iter().map(str::to_string).collect(),
             research_keywords: vec!["araştır", "research", "nedir", "nasıl çalışır", "kıyasla", "karşılaştır",
-                "web", "kaynak", "güncel", "2026", "ne yapmalı", "en iyi"],
+                "web", "kaynak", "güncel", "2026", "ne yapmalı", "en iyi"]
+                .into_iter().map(str::to_string).collect(),
             write_keywords: vec!["yaz", "ekle", "oluştur", "düzelt", "fix", "implement", "kodla",
-                "dosya", "fonksiyon", "modül", "hata", "bug", "refactor", "feature"],
+                "dosya", "fonksiyon", "modül", "hata", "bug", "refactor", "feature"]
+                .into_iter().map(str::to_string).collect(),
             direct_max_len: 120,
             commit_max_len: 400,
             mvp_max_len: 800,
+            max_redirects_per_stage: 3,
         }
     }
 }
@@ -68,7 +75,7 @@ pub struct FlowClassifier;
 impl FlowClassifier {
     pub fn classify(prompt: &str, _mode: UserMode, rules: &FlowRules) -> ClassifiedFlow {
         let lower = prompt.to_lowercase();
-        let has = |words: &[&'static str]| words.iter().any(|w| lower.contains(w));
+        let has = |words: &[String]| words.iter().any(|w| lower.contains(w.as_str()));
 
         // 1) commit sinyali
         if has(&rules.commit_keywords) && lower.len() <= rules.commit_max_len {

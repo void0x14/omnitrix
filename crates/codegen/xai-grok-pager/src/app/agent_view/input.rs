@@ -1221,6 +1221,14 @@ impl AgentView {
                 Action::ToggleWorkflows
             });
         }
+        // Flow Governor paneli: Shift+F.
+        if let Event::Key(key) = ev
+            && key.kind != KeyEventKind::Release
+            && key.code == KeyCode::Char('F')
+            && key.modifiers.is_empty()
+        {
+            return InputOutcome::Action(Action::ToggleFlowDetail);
+        }
         if let Event::Key(key) = ev
             && key.kind != KeyEventKind::Release
         {

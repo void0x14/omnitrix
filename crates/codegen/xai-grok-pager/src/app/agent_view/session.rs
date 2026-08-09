@@ -129,6 +129,8 @@ impl AgentView {
             pending_stop_hooks: None,
             last_cleared_goal_id: None,
             show_goal_detail: false,
+            show_flow_detail: false,
+            flow_events_cache: None,
             turn_start_ms: None,
             turn_start_ms_prompt: None,
             turn_started_at: None,

@@ -19,8 +19,9 @@ pub struct FlowStateMachine {
     redirect_count: u32,
 }
 
-/// Aşama başına izin verilen maksimum düzeltme (KeepWorking) sayısı.
+/// Aşama başına izin verilen varsayılan maksimum düzeltme (KeepWorking) sayısı.
 /// Aşılırsa governor deterministik olarak turu bitirir (kilit açma).
+/// `rules.toml` `max_redirects_per_stage` ile ezilebilir.
 pub const MAX_REDIRECTS_PER_STAGE: u32 = 3;
 
 impl FlowStateMachine {
@@ -123,10 +124,10 @@ impl FlowStateMachine {
         }
     }
 
-    /// Düzeltme sayacı; limit aşıldıysa false (governor turu bitirir).
-    pub fn bump_redirect(&mut self) -> bool {
+    /// Düzeltme sayacı; limit (aşama başına) aşıldıysa false (governor turu bitirir).
+    pub fn bump_redirect(&mut self, max: u32) -> bool {
         self.redirect_count += 1;
-        self.redirect_count <= MAX_REDIRECTS_PER_STAGE
+        self.redirect_count <= max.max(1)
     }
 
     pub fn redirect_count(&self) -> u32 {

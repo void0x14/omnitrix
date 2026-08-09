@@ -2344,7 +2344,9 @@ impl SessionActor {
         }
         // Flow Governor (S6): aşama kanıtı + checkpoint kararı. flow_checkpoint
         // aracının yankıladığı metin, gerçek karar metniyle değiştirilir;
-        // model yalnızca gerçek kararı görür (echo'ya değil).
+        // model yalnızca gerçek kararı görür (echo'ya değil). Sistem aşamaları
+        // (verify/execute_full/notify) `system_async:*` marker'ıyla S6'da
+        // tamamlanır; karar her zaman governor'ın finalize_*'ında verilir.
         if effective_tool_name == "flow_checkpoint" {
             let stage = tool_parsed_args
                 .get("stage")
@@ -2365,10 +2367,17 @@ impl SessionActor {
                         .collect()
                 })
                 .unwrap_or_default();
-            prompt_text = self
+            let checkpoint = self
                 .flow_governor
                 .lock()
                 .process_checkpoint_call(&stage, &summary, files);
+            if checkpoint.detail.starts_with("system_async:") {
+                let action = checkpoint.detail.trim_start_matches("system_async:");
+                prompt_text = self.flow_run_async_action(action, &summary, &stage).await;
+            } else {
+                prompt_text = serde_json::to_string(&checkpoint)
+                    .unwrap_or_else(|_| checkpoint.directive);
+            }
         }
         self.flow_governor.lock().on_tool_success(effective_tool_name);
         let tool_chat = if inline_images.is_empty() {
@@ -2425,6 +2434,157 @@ impl SessionActor {
         }
         Ok(deferred_followups)
     }
+
+    // ── Flow Governor (S6-async): sistem aşamaları ─────────────────────────
+    // verify → yargıç alt ajanı (üreten ≠ doğrulayan); execute_full → sistem
+    // çoklu ajan blok yürütmesi (yürütme grafiği, paralel gruplar); notify →
+    // telegram/webhook/sms/çağrı. Karar her zaman governor'ın finalize_*'ında:
+    // buradaki kod yalnızca sistemin görevlendirmesini yürütür.
+    async fn flow_run_async_action(&self, action: &str, summary: &str, stage: &str) -> String {
+        match action {
+            "verify" => self.flow_run_judge(summary, stage).await,
+            "execute_full" => self.flow_run_execute_full().await,
+            "notify" => self.flow_run_notify(summary).await,
+            other => format!("flow_checkpoint: bilinmeyen sistem işlemi: {other}"),
+        }
+    }
+
+    /// Yargıç: `judge` persona'lı alt ajanı (system-triggered) görevlendirir,
+    /// kararı `finalize_verify` ile kesinleştirir. Spawn hatası fail-soft:
+    /// ihlal kaydedilir ve aşama deterministik olarak ilerler (kilit açma).
+    async fn flow_run_judge(&self, summary: &str, stage: &str) -> String {
+        let bridge = self.agent.borrow().tool_bridge().clone();
+        let evidence = vec![format!("aşama: {stage}")];
+        let prompt = crate::session::flow::judge::build_judge_prompt(summary, &evidence);
+        let args = serde_json::json!({
+            "prompt": prompt,
+            "description": "flow-verify-judge",
+            "subagent_type": "judge",
+            "run_in_background": false,
+        });
+        let raw = match bridge.call("task", args, "flow_judge_checkpoint").await {
+            Ok(run) => crate::session::flow::judge::extract_task_output_text(&run),
+            Err(err) => format!("yargıç görevlendirmesi başarısız: {err}"),
+        };
+        // Spawn hatası → yargıç kararı yok; fail-soft: ihlal kaydedilir ve
+        // aşama kabulle ilerler (yargıç yokluğu aşamayı ASLA kilitlemez).
+        let verdict = if raw.starts_with("yargıç görevlendirmesi başarısız") {
+            self.events_violation("flow_judge", &raw);
+            crate::session::flow::judge::JudgeVerdict {
+                raw_output: raw.clone(),
+                accepted: true,
+                reason: "yargıç görevlendirmesi başarısız; fail-soft kabul (ihlal kayıtlı)".to_string(),
+            }
+        } else {
+            crate::session::flow::judge::parse_verdict(&raw)
+        };
+        let result = self.flow_governor.lock().finalize_verify(&verdict);
+        serde_json::to_string(&result).unwrap_or_else(|_| result.directive)
+    }
+
+    fn events_violation(&self, tool: &str, reason: &str) {
+        use crate::session::flow::events::FlowEvents;
+        // Olay kaydı: doğrudan unified_log üzerinden (events.rs kanalına
+        // dokunmadan — flow modülü session'dan bağımsız kalır).
+        xai_grok_telemetry::unified_log::info(
+            "flow.violation",
+            Some(self.session_info.id.0.as_ref()),
+            Some(serde_json::json!({ "tool": tool, "reason": reason })),
+        );
+    }
+
+    /// Execute (duration=Full): yürütme grafiğindeki blokları SİSTEM görevlendirir.
+    /// Gruplar sıralı, grup içi bloklar paralel (deterministik grafik). Tüm
+    /// görevlendirmeler başarısız olursa aşama reddedilir (model uygular).
+    async fn flow_run_execute_full(&self) -> String {
+        let (graph, problem) = {
+            let g = self.flow_governor.lock();
+            (g.execution_graph(), g.problem_text().to_string())
+        };
+        let Some(graph) = graph else {
+            let result = self
+                .flow_governor
+                .lock()
+                .finalize_execute("yürütme grafiği yok; görev model tarafından tamamlandı");
+            return serde_json::to_string(&result).unwrap_or_else(|_| result.directive);
+        };
+        if graph.sequence.is_empty() {
+            let result = self
+                .flow_governor
+                .lock()
+                .finalize_execute("yapı taşı yok; görev model tarafından tamamlandı");
+            return serde_json::to_string(&result).unwrap_or_else(|_| result.directive);
+        }
+        let bridge = self.agent.borrow().tool_bridge().clone();
+        let mut outputs: Vec<String> = Vec::new();
+        let mut failures: usize = 0;
+        let mut total: usize = 0;
+        for group in graph.sequence {
+            let mut handles = Vec::new();
+            for block_id in group.parallel {
+                let bridge = bridge.clone();
+                let problem = problem.clone();
+                total += 1;
+                handles.push(tokio::spawn(async move {
+                    let args = serde_json::json!({
+                        "prompt": format!(
+                            "Sistem görevlendirmesi (akış yürütme grafiği — AI inisiyatifi DEĞİL).\n\
+                             Görev: {problem}\n\
+                             Yapı taşı: {block_id}\n\
+                             Bu taşı yerine getir ve çıktını kısaca özetle."
+                        ),
+                        "description": format!("flow-block-{block_id}"),
+                        "subagent_type": "executor",
+                        "run_in_background": false,
+                    });
+                    match bridge.call("task", args, &format!("flow_block_{block_id}")).await {
+                        Ok(run) => format!("[{block_id}]\n{}", run.prompt_text),
+                        Err(err) => format!("[{block_id}] HATA: {err}"),
+                    }
+                }));
+            }
+            for h in handles {
+                if let Ok(out) = h.await {
+                    if out.contains("HATA:") {
+                        failures += 1;
+                    }
+                    outputs.push(out);
+                }
+            }
+        }
+        if failures == total && total > 0 {
+            // Tüm sistem görevlendirmeleri başarısız → model uygulamalı.
+            let result = crate::session::flow::governor::CheckpointResult {
+                accepted: false,
+                pending: false,
+                stage: "execute".to_string(),
+                directive: format!(
+                    "Sistem çoklu ajan yürütmesi başarısız ({failures}/{total}); yapı taşlarını \
+                     kendin uygula ve flow_checkpoint ile tekrar dene."
+                ),
+                detail: "sistem yürütmesi başarısız".to_string(),
+            };
+            return serde_json::to_string(&result).unwrap_or_else(|_| result.directive);
+        }
+        let combined = outputs.join("\n\n");
+        let result = self.flow_governor.lock().finalize_execute(&combined);
+        serde_json::to_string(&result).unwrap_or_else(|_| result.directive)
+    }
+
+    /// Notify: bildirim kanallarını (telegram/webhook/sms/çağrı) yürütür,
+    /// raporu `finalize_notify` ile kesinleştirir (fail-soft).
+    async fn flow_run_notify(&self, summary: &str) -> String {
+        let (config, problem) = {
+            let g = self.flow_governor.lock();
+            (g.notify_config(), g.problem_text().to_string())
+        };
+        let title = "Omnitrix Flow — görev tamamlandı";
+        let body = format!("Görev: {problem}\n\nSonuç: {summary}");
+        let report = crate::session::flow::notify::dispatch(&config, title, &body).await;
+        let result = self.flow_governor.lock().finalize_notify(&report);
+        serde_json::to_string(&result).unwrap_or_else(|_| result.directive)
+    }
+
     /// Handle a hard tool execution error (dispatch/validation failure).
     ///
     /// Emits the failed tool_result to the client and records failure signals.

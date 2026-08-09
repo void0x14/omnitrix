@@ -1392,6 +1392,12 @@ pub(crate) fn dispatch(action: Action, app: &mut AppView) -> Vec<Effect> {
             });
             vec![]
         }
+        Action::ToggleFlowDetail => {
+            with_active_agent(app, |agent| {
+                agent.show_flow_detail = !agent.show_flow_detail;
+            });
+            vec![]
+        }
         Action::ToggleWorkflows => {
             let opening = matches!(app.active_view, ActiveView::Agent(id) if app.agents.get(&id).is_some_and(|agent| !agent.show_workflows));
             if opening {
