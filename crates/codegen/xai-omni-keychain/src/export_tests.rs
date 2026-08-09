@@ -9,7 +9,8 @@
 use super::*;
 use std::path::PathBuf;
 
-use crate::store::{KeySource, KeychainOptions, MasterKeyTtl};
+use crate::store::{KeySource, KeychainOptions};
+use crate::MasterKeyTtl;
 
 const TEST_MASTER_PW: &str = "test-master-pw";
 const TEST_EXPORT_PW: &str = "test-export-pw";
@@ -60,10 +61,9 @@ fn export_all_import_roundtrip() {
     let src_dir = TestDir::new();
     let dst_dir = TestDir::new();
     let mut src = open_fresh(&src_dir);
-    let id_a = src
-        .add_key("personal", "openai", TEST_KEY_OPENAI, Some("grok-3".to_string()), None)
+    src.add_key("personal", "openai", TEST_KEY_OPENAI, Some("grok-3".to_string()), None)
         .unwrap();
-    let id_b = src.add_key("work", "xai", TEST_KEY_XAI, None, None).unwrap();
+    src.add_key("work", "xai", TEST_KEY_XAI, None, None).unwrap();
     let bytes = export_all_bytes(&mut src);
 
     let mut dst = open_fresh(&dst_dir);
@@ -71,12 +71,23 @@ fn export_all_import_roundtrip() {
     assert_eq!(summary.imported_keys, 2);
     assert!(summary.overwritten.is_empty(), "fresh keychain: nothing overwritten");
     assert!(summary.skipped.is_empty(), "fresh keychain: nothing skipped");
+    // Export gövdesi KeyId taşımaz; import tarafında her kayıt yeni bir id
+    // alır, bu yüzden destination'ın kendi id'leri provider_id ile eşleşir.
+    let dst_entries = dst.list_keys().unwrap();
+    let dst_a = dst_entries
+        .iter()
+        .find(|e| e.provider_id == "openai")
+        .expect("openai entry imported");
+    let dst_b = dst_entries
+        .iter()
+        .find(|e| e.provider_id == "xai")
+        .expect("xai entry imported");
     assert_eq!(
-        *dst.reveal(id_a).unwrap(),
+        *dst.reveal(dst_a.id.clone()).unwrap(),
         TEST_KEY_OPENAI,
         "reveal must return the exported key"
     );
-    assert_eq!(*dst.reveal(id_b).unwrap(), TEST_KEY_XAI);
+    assert_eq!(*dst.reveal(dst_b.id.clone()).unwrap(), TEST_KEY_XAI);
 }
 
 #[test]

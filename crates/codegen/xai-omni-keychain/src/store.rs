@@ -682,8 +682,19 @@ pub fn default_keychain_path() -> PathBuf {
 
 /// KdfParams'ı Argon2id'nin `Params::new` panik yapabileceği değerlere karşı
 /// doğrular (dosya içeriği = güvenilmeyen veri).
+/// Argon2 `Params::new` panik yapar: p_cost 2'nin kuvveti değilse veya
+/// m_cost < 8 * p_cost ise. m_cost üst sınırı 1<<22 KiB (~4 GiB) bellek
+/// taşmasını, alt sınır 8192 KiB zayıf parametre indirgemesini engeller.
+/// 8 * p_cost taşmasına karşı aritmetik u64'te yapılır.
 fn valid_kdf_params(p: &KdfParams) -> bool {
-    p.t_cost >= 1 && p.p_cost >= 1 && p.m_cost >= 8192 && p.m_cost <= (1 << 26)
+    let m_cost = p.m_cost as u64;
+    let p_cost = p.p_cost as u64;
+    p.t_cost >= 1
+        && p.p_cost >= 1
+        && p.p_cost.is_power_of_two()
+        && m_cost >= 8192
+        && m_cost >= 8 * p_cost
+        && m_cost <= (1 << 22)
 }
 
 fn derive_key_safe(
