@@ -778,6 +778,9 @@ pub(crate) struct SessionActor {
     /// `Arc`-shared with the notification bridge so `PlanModeEntered` /
     /// `PlanModeExited` tool notifications can transition state directly.
     pub(crate) plan_mode: Arc<parking_lot::Mutex<crate::session::plan_mode::PlanModeTracker>>,
+    /// Flow Governor: deterministik görev akışı denetleyicisi (PlanModeTracker deseni).
+    /// Akış seçimi, aşama kapıları, kanıt ve ihlal düzeltmesi AI'dan bağımsızdır.
+    pub(crate) flow_governor: Arc<parking_lot::Mutex<crate::session::flow::governor::FlowGovernor>>,
     /// Whether goal mode (`/goal`) is enabled for this session (feature flag).
     pub(crate) goal_enabled: bool,
     pub(crate) background_workflows_enabled: bool,

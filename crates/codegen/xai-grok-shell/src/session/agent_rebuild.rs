@@ -371,6 +371,15 @@ impl AgentRebuildSpec {
                 );
             }
         }
+        // Flow Governor (S7): `flow_checkpoint` aracını MCP kayit duzlemine takar
+        // (computer-use deseni). Araç durumsuzdur: isteği yankılar, kararı shell
+        // S6 kancasında verir. Kayit hatasi kurulumu dusurmez (I6).
+        if let Err(err) = register_flow_checkpoint_tool(&agent).await {
+            tracing::warn!(
+                error = %err,
+                "flow_checkpoint aracı kaydedilemedi; ajan kurulumu surer"
+            );
+        }
         let model_validator = models_manager.clone();
         agent
             .tool_bridge()
@@ -460,6 +469,23 @@ async fn register_computer_use_tool(agent: &Agent) -> Result<(), String> {
         )
         .await
         .map_err(|err| format!("computer-use aracı kaydedilemedi: {err}"))
+}
+
+/// Flow Governor (S7): yerlesik `flow_checkpoint` aracını agent toolset'ine
+/// kaydeder (computer-use deseni — MCP kayit duzlemi, harici sunucu yok).
+/// Araç durumsuzdur: isteği yankılar, karar (aşama sırası + kanıt) shell'in
+/// S6 kancasında verilir. Böylece iki crate tip paylaşmaz; akış kararı asla
+/// modele ait değildir.
+async fn register_flow_checkpoint_tool(agent: &Agent) -> Result<(), String> {
+    agent
+        .tool_bridge()
+        .register_mcp_tools(
+            "flow".to_owned(),
+            xai_grok_tools::flow_checkpoint::FlowCheckpointTool,
+            None,
+        )
+        .await
+        .map_err(|err| format!("flow_checkpoint aracı kaydedilemedi: {err}"))
 }
 
 /// Build a stub [`AgentRebuildSpec`] for unit tests.

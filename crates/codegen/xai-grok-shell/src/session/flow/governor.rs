@@ -191,8 +191,10 @@ impl FlowGovernor {
         if !self.is_active() {
             return;
         }
-        // checkpoint isteği varsa doğrula
-        let mut cell = self.cell.lock();
+        // checkpoint isteği varsa doğrula. Arc klonu: guard `self`'i ödünç
+        // almasın — `validate_checkpoint` `&mut self` ister (E0502 önlenir).
+        let cell_arc = self.cell.clone();
+        let mut cell = cell_arc.lock();
         if let Some(req) = cell.request.take() {
             let stage = cell.stage.unwrap_or(StageId::Do);
             let result = self.validate_checkpoint(&req, stage, &mut cell);
@@ -262,6 +264,28 @@ impl FlowGovernor {
                 )
             }
         }
+    }
+
+    /// flow_checkpoint aracı çağrısını işler (S6): isteği hemen doğrular ve
+    /// kararı (kabul / red + direktif) JSON metni olarak döndürür. Dönen
+    /// metin tool sonucu olarak chat state'e gider; araç durumsuz olduğu
+    /// için kararın ikinci bir çağrıya saklanması gerekmez. Akış yoksa
+    /// açık bir mesaj döner (patlama yok — I6).
+    pub fn process_checkpoint_call(&mut self, stage: &str, summary: &str, files: Vec<String>) -> String {
+        if !self.is_active() {
+            return "flow_checkpoint: aktif akış yok; bu araç yalnızca akış denetimli görevlerde kullanılabilir"
+                .to_string();
+        }
+        let req = CheckpointRequest {
+            stage: stage.to_string(),
+            summary: summary.to_string(),
+            files,
+        };
+        let cell_arc = self.cell.clone();
+        let mut cell = cell_arc.lock();
+        let current = cell.stage.unwrap_or(StageId::Do);
+        let result = self.validate_checkpoint(&req, current, &mut cell);
+        serde_json::to_string(&result).unwrap_or_else(|_| result.directive)
     }
 }
 

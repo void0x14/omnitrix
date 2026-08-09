@@ -624,6 +624,14 @@ pub(crate) async fn spawn_session_actor(
         };
         Arc::new(parking_lot::Mutex::new(tracker))
     };
+    // Task 4: Flow Governor — deterministik görev akışı denetleyicisi.
+    // PlanModeTracker deseni: `Arc<Mutex<FlowGovernor>>`; karar noktaları
+    // (A-D) ve checkpoint köprüsü buradan beslenir.
+    let flow_governor = Arc::new(parking_lot::Mutex::new(
+        crate::session::flow::governor::FlowGovernor::new(
+            &crate::session::persistence::session_dir(&session_info),
+        ),
+    ));
     let current_prompt_mode = Arc::new(parking_lot::Mutex::new(PromptMode::Agent));
     let turn_prompt_mode = Arc::new(parking_lot::Mutex::new(PromptMode::Agent));
     let task_output_tool_name = Arc::new(std::sync::OnceLock::new());
@@ -1703,6 +1711,7 @@ pub(crate) async fn spawn_session_actor(
         }),
         goal_harness_availability_reconciled: std::sync::atomic::AtomicBool::new(false),
         goal_tracker,
+        flow_governor,
         goal_turn_task_ids: parking_lot::Mutex::new(std::collections::HashSet::new()),
         goal_continuation_streak: std::sync::atomic::AtomicU32::new(0),
         goal_blocked_streak: std::sync::atomic::AtomicU32::new(0),

@@ -21,6 +21,7 @@ pub mod attribution;
 pub mod bridge;
 pub mod computer;
 pub mod computer_tool;
+pub mod flow_checkpoint;
 pub mod gitignore;
 pub mod implementations;
 pub mod normalization;

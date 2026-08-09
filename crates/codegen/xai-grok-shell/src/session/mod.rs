@@ -3,6 +3,7 @@ pub mod announcement_state;
 pub mod backup;
 pub mod commands;
 pub mod compaction_config;
+pub mod flow;
 pub mod handle;
 pub mod memory_state;
 pub mod merge;
