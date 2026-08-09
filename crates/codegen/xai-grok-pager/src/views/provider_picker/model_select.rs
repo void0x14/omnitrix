@@ -442,7 +442,8 @@ mod tests {
     fn flow_at_model() -> ProviderConnectFlow {
         let catalog = catalog_with_models();
         let mut flow = ProviderConnectFlow::new(catalog, vec![]);
-        // builtin openai seç → Key → (yeni key) → Model.
+        // ModeSelect → Provider; builtin openai seç → Key → (yeni key) → Model.
+        let _ = super::super::handle_connect_input(&mut flow, &press(KeyCode::Enter));
         let _ = super::super::handle_connect_input(&mut flow, &press(KeyCode::Enter));
         assert_eq!(flow.step, ConnectStep::Key);
         let _ = super::super::key_input::handle_key_step_input(&mut flow, &press(KeyCode::Enter));

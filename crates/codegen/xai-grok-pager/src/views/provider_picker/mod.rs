@@ -7,11 +7,13 @@
 //! ile `Done`/`Error`'a bağlanır.
 
 mod apply;
+mod auto;
 mod key_input;
 mod model_select;
 mod providers;
 
 pub use apply::apply_result;
+pub use auto::apply_auto_outcome;
 pub use model_select::ModelFetchState;
 
 use crossterm::event::{Event, KeyCode, KeyEventKind};
@@ -39,6 +41,14 @@ use self::providers::{ProviderBadge, ProviderRow, filter_provider_rows, provider
 /// Wizard adımı.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ConnectStep {
+    /// Giriş ekranı: Auto / Manual seçimi (P0.4).
+    ModeSelect,
+    /// Auto: maskeli key girişi (P0.4).
+    AutoKey,
+    /// Auto: async probe çalışıyor (spinner; input kilitli, P0.4).
+    AutoDetecting,
+    /// Auto: Ambiguous aday listesinden seçim (P0.4).
+    AutoAmbiguous,
     /// Provider seçimi (picker: fuzzy, rozetler, custom satırlar).
     Provider,
     /// Custom provider'larda base URL girişi.
@@ -117,6 +127,17 @@ pub struct ProviderConnectFlow {
     pub(crate) model_editor: LineEditor,
     pub model_manual_mode: bool,
     pub models_fetch_state: ModelFetchState,
+    // ── P0.4: Auto-Connect wizard ──
+    /// ModeSelect imleci: 0 = Manual (varsayılan), 1 = Auto.
+    pub mode_select_cursor: usize,
+    /// AutoKey adımı maskeli editörü (düz metin render edilmez).
+    pub(crate) auto_key_editor: LineEditor,
+    pub auto_key_error: Option<String>,
+    /// AutoDetecting'te task sonucu beklenirken çift effect guard'ı.
+    pub auto_detect_pending: bool,
+    /// AutoAmbiguous aday provider id'leri (P0.3 `Ambiguous`).
+    pub auto_candidates: Vec<String>,
+    pub auto_candidate_cursor: usize,
 }
 
 impl ProviderConnectFlow {
@@ -131,7 +152,7 @@ impl ProviderConnectFlow {
             &indexmap::IndexMap::new(),
         );
         Self {
-            step: ConnectStep::Provider,
+            step: ConnectStep::ModeSelect,
             catalog,
             selected_provider: None,
             key_mode: KeyMode::New,
@@ -154,6 +175,12 @@ impl ProviderConnectFlow {
             model_editor: LineEditor::default(),
             model_manual_mode: false,
             models_fetch_state: ModelFetchState::Idle,
+            mode_select_cursor: 0,
+            auto_key_editor: LineEditor::default(),
+            auto_key_error: None,
+            auto_detect_pending: false,
+            auto_candidates: Vec::new(),
+            auto_candidate_cursor: 0,
         }
     }
 
@@ -224,6 +251,9 @@ pub enum ConnectOutcome {
     PickBaseUrl(String),
     PickKeyMode(KeyMode),
     PickModel(String),
+    /// AutoKey onaylandı — modals katmanı `Action::AutoConnect` üretir
+    /// (key `Zeroizing`, katalog snapshot ile; P0.4).
+    AutoDetect,
     /// Apply adımı onaylandı — Task 8'de config yazma + switch başlar.
     Apply,
     /// Görsel değişiklik / işlenmedi.
@@ -242,6 +272,12 @@ pub enum ConnectOutcome {
 /// - Error: Esc → Provider'a dön.
 pub fn handle_connect_input(flow: &mut ProviderConnectFlow, ev: &Event) -> ConnectOutcome {
     match flow.step {
+        ConnectStep::ModeSelect => self::auto::handle_mode_select_input(flow, ev),
+        ConnectStep::AutoKey => self::auto::handle_auto_key_input(flow, ev),
+        // AutoDetecting: input kilitli — task sonucu gelene kadar ne yeniden
+        // başlatma ne de çift dispatch (P0.4).
+        ConnectStep::AutoDetecting => ConnectOutcome::Nothing,
+        ConnectStep::AutoAmbiguous => self::auto::handle_auto_ambiguous_input(flow, ev),
         ConnectStep::Provider => handle_provider_step_input(flow, ev),
         ConnectStep::BaseUrl => self::key_input::handle_base_url_input(flow, ev),
         ConnectStep::Key => self::key_input::handle_key_step_input(flow, ev),
@@ -321,6 +357,18 @@ pub fn render_connect_flow(
     // arm'lar arasında canlı tutmamak için klon üzerinden eşleşiriz.
     let step = flow.step.clone();
     match step {
+        ConnectStep::ModeSelect => {
+            self::auto::render_mode_select_step(buf, content, inner_x, inner_width, theme, flow);
+        }
+        ConnectStep::AutoKey => {
+            self::auto::render_auto_key_step(buf, content, inner_x, inner_width, theme, flow);
+        }
+        ConnectStep::AutoDetecting => {
+            self::auto::render_auto_detecting_step(buf, content, inner_x, inner_width, theme, flow);
+        }
+        ConnectStep::AutoAmbiguous => {
+            self::auto::render_auto_ambiguous_step(buf, content, inner_x, inner_width, theme, flow);
+        }
         ConnectStep::Provider => {
             render_provider_step(buf, content, inner_x, inner_width, theme, flow);
         }
@@ -541,19 +589,34 @@ mod tests {
         press(KeyCode::Esc)
     }
 
-    #[test]
-    fn new_starts_at_provider_step_with_input_active() {
-        let flow = ProviderConnectFlow::new(empty_catalog(), vec![]);
+    /// ModeSelect'te Enter (varsayılan Manual) → Provider adımı.
+    fn select_manual(flow: &mut ProviderConnectFlow) {
+        let out = handle_connect_input(flow, &key_enter());
+        assert_eq!(out, ConnectOutcome::Next);
         assert_eq!(flow.step, ConnectStep::Provider);
-        assert!(flow.picker.search_active);
+    }
+
+    #[test]
+    fn new_starts_at_mode_select_with_manual_default() {
+        let flow = ProviderConnectFlow::new(empty_catalog(), vec![]);
+        assert_eq!(flow.step, ConnectStep::ModeSelect);
+        assert_eq!(flow.mode_select_cursor, 0, "varsayılan seçim Manual");
         // Custom satırlar her zaman var (katalog boş olsa bile).
         assert_eq!(flow.rows.len(), 2);
         assert!(flow.rows.iter().all(|r| r.is_custom));
     }
 
     #[test]
+    fn mode_select_enter_enters_provider_step_with_input_active() {
+        let mut flow = ProviderConnectFlow::new(empty_catalog(), vec![]);
+        select_manual(&mut flow);
+        assert!(flow.picker.search_active);
+    }
+
+    #[test]
     fn selecting_builtin_advances_to_key_step() {
         let mut flow = ProviderConnectFlow::new(catalog_with_openai(), vec![]);
+        select_manual(&mut flow);
         // "openai" ilk satır (katalog tek provider).
         let out = handle_connect_input(&mut flow, &key_enter());
         assert_eq!(out, ConnectOutcome::PickProvider("openai".to_string()));
@@ -570,6 +633,7 @@ mod tests {
     #[test]
     fn selecting_custom_advances_to_base_url_step() {
         let mut flow = ProviderConnectFlow::new(empty_catalog(), vec![]);
+        select_manual(&mut flow);
         // Sıra: custom-openai (0), custom-anthropic (1) — ikisi de custom.
         let out = handle_connect_input(&mut flow, &key_enter());
         assert_eq!(
@@ -588,6 +652,7 @@ mod tests {
     #[test]
     fn custom_anthropic_backend_is_messages() {
         let mut flow = ProviderConnectFlow::new(empty_catalog(), vec![]);
+        select_manual(&mut flow);
         let _ = handle_connect_input(&mut flow, &key_down()); // custom-anthropic
         let out = handle_connect_input(&mut flow, &key_enter());
         assert_eq!(
@@ -603,6 +668,7 @@ mod tests {
     #[test]
     fn esc_from_provider_cancels() {
         let mut flow = ProviderConnectFlow::new(empty_catalog(), vec![]);
+        select_manual(&mut flow);
         let out = handle_connect_input(&mut flow, &key_esc());
         assert_eq!(out, ConnectOutcome::Cancel);
     }
@@ -610,6 +676,7 @@ mod tests {
     #[test]
     fn esc_from_placeholder_step_goes_back() {
         let mut flow = ProviderConnectFlow::new(empty_catalog(), vec![]);
+        select_manual(&mut flow);
         let _ = handle_connect_input(&mut flow, &key_enter()); // → BaseUrl
         assert_eq!(flow.step, ConnectStep::BaseUrl);
         let out = handle_connect_input(&mut flow, &key_esc());
@@ -620,6 +687,7 @@ mod tests {
     #[test]
     fn esc_with_query_clears_query_not_cancel() {
         let mut flow = ProviderConnectFlow::new(empty_catalog(), vec![]);
+        select_manual(&mut flow);
         let _ = handle_connect_input(&mut flow, &press(KeyCode::Char('x')));
         assert_eq!(flow.picker.query(), "x");
         let out = handle_connect_input(&mut flow, &key_esc());
@@ -637,6 +705,7 @@ mod tests {
     #[test]
     fn typing_filters_rows_and_selection_follows_filter() {
         let mut flow = ProviderConnectFlow::new(catalog_with_openai(), vec![]);
+        select_manual(&mut flow);
         let _ = handle_connect_input(&mut flow, &press(KeyCode::Char('a')));
         assert_eq!(flow.picker.query(), "a");
         // 'a' filtresi: "OpenAI" + "Custom provider (Anthropic compatible)"
@@ -722,6 +791,7 @@ mod tests {
     fn full_wizard_chain_custom_provider() {
         use crate::views::provider_picker::apply;
         let mut flow = ProviderConnectFlow::new(empty_catalog(), vec![]);
+        select_manual(&mut flow);
         // Provider (custom-openai) → BaseUrl.
         let _ = handle_connect_input(&mut flow, &key_enter());
         assert_eq!(flow.step, ConnectStep::BaseUrl);
@@ -763,6 +833,7 @@ mod tests {
     #[test]
     fn back_navigation_returns_correctly() {
         let mut flow = ProviderConnectFlow::new(empty_catalog(), vec![]);
+        select_manual(&mut flow);
         // custom: Provider → BaseUrl → Key → Model.
         let _ = handle_connect_input(&mut flow, &key_enter());
         assert_eq!(flow.step, ConnectStep::BaseUrl);

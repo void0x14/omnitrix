@@ -626,6 +626,21 @@ impl AgentView {
                     base_url,
                 })
             }
+            ConnectOutcome::AutoDetect => {
+                let Some(ActiveModal::ProviderConnect { flow, .. }) = self.active_modal.as_mut()
+                else {
+                    return InputOutcome::Changed;
+                };
+                // Guard: task beklerken ikinci AutoDetect action üretilmez;
+                // flow AutoDetecting'ten çıktıysa (stale) yeni effect yok.
+                if flow.auto_detect_pending || flow.step != ConnectStep::AutoDetecting {
+                    return InputOutcome::Changed;
+                }
+                InputOutcome::Action(Action::AutoConnect {
+                    api_key: flow.draft_key.clone(),
+                    catalog: flow.catalog.clone(),
+                })
+            }
             ConnectOutcome::Next
             | ConnectOutcome::Back
             | ConnectOutcome::PickProvider(_)

@@ -4,10 +4,10 @@
 
 use super::*;
 use crate::app::dispatch::connect::{
-    dispatch_connect_provider, dispatch_fetch_provider_models, dispatch_keychain_add,
-    dispatch_keychain_borrow, dispatch_keychain_export, dispatch_keychain_import,
-    dispatch_keychain_remove, dispatch_keychain_remove_category, dispatch_keychain_reveal,
-    dispatch_keychain_unlock, dispatch_keychain_update,
+    dispatch_auto_connect, dispatch_connect_provider, dispatch_fetch_provider_models,
+    dispatch_keychain_add, dispatch_keychain_borrow, dispatch_keychain_export,
+    dispatch_keychain_import, dispatch_keychain_remove, dispatch_keychain_remove_category,
+    dispatch_keychain_reveal, dispatch_keychain_unlock, dispatch_keychain_update,
     dispatch_open_connect_picker, dispatch_open_keys_manager,
 };
 use crate::views::keys_manager::{KeysManagerMode, KeysManagerState};
@@ -97,8 +97,9 @@ fn open_connect_picker_opens_wizard_modal_and_requests_catalog() {
     {
         assert_eq!(
             flow.step,
-            crate::views::provider_picker::ConnectStep::Provider
+            crate::views::provider_picker::ConnectStep::ModeSelect
         );
+        assert_eq!(flow.mode_select_cursor, 0, "varsayılan seçim Manual");
         assert!(flow.rows.iter().any(|r| r.is_custom));
         assert!(flow.keychain_entries.is_empty(), "no keychain in test app");
     } else {
@@ -1149,4 +1150,265 @@ fn keys_import_wrong_password_fails_back_to_path() {
     let state = keys_manager_state(&app);
     assert!(state.error.is_some(), "hata mesajı olmalı");
     assert_eq!(state.mode, KeysManagerMode::ImportPath);
+}
+
+// ---------------------------------------------------------------------------
+// Auto-connect wizard (Task P0.4)
+// ---------------------------------------------------------------------------
+
+use crate::views::provider_picker::{
+    ConnectOutcome, ModelFetchState, ProviderConnectFlow, handle_connect_input,
+};
+use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
+use xai_grok_shell::util::auto_connect::{AutoConnectError, AutoConnectOutcome};
+use xai_grok_shell::util::models_dev::{CacheSource, CatalogCache, ModelInfo, ProviderCatalog};
+
+fn press(key: KeyCode) -> Event {
+    Event::Key(KeyEvent::new(key, KeyModifiers::NONE))
+}
+
+fn auto_test_catalog() -> CatalogCache {
+    let mut models = indexmap::IndexMap::new();
+    models.insert(
+        "gpt-4o".to_string(),
+        ModelInfo {
+            id: "gpt-4o".to_string(),
+            name: "GPT-4o".to_string(),
+            description: None,
+            reasoning: false,
+            tool_call: true,
+            temperature: true,
+            limit: None,
+            cost: None,
+        },
+    );
+    CatalogCache {
+        providers: indexmap::IndexMap::from([(
+            "openai".to_string(),
+            ProviderCatalog {
+                id: "openai".to_string(),
+                name: "OpenAI".to_string(),
+                env: vec!["OPENAI_API_KEY".to_string()],
+                npm: Some("@ai-sdk/openai".to_string()),
+                api: None,
+                doc: None,
+                models,
+            },
+        )]),
+        fetched_at: None,
+        source: CacheSource::Fresh,
+    }
+}
+
+fn connect_flow(app: &mut AppView) -> &mut ProviderConnectFlow {
+    match &mut app.agents.get_mut(&AgentId(0)).unwrap().active_modal {
+        Some(crate::views::modal::ActiveModal::ProviderConnect { flow, .. }) => flow,
+        _ => panic!("ProviderConnect modal expected"),
+    }
+}
+
+/// Wizard'ı AutoKey üzerinden `AutoDetecting` adımına sürer
+/// (ModeSelect → Down → Enter → AutoKey → key → Enter → AutoDetect).
+fn drive_to_auto_detecting(app: &mut AppView) {
+    let flow = connect_flow(app);
+    let _ = handle_connect_input(flow, &press(KeyCode::Down));
+    let _ = handle_connect_input(flow, &press(KeyCode::Enter));
+    assert_eq!(flow.step, ConnectStep::AutoKey);
+    for c in "sk-test-abc".chars() {
+        let _ = handle_connect_input(flow, &press(KeyCode::Char(c)));
+    }
+    let out = handle_connect_input(flow, &press(KeyCode::Enter));
+    assert_eq!(out, ConnectOutcome::AutoDetect);
+    assert_eq!(flow.step, ConnectStep::AutoDetecting);
+}
+
+fn openai_outcome(catalog: &CatalogCache) -> AutoConnectOutcome {
+    AutoConnectOutcome {
+        provider_id: "openai".to_string(),
+        base_url: "https://api.openai.com/v1".to_string(),
+        region: Some("us".to_string()),
+        models: catalog.providers["openai"]
+            .models
+            .values()
+            .cloned()
+            .collect(),
+        candidates_considered: 1,
+    }
+}
+
+#[test]
+fn auto_connect_success_task_result_enters_model_step() {
+    let mut app = test_app();
+    let _ = dispatch_open_connect_picker(&mut app);
+    let catalog = auto_test_catalog();
+    let _ = dispatch_task_result(
+        TaskResult::ModelsCatalogFetched {
+            result: Ok(catalog.clone()),
+        },
+        &mut app,
+    );
+    drive_to_auto_detecting(&mut app);
+    // modals katmanının üreteceği action'ı dispatch et (key + katalog snapshot).
+    let key = connect_flow(&mut app).draft_key.clone();
+    let snap = connect_flow(&mut app).catalog.clone();
+    let effects = dispatch_auto_connect(&mut app, key, snap);
+    assert!(
+        matches!(effects.as_slice(), [Effect::AutoConnect { .. }]),
+        "expected AutoConnect effect, got {effects:?}"
+    );
+    assert!(
+        connect_flow(&mut app).auto_detect_pending,
+        "task beklerken çift dispatch guard'ı set edilir"
+    );
+
+    // Async başarı: AutoDetecting → Model + ProviderSelection aktarımı.
+    let _ = dispatch_task_result(
+        TaskResult::AutoConnectComplete {
+            result: Ok(openai_outcome(&catalog)),
+        },
+        &mut app,
+    );
+    let flow = connect_flow(&mut app);
+    assert_eq!(flow.step, ConnectStep::Model);
+    assert_eq!(flow.models_fetch_state, ModelFetchState::Loaded);
+    assert!(!flow.auto_detect_pending, "sonuç sonrası guard temizlenir");
+    let sel = flow.selected_provider.as_ref().expect("selected");
+    assert_eq!(sel.provider_id, "openai");
+    assert_eq!(sel.label, "OpenAI");
+    assert!(!sel.is_custom);
+    assert_eq!(sel.base_url.as_deref(), Some("https://api.openai.com/v1"));
+    assert_eq!(sel.models.len(), 1);
+    assert_eq!(sel.models[0].id, "gpt-4o");
+}
+
+#[test]
+fn auto_connect_ambiguous_task_result_enters_ambiguous_step() {
+    let mut app = test_app();
+    let _ = dispatch_open_connect_picker(&mut app);
+    let catalog = auto_test_catalog();
+    let _ = dispatch_task_result(
+        TaskResult::ModelsCatalogFetched {
+            result: Ok(catalog),
+        },
+        &mut app,
+    );
+    drive_to_auto_detecting(&mut app);
+    let _ = dispatch_task_result(
+        TaskResult::AutoConnectComplete {
+            result: Err(AutoConnectError::Ambiguous {
+                providers: vec!["openai".to_string()],
+            }),
+        },
+        &mut app,
+    );
+    let flow = connect_flow(&mut app);
+    assert_eq!(flow.step, ConnectStep::AutoAmbiguous);
+    assert_eq!(flow.auto_candidates, vec!["openai".to_string()]);
+    assert!(!flow.auto_detect_pending);
+    // Aday seçimi → Model + katalogdan ProviderSelection.
+    let out = handle_connect_input(flow, &press(KeyCode::Enter));
+    assert_eq!(out, ConnectOutcome::PickProvider("openai".to_string()));
+    assert_eq!(flow.step, ConnectStep::Model);
+    assert_eq!(flow.models_fetch_state, ModelFetchState::Loaded);
+    assert_eq!(
+        flow.selected_provider.as_ref().unwrap().provider_id,
+        "openai"
+    );
+}
+
+#[test]
+fn auto_connect_error_task_result_enters_error_and_clears_key() {
+    let mut app = test_app();
+    let _ = dispatch_open_connect_picker(&mut app);
+    let _ = dispatch_task_result(
+        TaskResult::ModelsCatalogFetched {
+            result: Ok(auto_test_catalog()),
+        },
+        &mut app,
+    );
+    drive_to_auto_detecting(&mut app);
+    assert_eq!(connect_flow(&mut app).draft_key.as_str(), "sk-test-abc");
+    let _ = dispatch_task_result(
+        TaskResult::AutoConnectComplete {
+            result: Err(AutoConnectError::NoDetectedProviders),
+        },
+        &mut app,
+    );
+    let flow = connect_flow(&mut app);
+    assert!(
+        matches!(flow.step, ConnectStep::Error(_)),
+        "step: {:?}",
+        flow.step
+    );
+    assert!(
+        flow.draft_key.is_empty(),
+        "hata sonrası draft key temizlenir"
+    );
+    assert!(!flow.auto_detect_pending);
+}
+
+#[test]
+fn stale_auto_result_does_not_override_manual_flow() {
+    let mut app = test_app();
+    let _ = dispatch_open_connect_picker(&mut app);
+    let catalog = auto_test_catalog();
+    let _ = dispatch_task_result(
+        TaskResult::ModelsCatalogFetched {
+            result: Ok(catalog.clone()),
+        },
+        &mut app,
+    );
+    drive_to_auto_detecting(&mut app);
+    // Kullanıcı aradaysa manual Key adımına döndü (AutoDetecting input'u
+    // kilitlemez ama stale sonuç guard'ı yine de çalışmalı).
+    connect_flow(&mut app).step = ConnectStep::Key;
+    let _ = dispatch_task_result(
+        TaskResult::AutoConnectComplete {
+            result: Ok(openai_outcome(&catalog)),
+        },
+        &mut app,
+    );
+    let flow = connect_flow(&mut app);
+    assert_eq!(
+        flow.step,
+        ConnectStep::Key,
+        "stale auto sonucu manual akışı ezmemeli"
+    );
+    assert!(flow.selected_provider.is_none(), "selection değişmemeli");
+}
+
+#[test]
+fn auto_connect_effect_dispatch_guarded_against_double() {
+    let mut app = test_app();
+    let _ = dispatch_open_connect_picker(&mut app);
+    drive_to_auto_detecting(&mut app);
+    let key = connect_flow(&mut app).draft_key.clone();
+    let snap = connect_flow(&mut app).catalog.clone();
+    let first = dispatch_auto_connect(&mut app, key.clone(), snap.clone());
+    assert_eq!(first.len(), 1, "ilk Enter effect üretir");
+    let second = dispatch_auto_connect(&mut app, key, snap);
+    assert!(
+        second.is_empty(),
+        "task sonucu gelmeden ikinci Enter ikinci effect üretmez"
+    );
+}
+
+#[test]
+fn auto_connect_action_routes_through_dispatch() {
+    let mut app = test_app();
+    let _ = dispatch_open_connect_picker(&mut app);
+    drive_to_auto_detecting(&mut app);
+    let key = connect_flow(&mut app).draft_key.clone();
+    let snap = connect_flow(&mut app).catalog.clone();
+    let effects = dispatch(
+        Action::AutoConnect {
+            api_key: key,
+            catalog: snap,
+        },
+        &mut app,
+    );
+    assert!(
+        matches!(effects.as_slice(), [Effect::AutoConnect { .. }]),
+        "router AutoConnect → AutoConnect effect, got {effects:?}"
+    );
 }

@@ -480,6 +480,16 @@ pub enum Action {
     FetchProviderModels {
         base_url: String,
     },
+    /// Auto-connect: API key'den provider + base URL + region + model
+    /// listesi tespit et (P0.3 `auto_connect_from_key` orkestrasyonu;
+    /// async HTTP yalnızca effects katmanında). `catalog` açık wizard
+    /// flow'undaki katalog snapshot'ıdır. Key yalnızca task içinde
+    /// kullanılır; log/toast/error'da düz metin görünmez. Tamamlanınca
+    /// [`TaskResult::AutoConnectComplete`] döner.
+    AutoConnect {
+        api_key: zeroize::Zeroizing<String>,
+        catalog: xai_grok_shell::util::models_dev::CatalogCache,
+    },
     /// Cancel the currently running turn.
     CancelTurn,
     /// User confirmed a cancel-turn choice from the panel.
@@ -1676,6 +1686,14 @@ pub enum Effect {
         base_url: String,
         api_key: Option<zeroize::Zeroizing<String>>,
     },
+    /// Auto-connect task'ı: `xai_grok_shell::util::auto_connect::auto_connect_from_key`
+    /// (async probe; view katmanında await yok). `api_key` (Zeroizing)
+    /// yalnızca task içinde kullanılır, düz metin log/toast/error'a düşmez.
+    /// Tamamlanınca [`TaskResult::AutoConnectComplete`] döner.
+    AutoConnect {
+        api_key: zeroize::Zeroizing<String>,
+        catalog: xai_grok_shell::util::models_dev::CatalogCache,
+    },
     /// Best-effort bakiye sorgusu (keychain açıkken keys manager'da).
     /// Her kayıt: `(id, provider_id, base_url, api_key)` — ham key yalnızca
     /// task içinde kullanılır, loglanmaz. Tamamlanınca
@@ -2529,6 +2547,17 @@ pub enum TaskResult {
     ProviderModelsFetched {
         base_url: String,
         result: Result<Vec<String>, String>,
+    },
+    /// Auto-connect sonucu ([`Effect::AutoConnect`]). `ok` winner provider +
+    /// sanitized base URL + region + model listesi; `err` typed
+    /// `AutoConnectError` (hiçbir variant API key taşımaz). Yalnızca hâlâ
+    /// `AutoDetecting` adımındaki wizard'a uygulanır (stale sonuç manual
+    /// akışı ezmez).
+    AutoConnectComplete {
+        result: Result<
+            xai_grok_shell::util::auto_connect::AutoConnectOutcome,
+            xai_grok_shell::util::auto_connect::AutoConnectError,
+        >,
     },
     /// Changelog fetched from CDN (both formats).
     ChangelogFetched {

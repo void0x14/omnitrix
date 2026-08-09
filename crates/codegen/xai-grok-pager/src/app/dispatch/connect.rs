@@ -801,6 +801,29 @@ pub(super) fn dispatch_fetch_provider_models(app: &mut AppView, base_url: String
     }
 }
 
+/// Auto-connect (P0.4): wizard `AutoDetecting` adımındaysa key (Zeroizing)
+/// + katalog snapshot'ını async efekte taşır. Çift dispatch guard'ı:
+/// `auto_detect_pending` set iken ikinci Enter effect üretmez; flow başka
+/// adımdaysa (stale) boş döner.
+pub(super) fn dispatch_auto_connect(
+    app: &mut AppView,
+    api_key: Zeroizing<String>,
+    catalog: xai_grok_shell::util::models_dev::CatalogCache,
+) -> Vec<Effect> {
+    use crate::views::provider_picker::ConnectStep;
+    let mut armed = false;
+    with_connect_flow(app, |flow| {
+        if flow.step == ConnectStep::AutoDetecting && !flow.auto_detect_pending {
+            flow.auto_detect_pending = true;
+            armed = true;
+        }
+    });
+    if !armed {
+        return vec![];
+    }
+    vec![Effect::AutoConnect { api_key, catalog }]
+}
+
 /// Keychain'den provider kaydını bulur ve borrow eder. `(key, key_id,
 /// category)` döner; key borrow guard'ı bu fonksiyon sonunda drop olur
 /// (RAM kopyası `Zeroizing` ile sıfırlanır) — çağıran kopyayı store'lara

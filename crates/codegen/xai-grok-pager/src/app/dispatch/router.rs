@@ -5,10 +5,10 @@ use super::auth::{
 };
 use super::billing::dispatch_open_supergrok_url;
 use super::connect::{
-    dispatch_connect_provider, dispatch_fetch_provider_models, dispatch_keychain_add,
-    dispatch_keychain_borrow, dispatch_keychain_export, dispatch_keychain_import,
-    dispatch_keychain_remove, dispatch_keychain_remove_category, dispatch_keychain_reveal,
-    dispatch_keychain_unlock, dispatch_keychain_update,
+    dispatch_auto_connect, dispatch_connect_provider, dispatch_fetch_provider_models,
+    dispatch_keychain_add, dispatch_keychain_borrow, dispatch_keychain_export,
+    dispatch_keychain_import, dispatch_keychain_remove, dispatch_keychain_remove_category,
+    dispatch_keychain_reveal, dispatch_keychain_unlock, dispatch_keychain_update,
     dispatch_open_connect_picker, dispatch_open_keys_manager,
 };
 use super::ctx::{
@@ -860,6 +860,7 @@ pub(crate) fn dispatch(action: Action, app: &mut AppView) -> Vec<Effect> {
         Action::OpenConnectPicker => dispatch_open_connect_picker(app),
         Action::OpenKeysManager => dispatch_open_keys_manager(app),
         Action::FetchProviderModels { base_url } => dispatch_fetch_provider_models(app, base_url),
+        Action::AutoConnect { api_key, catalog } => dispatch_auto_connect(app, api_key, catalog),
         Action::ConnectProvider {
             provider_id,
             category,

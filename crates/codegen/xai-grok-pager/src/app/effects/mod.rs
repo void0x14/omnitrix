@@ -1908,6 +1908,19 @@ pub(crate) fn execute(
                     TaskResult::ProviderModelsFetched { base_url, result }
                 });
         }
+        Effect::AutoConnect { api_key, catalog } => {
+            // P0.3 orkestrasyonu: key yalnızca task içinde kullanılır
+            // (Zeroizing); probe ağı effects katmanında kalır, view'da yok.
+            tasks.spawn(async move {
+                let result =
+                    xai_grok_shell::util::auto_connect::auto_connect_from_key(
+                        api_key.as_str(),
+                        &catalog,
+                    )
+                    .await;
+                TaskResult::AutoConnectComplete { result }
+            });
+        }
         Effect::ProbeKeyBalances { entries } => {
             // Bakiye sorgusu: en iyi çaba, timeout'lu; ham key'ler task
             // içinde sıfırlanır, loglanmaz.

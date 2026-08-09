@@ -512,7 +512,8 @@ pub(super) fn render_key_step(
 
 /// Maskeli tek satırlık editör: `label` + `•` karakterleri + cursor.
 /// `reveal` true ise ham metin gösterilir (kullanıcının bilinçli seçimi).
-fn render_masked_editor(
+/// AutoKey adımı (`auto.rs`) da kullanır — maskeli kalır (`reveal: false`).
+pub(super) fn render_masked_editor(
     buf: &mut Buffer,
     x: u16,
     y: u16,
@@ -603,7 +604,8 @@ mod tests {
 
     fn flow_at_base_url() -> ProviderConnectFlow {
         let mut flow = ProviderConnectFlow::new(empty_catalog(), vec![]);
-        let _ = super::super::handle_connect_input(&mut flow, &press(KeyCode::Enter));
+        let _ = super::super::handle_connect_input(&mut flow, &press(KeyCode::Enter)); // ModeSelect → Provider
+        let _ = super::super::handle_connect_input(&mut flow, &press(KeyCode::Enter)); // → BaseUrl
         assert_eq!(flow.step, ConnectStep::BaseUrl);
         flow
     }
@@ -727,6 +729,7 @@ mod tests {
     fn keychain_entry_selection_picks_id_and_advances() {
         let entry = keychain_entry("custom-openai");
         let mut flow = ProviderConnectFlow::new(empty_catalog(), vec![entry]);
+        let _ = super::super::handle_connect_input(&mut flow, &press(KeyCode::Enter)); // ModeSelect → Provider
         let _ = super::super::handle_connect_input(&mut flow, &press(KeyCode::Enter));
         assert_eq!(flow.step, ConnectStep::BaseUrl);
         let _ = handle_base_url_input(&mut flow, &press(KeyCode::Enter));
@@ -765,6 +768,7 @@ mod tests {
         let entry_openai = keychain_entry("openai");
         let entry_other = keychain_entry("anthropic");
         let mut flow = ProviderConnectFlow::new(catalog, vec![entry_openai, entry_other]);
+        let _ = super::super::handle_connect_input(&mut flow, &press(KeyCode::Enter)); // ModeSelect → Provider
         let _ = super::super::handle_connect_input(&mut flow, &press(KeyCode::Enter));
         assert_eq!(flow.step, ConnectStep::Key);
         // openai seçili → yalnızca openai kaydı görünür; cursor 0 = keychain.
@@ -816,6 +820,7 @@ mod tests {
         use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
         let entry = keychain_entry("custom-openai");
         let mut flow = ProviderConnectFlow::new(empty_catalog(), vec![entry]);
+        let _ = super::super::handle_connect_input(&mut flow, &press(KeyCode::Enter)); // ModeSelect → Provider
         let _ = super::super::handle_connect_input(&mut flow, &press(KeyCode::Enter));
         let _ = handle_base_url_input(&mut flow, &press(KeyCode::Enter));
         assert_eq!(flow.step, ConnectStep::Key);
@@ -847,11 +852,12 @@ mod tests {
         let mut buf = ratatui::buffer::Buffer::empty(ratatui::layout::Rect::new(0, 0, 80, 10));
         let theme = crate::theme::Theme::current();
         render_key_step(&mut buf, ratatui::layout::Rect::new(0, 0, 80, 10), 2, 76, &theme, &mut flow);
-        let row1 = flow.key_row_rects[1];
+        // Keychain kaydı yok → "+ yeni key gir" satırı tek satır (index 0).
+        let row0 = flow.key_row_rects[0];
         let out = handle_key_step_input(&mut flow, &Event::Mouse(MouseEvent {
             kind: MouseEventKind::Down(MouseButton::Left),
-            column: row1.x + 1,
-            row: row1.y,
+            column: row0.x + 1,
+            row: row0.y,
             modifiers: KeyModifiers::NONE,
         }));
         assert_eq!(out, ConnectOutcome::Nothing);

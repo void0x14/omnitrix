@@ -1264,6 +1264,49 @@ pub(super) fn dispatch_task_result(result: TaskResult, app: &mut AppView) -> Vec
             }
             vec![]
         }
+        TaskResult::AutoConnectComplete { result } => {
+            // Auto-connect sonucu (P0.4). Stale guard: sonuç yalnızca hâlâ
+            // `AutoDetecting`'teki flow'a yazılır — modal kapandıysa veya
+            // kullanıcı akışı bıraktıysa manual akış ezilmez.
+            use crate::views::modal::ActiveModal;
+            use crate::views::provider_picker::ConnectStep;
+            use xai_grok_shell::util::auto_connect::AutoConnectError;
+            for agent in app.agents.values_mut() {
+                if let Some(ActiveModal::ProviderConnect { flow, .. }) = &mut agent.active_modal {
+                    if flow.step != ConnectStep::AutoDetecting {
+                        continue;
+                    }
+                    flow.auto_detect_pending = false;
+                    match &result {
+                        Ok(outcome) => {
+                            if !crate::views::provider_picker::apply_auto_outcome(flow, outcome) {
+                                flow.step = ConnectStep::Error(format!(
+                                    "auto-connect: '{}' katalogda bulunamadı",
+                                    outcome.provider_id
+                                ));
+                            }
+                        }
+                        Err(AutoConnectError::Ambiguous { providers }) => {
+                            flow.auto_candidates = providers.clone();
+                            flow.auto_candidate_cursor = 0;
+                            flow.step = ConnectStep::AutoAmbiguous;
+                        }
+                        Err(e) => {
+                            // Key hata sonrası RAM'de tutulmaz (Zeroizing).
+                            flow.draft_key = zeroize::Zeroizing::new(String::new());
+                            flow.error = None;
+                            flow.step = ConnectStep::Error(e.to_string());
+                        }
+                    }
+                }
+            }
+            tracing::info!(
+                target: "connect",
+                ok = result.is_ok(),
+                "auto-connect task completed",
+            );
+            vec![]
+        }
         TaskResult::ProviderConnectPersisted {
             provider_id,
             model_id,
