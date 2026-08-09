@@ -457,6 +457,7 @@ fn wizard_at_apply(app: &mut AppView, key: &str) {
         is_custom: true,
         backend: ApiBackend::ChatCompletions,
         base_url: Some("http://localhost:8000/v1".to_string()),
+        region: None,
         models: vec![],
     });
     flow.base_url_draft = "http://localhost:8000/v1".to_string();
@@ -603,6 +604,7 @@ fn wizard_apply_keychain_mode_borrows_by_id() {
         is_custom: true,
         backend: ApiBackend::ChatCompletions,
         base_url: Some("http://localhost:8000/v1".to_string()),
+        region: None,
         models: vec![],
     });
     flow.key_mode = KeyMode::Keychain(key_id.clone());
@@ -1251,7 +1253,7 @@ fn auto_connect_success_task_result_enters_model_step() {
     // modals katmanının üreteceği action'ı dispatch et (key + katalog snapshot).
     let key = connect_flow(&mut app).draft_key.clone();
     let snap = connect_flow(&mut app).catalog.clone();
-    let effects = dispatch_auto_connect(&mut app, key, snap);
+    let effects = dispatch_auto_connect(&mut app, key.into(), snap);
     assert!(
         matches!(effects.as_slice(), [Effect::AutoConnect { .. }]),
         "expected AutoConnect effect, got {effects:?}"
@@ -1384,9 +1386,9 @@ fn auto_connect_effect_dispatch_guarded_against_double() {
     drive_to_auto_detecting(&mut app);
     let key = connect_flow(&mut app).draft_key.clone();
     let snap = connect_flow(&mut app).catalog.clone();
-    let first = dispatch_auto_connect(&mut app, key.clone(), snap.clone());
+    let first = dispatch_auto_connect(&mut app, key.clone().into(), snap.clone());
     assert_eq!(first.len(), 1, "ilk Enter effect üretir");
-    let second = dispatch_auto_connect(&mut app, key, snap);
+    let second = dispatch_auto_connect(&mut app, key.into(), snap);
     assert!(
         second.is_empty(),
         "task sonucu gelmeden ikinci Enter ikinci effect üretmez"
@@ -1402,7 +1404,7 @@ fn auto_connect_action_routes_through_dispatch() {
     let snap = connect_flow(&mut app).catalog.clone();
     let effects = dispatch(
         Action::AutoConnect {
-            api_key: key,
+            api_key: key.into(),
             catalog: snap,
         },
         &mut app,
@@ -1411,4 +1413,76 @@ fn auto_connect_action_routes_through_dispatch() {
         matches!(effects.as_slice(), [Effect::AutoConnect { .. }]),
         "router AutoConnect → AutoConnect effect, got {effects:?}"
     );
+}
+
+#[test]
+fn auto_connect_debug_redacts_api_key() {
+    // Security: `Action::AutoConnect` / `Effect::AutoConnect` Debug çıktısı
+    // ham key içermemeli (`Zeroizing<String>` Debug'ı iç metni yazdırır;
+    // SecretKey wrapper redact eder).
+    let key = crate::app::actions::SecretKey::from(Zeroizing::new(
+        "sk-gizli-debug-123".to_string(),
+    ));
+    let catalog = auto_test_catalog();
+    let action = Action::AutoConnect {
+        api_key: key.clone(),
+        catalog: catalog.clone(),
+    };
+    let action_debug = format!("{action:?}");
+    assert!(
+        !action_debug.contains("sk-gizli-debug-123"),
+        "Action Debug key sızdırmamalı: {action_debug}"
+    );
+    let effect = Effect::AutoConnect {
+        api_key: key,
+        catalog,
+    };
+    let effect_debug = format!("{effect:?}");
+    assert!(
+        !effect_debug.contains("sk-gizli-debug-123"),
+        "Effect Debug key sızdırmamalı: {effect_debug}"
+    );
+}
+
+#[test]
+fn auto_winner_base_url_flows_to_connect_provider_write() {
+    // Auto outcome sonrası flow: builtin provider + winner base URL.
+    // Apply → dispatch_connect_provider → Effect::ConnectProviderWrite
+    // zincirinde winner URL kaybolmamalı.
+    let mut app = test_app();
+    let _ = dispatch_open_connect_picker(&mut app);
+    let flow = connect_flow(&mut app);
+    flow.selected_provider = Some(ProviderSelection {
+        provider_id: "openai".to_string(),
+        label: "OpenAI".to_string(),
+        is_custom: false,
+        backend: ApiBackend::Responses,
+        base_url: Some("https://api.openai.com/v1".to_string()),
+        region: Some("us".to_string()),
+        models: vec![],
+    });
+    flow.key_mode = KeyMode::New;
+    flow.draft_key = Zeroizing::new("sk-otomatik".to_string());
+    flow.selected_model = Some("gpt-4o".to_string());
+    flow.step = ConnectStep::Apply;
+    flow.apply_pending = true;
+
+    let effects = dispatch_connect_provider(
+        &mut app,
+        "openai".to_string(),
+        None,
+        "gpt-4o".to_string(),
+        Some("https://api.openai.com/v1".to_string()),
+    );
+    assert_eq!(effects.len(), 1);
+    match &effects[0] {
+        Effect::ConnectProviderWrite { base_url, .. } => {
+            assert_eq!(
+                base_url.as_deref(),
+                Some("https://api.openai.com/v1"),
+                "auto winner base URL ConnectProviderWrite'ta kaybolmamalı"
+            );
+        }
+        other => panic!("expected ConnectProviderWrite, got {other:?}"),
+    }
 }

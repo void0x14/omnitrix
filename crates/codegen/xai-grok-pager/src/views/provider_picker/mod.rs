@@ -85,6 +85,9 @@ pub struct ProviderSelection {
     pub backend: ApiBackend,
     /// Default/önerilen base URL.
     pub base_url: Option<String>,
+    /// Auto-connect (P0.3 probe) region bilgisi; manual/ambiguous katalog
+    /// seçimlerinde `None`, `apply_auto_outcome` başarısında winner region.
+    pub region: Option<String>,
     /// Canlı model listesi (models.dev veya fetch).
     pub models: Vec<ModelInfo>,
 }
@@ -223,6 +226,7 @@ impl ProviderConnectFlow {
             is_custom: row.is_custom,
             backend,
             base_url: base_url.clone(),
+            region: None,
             models,
         });
         if row.is_custom {
@@ -626,6 +630,7 @@ mod tests {
         assert!(!sel.is_custom);
         assert_eq!(sel.backend, ApiBackend::Responses); // @ai-sdk/openai
         assert_eq!(sel.base_url.as_deref(), Some("https://api.openai.com/v1"));
+        assert!(sel.region.is_none(), "manuel seçimde region yok");
         assert_eq!(sel.models.len(), 1);
         assert_eq!(sel.models[0].id, "gpt-4o");
     }

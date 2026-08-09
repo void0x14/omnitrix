@@ -162,6 +162,7 @@ pub(super) fn select_auto_candidate(flow: &mut ProviderConnectFlow, provider_id:
         is_custom: false,
         backend: api_backend_for_provider(entry),
         base_url: base_url_for_provider(entry),
+        region: None,
         models: entry.models.values().cloned().collect(),
     });
     flow.step = ConnectStep::Model;
@@ -171,10 +172,10 @@ pub(super) fn select_auto_candidate(flow: &mut ProviderConnectFlow, provider_id:
 }
 
 /// Auto-connect başarısı: winner provider'ı mevcut `ProviderSelection`'a
-/// aktarır (sanitized base URL + ModelInfo listesi; `region` outcome'da
-/// taşınır, ProviderSelection'da slot yoktur) ve Model adımına geçer.
-/// Katalogda yoksa `false` (adım değişmez; caller Error'a geçirir).
-/// `mod.rs` `pub use` ile tek noktadan dışa açar (`apply_result` deseni).
+/// aktarır (sanitized base URL + region + ModelInfo listesi) ve Model
+/// adımına geçer. Katalogda yoksa `false` (adım değişmez; caller Error'a
+/// geçirir). `mod.rs` `pub use` ile tek noktadan dışa açar (`apply_result`
+/// deseni).
 pub fn apply_auto_outcome(flow: &mut ProviderConnectFlow, outcome: &AutoConnectOutcome) -> bool {
     let Some(entry) = flow.catalog.providers.get(&outcome.provider_id) else {
         return false;
@@ -185,6 +186,7 @@ pub fn apply_auto_outcome(flow: &mut ProviderConnectFlow, outcome: &AutoConnectO
         is_custom: false,
         backend: api_backend_for_provider(entry),
         base_url: Some(outcome.base_url.clone()),
+        region: outcome.region.clone(),
         models: outcome.models.clone(),
     });
     flow.step = ConnectStep::Model;
@@ -623,6 +625,10 @@ mod tests {
         assert_eq!(sel.provider_id, "openai");
         assert!(!sel.is_custom);
         assert_eq!(sel.models.len(), 1);
+        assert!(
+            sel.region.is_none(),
+            "manual/ambiguous katalog seçiminde region yok"
+        );
     }
 
     #[test]
@@ -674,6 +680,11 @@ mod tests {
         assert_eq!(sel.label, "OpenAI");
         assert!(!sel.is_custom);
         assert_eq!(sel.base_url.as_deref(), Some("https://api.openai.com/v1"));
+        assert_eq!(
+            sel.region.as_deref(),
+            Some("us"),
+            "auto outcome region'ı ProviderSelection'a taşınır"
+        );
         assert_eq!(sel.models.len(), 1);
         assert_eq!(sel.models[0].id, "gpt-4o");
         assert!(flow.picker.search_active, "enter_model_step arama açar");

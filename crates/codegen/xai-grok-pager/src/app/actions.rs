@@ -10,6 +10,43 @@ use super::agent::AgentId;
 use crate::scrollback::entry::EntryId;
 use agent_client_protocol as acp;
 use xai_grok_shell::sampling::types::ReasoningEffort;
+
+/// Auto-connect API key için Debug-redacted sarmalayıcı (P0.4 fix).
+///
+/// `Zeroizing<String>`'in türetilmiş `Debug`'ı iç metni düz yazdırır;
+/// bu wrapper ham key'in `{:?}`/log çıktısında görünmesini engeller.
+/// Key yalnızca task'a [`Self::as_str`] ile taşınır; TaskResult hiçbir
+/// key taşımaz.
+#[derive(Clone)]
+pub struct SecretKey {
+    inner: zeroize::Zeroizing<String>,
+}
+
+impl SecretKey {
+    pub fn new(key: zeroize::Zeroizing<String>) -> Self {
+        Self { inner: key }
+    }
+
+    /// Task'a aktarım için ham key erişimi (loglama yok).
+    pub fn as_str(&self) -> &str {
+        self.inner.as_str()
+    }
+}
+
+impl From<zeroize::Zeroizing<String>> for SecretKey {
+    fn from(key: zeroize::Zeroizing<String>) -> Self {
+        Self::new(key)
+    }
+}
+
+impl std::fmt::Debug for SecretKey {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SecretKey")
+            .field("redacted", &"\u{2022}\u{2022}\u{2022}")
+            .finish()
+    }
+}
+
 /// Typed error for model switch failures. Replaces the raw `String` in
 /// `TaskResult::SwitchModelComplete` so dispatch can match on the variant
 /// instead of parsing strings.
@@ -484,10 +521,11 @@ pub enum Action {
     /// listesi tespit et (P0.3 `auto_connect_from_key` orkestrasyonu;
     /// async HTTP yalnızca effects katmanında). `catalog` açık wizard
     /// flow'undaki katalog snapshot'ıdır. Key yalnızca task içinde
-    /// kullanılır; log/toast/error'da düz metin görünmez. Tamamlanınca
+    /// kullanılır; log/toast/error/Debug'da düz metin görünmez (Debug
+    /// redacted — [`SecretKey`]). Tamamlanınca
     /// [`TaskResult::AutoConnectComplete`] döner.
     AutoConnect {
-        api_key: zeroize::Zeroizing<String>,
+        api_key: SecretKey,
         catalog: xai_grok_shell::util::models_dev::CatalogCache,
     },
     /// Cancel the currently running turn.
@@ -1687,11 +1725,12 @@ pub enum Effect {
         api_key: Option<zeroize::Zeroizing<String>>,
     },
     /// Auto-connect task'ı: `xai_grok_shell::util::auto_connect::auto_connect_from_key`
-    /// (async probe; view katmanında await yok). `api_key` (Zeroizing)
-    /// yalnızca task içinde kullanılır, düz metin log/toast/error'a düşmez.
-    /// Tamamlanınca [`TaskResult::AutoConnectComplete`] döner.
+    /// (async probe; view katmanında await yok). `api_key` yalnızca task
+    /// içinde kullanılır; düz metin log/toast/error/Debug'da görünmez
+    /// (Debug redacted — [`SecretKey`]). Tamamlanınca
+    /// [`TaskResult::AutoConnectComplete`] döner.
     AutoConnect {
-        api_key: zeroize::Zeroizing<String>,
+        api_key: SecretKey,
         catalog: xai_grok_shell::util::models_dev::CatalogCache,
     },
     /// Best-effort bakiye sorgusu (keychain açıkken keys manager'da).

@@ -801,13 +801,13 @@ pub(super) fn dispatch_fetch_provider_models(app: &mut AppView, base_url: String
     }
 }
 
-/// Auto-connect (P0.4): wizard `AutoDetecting` adımındaysa key (Zeroizing)
-/// + katalog snapshot'ını async efekte taşır. Çift dispatch guard'ı:
-/// `auto_detect_pending` set iken ikinci Enter effect üretmez; flow başka
-/// adımdaysa (stale) boş döner.
+/// Auto-connect (P0.4): wizard `AutoDetecting` adımındaysa key (SecretKey
+/// — Debug redacted) + katalog snapshot'ını async efekte taşır. Çift
+/// dispatch guard'ı: `auto_detect_pending` set iken ikinci Enter effect
+/// üretmez; flow başka adımdaysa (stale) boş döner.
 pub(super) fn dispatch_auto_connect(
     app: &mut AppView,
-    api_key: Zeroizing<String>,
+    api_key: crate::app::actions::SecretKey,
     catalog: xai_grok_shell::util::models_dev::CatalogCache,
 ) -> Vec<Effect> {
     use crate::views::provider_picker::ConnectStep;

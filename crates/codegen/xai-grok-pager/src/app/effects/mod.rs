@@ -1910,7 +1910,8 @@ pub(crate) fn execute(
         }
         Effect::AutoConnect { api_key, catalog } => {
             // P0.3 orkestrasyonu: key yalnızca task içinde kullanılır
-            // (Zeroizing); probe ağı effects katmanında kalır, view'da yok.
+            // (SecretKey → as_str; Debug redacted); probe ağı effects
+            // katmanında kalır, view'da yok.
             tasks.spawn(async move {
                 let result =
                     xai_grok_shell::util::auto_connect::auto_connect_from_key(

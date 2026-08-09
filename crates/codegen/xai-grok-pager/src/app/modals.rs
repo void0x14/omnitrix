@@ -612,12 +612,15 @@ impl AgentView {
                 // default kategoriyi (personal) uygular; kategoriler yalnızca
                 // import/export dosyasında görünen metadata'dır.
                 let category = None;
-                // Builtin provider'larda base_url `None` → config katmanı
-                // katalogdan (URL + backend) çözer; custom'da draft kullanılır.
+                // Custom provider'larda kullanıcının draft'ı kullanılır.
+                // Builtin'de selected provider'ın base_url'i geçer — manual
+                // builtin'de katalog default'u (config katmanının `None`
+                // çözümüyle aynı değer, davranış nötr); auto-connect
+                // winner'da probe sonrası sanitized winner URL kaybolmaz.
                 let base_url = if sel.is_custom {
                     Some(flow.base_url_draft.clone())
                 } else {
-                    None
+                    sel.base_url.clone()
                 };
                 InputOutcome::Action(Action::ConnectProvider {
                     provider_id: sel.provider_id.clone(),
@@ -637,7 +640,7 @@ impl AgentView {
                     return InputOutcome::Changed;
                 }
                 InputOutcome::Action(Action::AutoConnect {
-                    api_key: flow.draft_key.clone(),
+                    api_key: flow.draft_key.clone().into(),
                     catalog: flow.catalog.clone(),
                 })
             }
@@ -3391,5 +3394,106 @@ mod settings_memory_paste_routing_tests {
         };
         assert_eq!(state.query(), "a中b");
         assert_eq!(agent.prompt.text(), "hidden prompt");
+    }
+}
+
+#[cfg(test)]
+mod connect_apply_base_url_tests {
+    use super::*;
+    use crate::app::agent_view::test_fixtures::make_agent;
+    use crate::views::modal::ActiveModal;
+    use crate::views::modal_window::ModalWindowState;
+    use crate::views::provider_picker::{ConnectStep, ProviderConnectFlow, ProviderSelection};
+    use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
+    use xai_grok_shell::sampling::ApiBackend;
+    use xai_grok_shell::util::models_dev::{CacheSource, CatalogCache};
+
+    fn empty_catalog() -> CatalogCache {
+        CatalogCache {
+            providers: indexmap::IndexMap::new(),
+            fetched_at: None,
+            source: CacheSource::Offline,
+        }
+    }
+
+    /// Auto outcome sonrası flow: builtin provider + winner base URL + region.
+    fn flow_with_auto_selection() -> ProviderConnectFlow {
+        let mut flow = ProviderConnectFlow::new(empty_catalog(), vec![]);
+        flow.selected_provider = Some(ProviderSelection {
+            provider_id: "openai".to_string(),
+            label: "OpenAI".to_string(),
+            is_custom: false,
+            backend: ApiBackend::Responses,
+            base_url: Some("https://api.openai.com/v1".to_string()),
+            region: Some("us".to_string()),
+            models: vec![],
+        });
+        flow.selected_model = Some("gpt-4o".to_string());
+        flow.step = ConnectStep::Apply;
+        flow
+    }
+
+    fn apply_enter() -> Event {
+        Event::Key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE))
+    }
+
+    #[test]
+    fn connect_apply_carries_auto_winner_base_url() {
+        let mut agent = make_agent();
+        agent.active_modal = Some(ActiveModal::ProviderConnect {
+            flow: Box::new(flow_with_auto_selection()),
+            window: ModalWindowState::new(),
+        });
+        let out = agent.handle_connect_picker_input(&apply_enter());
+        match out {
+            crate::app::app_view::InputOutcome::Action(Action::ConnectProvider {
+                provider_id,
+                base_url,
+                model_id,
+                ..
+            }) => {
+                assert_eq!(provider_id, "openai");
+                assert_eq!(model_id, "gpt-4o");
+                assert_eq!(
+                    base_url.as_deref(),
+                    Some("https://api.openai.com/v1"),
+                    "auto winner base URL Apply action'ında kaybolmamalı"
+                );
+            }
+            other => panic!("Action::ConnectProvider bekleniyor, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn connect_apply_manual_custom_keeps_draft_base_url() {
+        let mut agent = make_agent();
+        let mut flow = ProviderConnectFlow::new(empty_catalog(), vec![]);
+        flow.selected_provider = Some(ProviderSelection {
+            provider_id: "custom-openai".to_string(),
+            label: "Custom OpenAI".to_string(),
+            is_custom: true,
+            backend: ApiBackend::ChatCompletions,
+            base_url: Some("http://localhost:8000/v1".to_string()),
+            region: None,
+            models: vec![],
+        });
+        flow.base_url_draft = "http://localhost:9999/v1".to_string();
+        flow.selected_model = Some("my-model".to_string());
+        flow.step = ConnectStep::Apply;
+        agent.active_modal = Some(ActiveModal::ProviderConnect {
+            flow: Box::new(flow),
+            window: ModalWindowState::new(),
+        });
+        let out = agent.handle_connect_picker_input(&apply_enter());
+        match out {
+            crate::app::app_view::InputOutcome::Action(Action::ConnectProvider { base_url, .. }) => {
+                assert_eq!(
+                    base_url.as_deref(),
+                    Some("http://localhost:9999/v1"),
+                    "custom branch base_url_draft kullanmaya devam etmeli"
+                );
+            }
+            other => panic!("Action::ConnectProvider bekleniyor, got {other:?}"),
+        }
     }
 }
