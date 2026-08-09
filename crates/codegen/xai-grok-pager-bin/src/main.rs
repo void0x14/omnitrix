@@ -1978,6 +1978,7 @@ async fn async_main(args: PagerArgs) -> Result<()> {
             }
             Command::Keys(keys_args) => {
                 init_tracing_simple("cli");
+                let _otel_guard = xai_grok_telemetry::otel_layer::otel_guard();
                 let grok_home = xai_grok_shell::util::grok_home::grok_home();
                 return xai_grok_pager::keys_cmd::run(keys_args, grok_home).await;
             }

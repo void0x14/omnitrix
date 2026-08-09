@@ -139,7 +139,7 @@ fn cmd_edit(
 ) -> anyhow::Result<()> {
     if category.is_some_and(|c| !c.is_empty()) {
         eprintln!(
-            "uyarı: kategori taşıma henüz desteklenmiyor; --category yok sayıldı ({id})"
+            "uyarı: kategori taşıma desteklenmiyor (henüz); --category değişikliği atlandı ({id})"
         );
     }
     let mut kc = prompt_and_open_keychain(grok_home)?;

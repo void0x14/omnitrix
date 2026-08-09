@@ -34,7 +34,9 @@ fn row_contains_id_and_masked_never_full_key() {
     let row = format_list_row(&sample_entry("k_1234", "personal", "openai"));
     assert!(row.contains("k_1234"));
     assert!(row.contains("sk-…a1b2"));
-    assert!(!row.contains("sk-"), "masked rows must never carry a full key prefix");
+    // Maskeli form meşru olarak "sk-" ile başlar; gerçek invariant satıra
+    // tam key'in gizli kısmının asla girmemesidir.
+    assert!(!row.contains("super-secret"), "row must never carry the full key secret");
 }
 
 #[test]
