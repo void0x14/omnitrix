@@ -2436,8 +2436,9 @@ pub enum TaskResult {
     },
     /// models.dev provider catalog loaded for the `/connect` wizard
     /// ([`Effect::FetchModelsCatalog`]). The open `ProviderConnect` modal
-    /// consumes it (fresh rows + badges); failure leaves the wizard on the
-    /// offline catalog (custom rows still selectable).
+    /// consumes it (fresh rows + badges); failure moves the wizard to the
+    /// `ConnectStep::Error` step (Esc → back to the offline catalog, custom
+    /// rows still selectable).
     ModelsCatalogFetched {
         result: Result<xai_grok_shell::util::models_dev::CatalogCache, String>,
     },

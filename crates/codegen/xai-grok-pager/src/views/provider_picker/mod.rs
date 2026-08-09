@@ -346,12 +346,10 @@ fn render_provider_step(
     use crate::views::picker::render_picker_search_bar;
 
     // Katalog hâlâ yükleniyorsa (Offline) spinner göster — satırlar gelince
-    // liste çizilir. Fetch hatası `flow.error`'a düştüyse mesaj gösterilir.
+    // liste çizilir. Fetch hatası bu adımı kilitlemez: dispatch
+    // `ConnectStep::Error`'a geçer (render + input tutarlı); buraya dönüş
+    // offline katalogla devam eder (custom satırlar seçilebilir).
     let loading = flow.catalog.source == CacheSource::Offline;
-    if let Some(err) = &flow.error {
-        render_placeholder_step(buf, content, theme, &format!("Katalog yüklenemedi: {err}"));
-        return;
-    }
 
     render_picker_search_bar(
         buf,
@@ -646,6 +644,21 @@ mod tests {
         let out = handle_connect_input(&mut flow, &key_esc());
         assert_eq!(out, ConnectOutcome::Back);
         assert_eq!(flow.step, ConnectStep::Provider);
+        assert!(flow.error.is_none(), "geri dönüş kalıntı hatayı temizler");
+    }
+
+    #[test]
+    fn error_step_enter_is_ignored() {
+        // Fetch hatası sonrası Enter kilitli (retry efekti yok): adım ve
+        // görünmez picker'ı süren hiçbir input ilerleme yaratamaz.
+        let mut flow = ProviderConnectFlow::new(empty_catalog(), vec![]);
+        flow.step = ConnectStep::Error("bir şeyler ters gitti".to_string());
+        let out = handle_connect_input(&mut flow, &key_enter());
+        assert_eq!(out, ConnectOutcome::Nothing);
+        assert_eq!(
+            flow.step,
+            ConnectStep::Error("bir şeyler ters gitti".to_string())
+        );
     }
 
     #[test]

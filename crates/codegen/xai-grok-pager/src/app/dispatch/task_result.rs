@@ -1221,6 +1221,7 @@ pub(super) fn dispatch_task_result(result: TaskResult, app: &mut AppView) -> Vec
         }
         TaskResult::ModelsCatalogFetched { result } => {
             use crate::views::modal::ActiveModal;
+            use crate::views::provider_picker::ConnectStep;
             match result {
                 Ok(cache) => {
                     tracing::info!(
@@ -1241,15 +1242,22 @@ pub(super) fn dispatch_task_result(result: TaskResult, app: &mut AppView) -> Vec
                     tracing::warn!(
                         target: "connect",
                         %error,
-                        "models.dev catalog fetch failed; wizard stays on offline catalog",
+                        "models.dev catalog fetch failed; wizard enters Error step",
                     );
-                    // Offline katalogla devam: custom/config satırları hâlâ
-                    // seçilebilir; hata mesajı provider adımında gösterilir.
+                    // Katalog yüklenemedi: Error adımına geç — render ve input
+                    // tutarlı kalır (picker görünmezken input'un görünmez
+                    // picker'ı sürmemesi için `flow.error` + Provider step
+                    // combo'su yerine gerçek adım geçişi kullanılır). Error
+                    // adımında Esc → Provider'a dön (offline katalogla custom
+                    // satırlar seçilebilir); retry efekti yok — wizard'ı
+                    // kapatıp yeniden açmak `FetchModelsCatalog`'u tekrar
+                    // tetikler.
                     for agent in app.agents.values_mut() {
                         if let Some(ActiveModal::ProviderConnect { flow, .. }) =
                             agent.active_modal.as_mut()
                         {
-                            flow.error = Some(error.clone());
+                            flow.step = ConnectStep::Error(format!("{error}"));
+                            flow.error = None;
                         }
                     }
                 }

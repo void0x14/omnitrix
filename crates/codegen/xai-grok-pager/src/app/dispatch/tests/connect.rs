@@ -75,6 +75,68 @@ fn open_connect_picker_opens_wizard_modal_and_requests_catalog() {
 }
 
 #[test]
+fn catalog_fetch_failure_enters_error_step_not_provider() {
+    use crate::views::provider_picker::{ConnectOutcome, ConnectStep, handle_connect_input};
+    use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
+
+    let mut app = test_app();
+    let _ = dispatch_open_connect_picker(&mut app);
+    // Fetch başarısız: `flow.error` + Provider combo'su yerine gerçek
+    // `ConnectStep::Error` geçişi — render ve input tutarlı kalır.
+    let _ = dispatch_task_result(
+        TaskResult::ModelsCatalogFetched {
+            result: Err("models.dev unreachable".to_string()),
+        },
+        &mut app,
+    );
+    let flow = match &app.agents[&AgentId(0)].active_modal {
+        Some(crate::views::modal::ActiveModal::ProviderConnect { flow, .. }) => flow,
+        _ => panic!("ProviderConnect modal expected"),
+    };
+    assert_eq!(
+        flow.step,
+        ConnectStep::Error("models.dev unreachable".to_string())
+    );
+    assert!(
+        flow.error.is_none(),
+        "fetch hataları artık flow.error'a düşmez (Error step'e gider)"
+    );
+
+    // Error'dan Esc → Provider'a geri (offline katalog; custom satırlar).
+    let flow = match &mut app.agents.get_mut(&AgentId(0)).unwrap().active_modal {
+        Some(crate::views::modal::ActiveModal::ProviderConnect { flow, .. }) => flow,
+        _ => unreachable!(),
+    };
+    let esc = Event::Key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+    let out = handle_connect_input(flow, &esc);
+    assert_eq!(out, ConnectOutcome::Back);
+    assert_eq!(flow.step, ConnectStep::Provider);
+
+    // Error'dan Enter → kilitli (retry efekti yok; uygulanan davranış).
+    let _ = dispatch_task_result(
+        TaskResult::ModelsCatalogFetched {
+            result: Err("models.dev unreachable".to_string()),
+        },
+        &mut app,
+    );
+    let flow = match &mut app.agents.get_mut(&AgentId(0)).unwrap().active_modal {
+        Some(crate::views::modal::ActiveModal::ProviderConnect { flow, .. }) => flow,
+        _ => unreachable!(),
+    };
+    assert_eq!(
+        flow.step,
+        ConnectStep::Error("models.dev unreachable".to_string())
+    );
+    let enter = Event::Key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    let out = handle_connect_input(flow, &enter);
+    assert_eq!(out, ConnectOutcome::Nothing);
+    assert_eq!(
+        flow.step,
+        ConnectStep::Error("models.dev unreachable".to_string())
+    );
+}
+
+#[test]
 fn open_keys_manager_sets_placeholder_flag() {
     let mut app = test_app();
     let effects = dispatch_open_keys_manager(&mut app);
