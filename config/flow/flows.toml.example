@@ -1,0 +1,41 @@
+# Flow şablonları — gömülü varsayılanların TOML yansıması (bilgilendirici).
+# Çalışma zamanı yükleme post-MVP; şu an otorite definition.rs içindeki
+# gömülü `default_flows()`.
+
+[flow.universal]
+name = "universal"
+description = "Çok adımlı görev akışı (OTONOM ARACIM belgesi satır 111-114)"
+
+stages = [
+  { id = "analyze",         tools = ["read", "search", "meta"], produces = ["problem_list"],     directive = "ADIM 1/12 — ANALİZ: Problemi kelime kelime oku, parçalara ayır, anla; bitince flow_checkpoint ile kapat." },
+  { id = "research",        tools = ["web", "research", "computer", "search", "meta"], produces = ["findings_archive"], directive = "ADIM 2/12 — ARAŞTIRMA: surface→deep→ocean; bulguları depola; flow_checkpoint ile kapat (bulgular dosyasının yolunu ver)." },
+  { id = "digest",          tools = ["read", "search", "meta"], produces = ["digest_note"],      directive = "ADIM 3/12 — SİNDİRİM: bulguları oku, büyükse böl, özünü çıkar; flow_checkpoint ile kapat." },
+  { id = "stack_select",    tools = ["read", "web", "search", "meta"], produces = ["stack_choice"],    directive = "ADIM 4/12 — STACK SEÇİMİ: yığınları belirle ve gerekçesiyle kaydet; flow_checkpoint ile kapat." },
+  { id = "stack_verify",    tools = ["read", "web", "search", "meta"], produces = ["stack_verified"],  directive = "ADIM 5/12 — STACK DOĞRULAMA: internetle karşılaştır, çürütme döngüsü; nihai stacke karar ver; flow_checkpoint ile kapat." },
+  { id = "duration",        tools = ["meta"], produces = ["duration_decision"], directive = "ADIM 6/12 — SÜRE KARARI: sistemindir; flow_checkpoint ile kapat." },
+  { id = "plan",            tools = ["read", "plan", "meta"], produces = ["plan_doc"],           directive = "ADIM 7/12 — PLAN: plan çıkar, plan dosyasına yaz; flow_checkpoint ile kapat." },
+  { id = "decompose",       tools = ["read", "plan", "write", "meta"], produces = ["building_blocks"], directive = "ADIM 8/12 — YAPI TAŞLARI: planı taşlara böl, dosya yollarıyla yaz; flow_checkpoint ile kapat." },
+  { id = "parallel_query",  tools = ["meta"], produces = ["execution_graph"], directive = "ADIM 9/12 — PARALELİZM: sistem belirler; flow_checkpoint ile kapat." },
+  { id = "execute",         tools = ["all"], produces = ["work_done"],      directive = "ADIM 10/12 — UYGULAMA: taşları uygula; mvp ise alt ajan ≤ 2; flow_checkpoint ile kapat." },
+  { id = "verify",          tools = ["read", "bash", "task", "meta"], produces = ["verified"],    directive = "ADIM 11/12 — DOĞRULAMA: doğrula (yazma yok); flow_checkpoint ile kapat." },
+  { id = "notify",          tools = ["meta"], produces = ["notified"],      directive = "ADIM 12/12 — BİLDİRİM: sistem gönderir; flow_checkpoint ile kapat." },
+]
+
+[flow.commit]
+name = "commit"
+description = "Commit akışı — geçmişe saygı, force/hard yasak"
+
+stages = [
+  { id = "status",         tools = ["read", "bash", "meta"], produces = ["changes_seen"],       directive = "COMMIT 1/3 — DURUM: git status/diff/log (salt okunur); flow_checkpoint ile onayla." },
+  { id = "stage",          tools = ["bash", "meta"], produces = ["staged"],                     directive = "COMMIT 2/3 — STAGE: yalnızca tracked+modified; flow_checkpoint ile onayla." },
+  { id = "commit",         tools = ["bash", "meta"], produces = ["committed"],                  directive = "COMMIT 3/3 — COMMIT: git commit -m; flow_checkpoint ile onayla." },
+  { id = "commit_verify",  tools = ["read", "bash", "meta"], produces = ["committed_verified"], directive = "DOĞRULAMA: git log/show; flow_checkpoint ile kapat." },
+]
+
+[flow.direct]
+name = "direct"
+description = "Basit görevler — tek aşama, tüm araçlar"
+
+stages = [
+  { id = "do", tools = ["all"], produces = ["done"], directive = "GÖREV: istediğini yap; gerçekten bitince flow_checkpoint ile 'do' aşamasını kapat." },
+]

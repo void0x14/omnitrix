@@ -1,0 +1,23 @@
+# Sınıflandırıcı + süre sistemi kuralları — gömülü varsayılanların TOML
+# yansıması (bilgilendirici). Otorite: classifier.rs `default_rules()`.
+
+[rules]
+# commit akışını tetikleyen kelimeler (küçük harfe çevrilmiş prompt'ta aranır)
+commit_keywords = ["commit", "commit et", "commit at", "git commit", "değişiklikleri kaydet"]
+# araştırma sinyali kelimeleri
+research_keywords = ["araştır", "research", "nedir", "nasıl çalışır", "kıyasla", "karşılaştır", "web", "kaynak", "güncel", "2026", "ne yapmalı", "en iyi"]
+# yazma sinyali kelimeleri (dosya/kod değişikliği isteyen görev)
+write_keywords = ["yaz", "ekle", "oluştur", "düzelt", "fix", "implement", "kodla", "dosya", "fonksiyon", "modül", "hata", "bug", "refactor", "feature"]
+# direct akış eşiği: bu değerden kısa ve araştırma/yazma sinyali yoksa direct
+direct_max_len = 120
+# commit akışı için uzunluk üst sınırı (uzun metin = universal)
+commit_max_len = 400
+# mvp kararı için task uzunluk üst sınırı
+mvp_max_len = 800
+
+# Aşama başına maksimum düzeltme (KeepWorking) sayısı — governor.rs
+# MAX_REDIRECTS_PER_STAGE ile aynıdır (3).
+
+# Bash yasak kalıpları (commit akışı) — gate.rs ile aynıdır:
+# --force, --hard, push, rebase, cherry-pick, reset, merge, clean,
+# reflog delete, filter-branch, gc
