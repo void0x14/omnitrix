@@ -103,7 +103,7 @@ pub fn analyze(blocks_file: &Path) -> ExecutionGraph {
             let conflicts_with_group = group.iter().any(|g| {
                 conflicts.contains(&(g, candidate)) || conflicts.contains(&(candidate, g))
             });
-            if conflicts_with_group || candidate == pivot {
+            if conflicts_with_group || *candidate == pivot {
                 rest.push(candidate);
             } else {
                 group.push(candidate);

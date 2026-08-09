@@ -45,15 +45,16 @@ pub async fn dispatch(config: &NotifyConfig, title: &str, body: &str) -> NotifyR
     let mut handles = Vec::new();
     for channel in enabled {
         let channel = channel.clone();
+        let label = channel.label.clone();
         let title = title.to_string();
         let body = body.to_string();
         handles.push(tokio::spawn(async move {
             let r = tokio::time::timeout(Duration::from_secs(15), send_one(channel, &title, &body))
                 .await;
             match r {
-                Ok(Ok(())) => NotifyChannelReport { label: channel.label.clone(), ok: true, detail: "gönderildi".to_string() },
-                Ok(Err(e)) => NotifyChannelReport { label: channel.label.clone(), ok: false, detail: e },
-                Err(_) => NotifyChannelReport { label: channel.label.clone(), ok: false, detail: "15sn zaman aşımı".to_string() },
+                Ok(Ok(())) => NotifyChannelReport { label: label.clone(), ok: true, detail: "gönderildi".to_string() },
+                Ok(Err(e)) => NotifyChannelReport { label: label.clone(), ok: false, detail: e },
+                Err(_) => NotifyChannelReport { label: label.clone(), ok: false, detail: "15sn zaman aşımı".to_string() },
             }
         }));
     }
@@ -166,7 +167,7 @@ async fn send_call(channel: &NotifyChannel, title: &str) -> Result<(), String> {
     }
 }
 
-fn param(channel: &NotifyChannel, key: &str) -> Result<&str, String> {
+fn param<'a>(channel: &'a NotifyChannel, key: &str) -> Result<&'a str, String> {
     channel
         .params
         .get(key)

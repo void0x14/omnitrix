@@ -124,7 +124,7 @@ fn load_notify(path: &Path) -> Option<NotifyConfig> {
     let raw: toml::Value = toml::from_str(&text).ok()?;
     let mut config = NotifyConfig::default();
     for (key, value) in raw.as_table()? {
-        let kind = match key {
+        let kind = match key.as_str() {
             "telegram" => NotifyChannelKind::Telegram,
             "webhook" => NotifyChannelKind::Webhook,
             "sms" => NotifyChannelKind::Sms,

@@ -252,7 +252,7 @@ impl FlowGovernor {
         defs.into_iter()
             .filter(|d| {
                 let id = id_of(d);
-                match FlowGate::tool_group_of(id) {
+                match super::gate::tool_group_of(id) {
                     None => true,
                     Some(group) => self.tool_unlocked_effective(id, group),
                 }

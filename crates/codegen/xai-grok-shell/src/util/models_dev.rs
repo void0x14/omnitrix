@@ -233,10 +233,10 @@ async fn fetch_remote(
 }
 
 /// Provider model listesini döndürür; yoksa `None`.
-pub fn provider_models(
-    cache: &CatalogCache,
+pub fn provider_models<'a>(
+    cache: &'a CatalogCache,
     provider_id: &str,
-) -> Option<&IndexMap<String, ModelInfo>> {
+) -> Option<&'a IndexMap<String, ModelInfo>> {
     cache.providers.get(provider_id).map(|p| &p.models)
 }
 
@@ -251,14 +251,17 @@ pub async fn fetch_provider_models(
     api_key: Option<&str>,
 ) -> anyhow::Result<Vec<String>> {
     let url = format!("{}/models", base_url.trim_end_matches('/'));
-    let attempt = |with_key: bool| async {
-        let mut request = client.get(&url);
-        if with_key
-            && let Some(key) = api_key
-        {
-            request = request.header("Authorization", format!("Bearer {key}"));
+    let attempt = |with_key: bool| {
+        let url = url.clone();
+        async move {
+            let mut request = client.get(&url);
+            if with_key
+                && let Some(key) = api_key
+            {
+                request = request.header("Authorization", format!("Bearer {key}"));
+            }
+            request.send().await.context("provider /models request failed")
         }
-        request.send().await.context("provider /models request failed")
     };
     let mut response = attempt(api_key.is_some()).await?;
     if (response.status() == reqwest::StatusCode::UNAUTHORIZED

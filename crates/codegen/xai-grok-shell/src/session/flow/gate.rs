@@ -17,7 +17,9 @@ pub fn tool_group_of(tool_id: &str) -> Option<ToolGroup> {
     let g = match tool_id {
         "read_file" | "read_file_concise" | "list_dir" | "grep" | "hashline_read"
         | "codex_read_file" | "opencode_read" | "search" => ToolGroup::Read,
-        "search_tool" | "grep" | "list_dir" => ToolGroup::Search,
+        // "grep"/"list_dir" yukarıda Read'e düşer (ilk kol kazanır) — burada
+        // tekrar edilmez (unreachable_pattern uyarısı).
+        "search_tool" => ToolGroup::Search,
         "search_replace" | "apply_patch" | "opencode_edit" | "opencode_write"
         | "hashline_edit" | "image_gen" | "image_edit" => ToolGroup::Write,
         "bash" | "opencode_bash" => ToolGroup::Bash,
