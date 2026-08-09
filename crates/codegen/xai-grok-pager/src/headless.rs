@@ -8,7 +8,7 @@ use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
-use anyhow::Result;
+use anyhow::{Context as _, Result};
 use clap::ValueEnum;
 use tokio_util::sync::CancellationToken;
 
@@ -17,6 +17,7 @@ use xai_acp_lib::{AcpAgentTx, AcpClientMessageBox, AcpClientRx, acp_send};
 use xai_grok_shell::agent::auth_method::AuthMethodKind;
 use xai_grok_shell::agent::config::Config as AgentConfig;
 use xai_grok_shell::extensions::task::{CancelSubagentRequest, KillTaskRequest};
+use xai_grok_shell::sampling::ApiBackend;
 use xai_grok_shell::sampling::error::{
     RATE_LIMITED_ERROR_CODE, error_detail_from_data, format_rate_limited_user_message,
 };
@@ -24,6 +25,8 @@ use xai_grok_shell::sampling::types::{
     REASONING_EFFORT_META_KEY, parse_canonical_effort_token, reasoning_effort_meta_value,
 };
 use xai_grok_shell::util::config as cli_config;
+use xai_grok_shell::util::models_dev::{api_backend_for_provider, base_url_for_provider};
+use xai_omni_keychain::Keychain;
 
 use crate::acp::model_state::{EffortTokenError, ModelState};
 use crate::acp::spawn::{AgentShutdownGuard, spawn_grok_shell};
@@ -154,6 +157,34 @@ fn parse_prompt_json(json_str: &str) -> anyhow::Result<Vec<acp::ContentBlock>> {
     Ok(blocks)
 }
 
+/// `grok -p` tek tur akışında Omnitrix provider/keychain flag'leri
+/// (`--provider`, `--api-key`, `--base-url`, `--keychain-id`, `--category`).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct HeadlessAuthFlags {
+    /// Provider id (models.dev); `custom` + `--base-url` katalog aramaz.
+    pub provider: Option<String>,
+    /// Provider API key (keychain'e şifreli kaydedilir; TTY yoksa oturum-scoped).
+    pub api_key: Option<String>,
+    /// Custom endpoint base URL override.
+    pub base_url: Option<String>,
+    /// Keychain'deki mevcut kayıt id'si (borrow → runtime store).
+    pub keychain_id: Option<String>,
+    /// Keychain kategorisi (varsayılan: keychain default).
+    pub category: Option<String>,
+}
+
+impl HeadlessAuthFlags {
+    /// Flag'lerden en az biri verilmiş mi? (`--model` bu akışı tetiklemez —
+    /// o, mevcut legacy model switch yoluyla işlenir.)
+    pub fn any(&self) -> bool {
+        self.provider.is_some()
+            || self.api_key.is_some()
+            || self.base_url.is_some()
+            || self.keychain_id.is_some()
+            || self.category.is_some()
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct HeadlessOptions {
     pub session_id: Option<String>,
@@ -193,6 +224,9 @@ pub struct HeadlessOptions {
     pub wait_for_background: bool,
     /// Max time to wait for background quiescence after the first turn ends.
     pub background_wait_timeout: Duration,
+    /// Omnitrix: `--provider`/`--api-key`/`--base-url`/`--keychain-id`/
+    /// `--category` flag'leri (config yazımı + keychain/runtime key).
+    pub auth_flags: HeadlessAuthFlags,
 }
 
 // ── CLI flag helpers ─────────────────────────────────────────────────────
@@ -555,6 +589,202 @@ async fn authenticate(
     Ok(is_api_key_auth)
 }
 
+/// `--api-key`/`--keychain-id` flag'leri için keychain erişim planı.
+///
+/// - TTY: master password prompt'u mümkün → keychain açılır (persist).
+/// - TTY değil: master password SORULAMAZ (şifreleme anahtarı onsuz
+///   türetilemez) → `--keychain-id` HATA verir (borrow imkânsız; fail-closed);
+///   `--api-key` (ya da yalnızca config akışı) yalnızca runtime store kullanır.
+fn plan_key_store(stdin_is_tty: bool, has_keychain_id_flag: bool) -> anyhow::Result<KeyStorePlan> {
+    if stdin_is_tty {
+        return Ok(KeyStorePlan::KeychainPersist);
+    }
+    if has_keychain_id_flag {
+        anyhow::bail!(
+            "keychain kilitli; `--keychain-id` için önce bir TTY'de `grok keys` ile \
+             keychain'i açın (master şifre prompt'u TTY ister)"
+        );
+    }
+    Ok(KeyStorePlan::RuntimeOnly)
+}
+
+/// Keychain erişim planı: kalıcı (TTY + master password) ya da yalnızca
+/// oturum-scoped runtime store.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum KeyStorePlan {
+    /// Keychain açılır; `--api-key` keychain'e şifreli yazılır (kalıcı).
+    KeychainPersist,
+    /// Keychain yok; `--api-key` yalnızca runtime store'a gider (oturum-scoped).
+    RuntimeOnly,
+}
+
+/// Provider akışı çalıştıysa `-m`'nin etkin değeri config giriş anahtarıdır
+/// (`omni-<provider>-<model>` — hem `default_model_override` hem ACP model
+/// switch bu anahtarla kataloğa çözülür); akış çalışmadıysa ham `--model`
+/// değeri aynen korunur (legacy davranış).
+fn effective_model_for_auth_flags(
+    cli_model: Option<&str>,
+    provider_id: Option<&str>,
+    resolved_model: &str,
+) -> Option<String> {
+    match provider_id {
+        Some(pid) => Some(crate::connect_cmd::model_entry_key(pid, resolved_model)),
+        None => cli_model.map(str::to_owned),
+    }
+}
+
+/// Omnitrix headless auth flag'lerini tek tur akışına uygular (connect_cmd'in
+/// aynı helper'ları): provider/model/base_url çözümü → key (keychain ya da
+/// runtime-only) → config yazımı → etkin model override.
+///
+/// Sıralama kritiktir: config yazımı + runtime key push, config'i okuyan
+/// her adımdan (bootstrap dahil) ÖNCE tamamlanır; key, per-turn
+/// `resolve_credentials` → `own_credential` fallback'iyle oturum süresince
+/// RAM'de yaşar (config.toml'a düz metin ASLA yazılmaz). Tüm diagnostikler
+/// stderr'e gider — stdout tek tur cevabını taşır.
+async fn apply_auth_flags(
+    flags: &HeadlessAuthFlags,
+    stdin_is_tty: bool,
+) -> anyhow::Result<Option<String>> {
+    if !flags.any() {
+        return Ok(None);
+    }
+    let grok_home = xai_grok_shell::util::grok_home::grok_home();
+
+    // Keychain yalnızca TTY'de açılabilir (master password prompt'u TTY ister).
+    let plan = plan_key_store(stdin_is_tty, flags.keychain_id.is_some())?;
+    let mut kc: Option<Keychain> = match plan {
+        KeyStorePlan::KeychainPersist => {
+            Some(crate::keys_cmd::prompt_and_open_keychain(&grok_home)?)
+        }
+        KeyStorePlan::RuntimeOnly => None,
+    };
+
+    // --keychain-id kaydının metadata'sı (provider/model/base_url kaynağı).
+    let entry = match &flags.keychain_id {
+        Some(kid) => {
+            let kc = kc.as_mut().ok_or_else(|| {
+                anyhow::anyhow!(
+                    "keychain kilitli; `--keychain-id` için önce bir TTY'de `grok keys` ile \
+                     keychain'i açın (master şifre prompt'u TTY ister)"
+                )
+            })?;
+            let entries = kc.list_keys()?;
+            Some(entries.into_iter().find(|e| e.id == *kid).ok_or_else(|| {
+                anyhow::anyhow!("keychain'de {kid} yok (grok keys list ile bakın)")
+            })?)
+        }
+        None => None,
+    };
+
+    // Provider id: flag > keychain kaydı.
+    let provider_id = flags
+        .provider
+        .clone()
+        .or_else(|| entry.as_ref().map(|e| e.provider_id.clone()))
+        .ok_or_else(|| {
+            anyhow::anyhow!("--provider gerekli (ya da --keychain-id ile mevcut kayıt kullanın)")
+        })?;
+
+    // Katalog çözümleme (custom + --base-url katalog aramaz).
+    let (catalog_entry, catalog_models) =
+        crate::connect_cmd::resolve_catalog_for(&grok_home, &provider_id, flags.base_url.is_some())
+            .await?;
+
+    // Base URL: flag > keychain kaydı > katalog.
+    let base_url = flags
+        .base_url
+        .clone()
+        .or_else(|| entry.as_ref().and_then(|e| e.base_url.clone()))
+        .or_else(|| catalog_entry.as_ref().and_then(base_url_for_provider))
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "base URL çözülemedi: --base-url verin (ör. https://api.example.com/v1)"
+            )
+        })?;
+
+    // Model: flag > keychain kaydı > katalog tek/ilk model.
+    let model = crate::connect_cmd::resolve_model_id(
+        flags.model.as_deref(),
+        entry.as_ref().and_then(|e| e.model_id.as_deref()),
+        &catalog_models,
+    )?;
+
+    // API backend (katalog bilgisi yoksa OpenAI-compatible varsayım).
+    let api_backend = catalog_entry
+        .as_ref()
+        .map(api_backend_for_provider)
+        .unwrap_or(ApiBackend::ChatCompletions);
+
+    // Key: --api-key → keychain (TTY) ya da runtime-only; --keychain-id → borrow.
+    // Key config.toml'a yazılmaz; yalnızca process runtime store'a gider.
+    if let Some(key) = &flags.api_key {
+        match kc.as_mut() {
+            Some(kc) => {
+                let category = match &flags.category {
+                    Some(c) if !c.is_empty() => c.clone(),
+                    _ => kc.default_category(),
+                };
+                let id = kc.add_key(
+                    &category,
+                    &provider_id,
+                    key,
+                    Some(model.clone()),
+                    Some(base_url.clone()),
+                )?;
+                kc.save()?;
+                eprintln!("keychain'e eklendi: {provider_id} ({category}) [{id}]");
+                let borrowed = kc.borrow(id)?;
+                xai_grok_shell::auth::runtime_key::set_runtime_model_key(
+                    &model,
+                    Some(borrowed.get().to_string()),
+                );
+            }
+            None => {
+                eprintln!(
+                    "uyarı: --api-key oturum için geçerli, kalıcı değil \
+                     (keychain master şifresi TTY ister; `grok connect` ile kalıcılaştırın)"
+                );
+                xai_grok_shell::auth::runtime_key::set_runtime_model_key(&model, Some(key.clone()));
+            }
+        }
+    } else if let Some(kid) = &flags.keychain_id {
+        let kc = kc.as_mut().ok_or_else(|| {
+            anyhow::anyhow!(
+                "keychain kilitli; `--keychain-id` için önce bir TTY'de `grok keys` ile \
+                 keychain'i açın (master şifre prompt'u TTY ister)"
+            )
+        })?;
+        let borrowed = kc.borrow(kid.clone())?;
+        xai_grok_shell::auth::runtime_key::set_runtime_model_key(
+            &model,
+            Some(borrowed.get().to_string()),
+        );
+    }
+
+    // Config yazımı: model_providers + model + models.default (key'siz).
+    let model_key = crate::connect_cmd::model_entry_key(&provider_id, &model);
+    crate::connect_cmd::write_provider_config(
+        &grok_home,
+        &provider_id,
+        &base_url,
+        &api_backend,
+        &model_key,
+        &model,
+    )
+    .await?;
+    xai_grok_shell::util::config::set_default_model(model_key.clone())
+        .await
+        .context("varsayılan model yazılamadı")?;
+    eprintln!("bağlandı: {provider_id} ({base_url}) → model: {model} [{model_key}]");
+
+    Ok(effective_model_for_auth_flags(
+        flags.model.as_deref(),
+        Some(&provider_id),
+        &model,
+    ))
+}
+
 fn build_headless_init_request(
     rules: Option<&str>,
     system_prompt_override: Option<&str>,
@@ -832,7 +1062,7 @@ fn headless_materialize_ctx(
 pub async fn run_single_turn(
     prompt: HeadlessPrompt,
     verbatim: bool,
-    options: HeadlessOptions,
+    mut options: HeadlessOptions,
 ) -> Result<()> {
     // Stamp proxy requests as headless before the agent spawns and issues
     // its first request (auth enrichment, model list, etc.).
@@ -844,6 +1074,24 @@ pub async fn run_single_turn(
     };
 
     let mut emitter = HeadlessEmitter::new(options.output_format, options.json_schema.is_some());
+
+    // Omnitrix: --provider/--api-key/--base-url/--keychain-id/--category
+    // flag'leri — config yazımı + runtime key push, config'i okuyan her
+    // adımdan (bootstrap dahil) ÖNCE tamamlanır. Hiçbir flag yoksa mevcut
+    // davranış aynen sürer (legacy env/BYOK/login yolu).
+    let stdin_is_tty =
+        std::io::stdin().is_terminal() && !xai_grok_shell::util::clipboard::is_remote_session();
+    let effective_model = match apply_auth_flags(&options.auth_flags, stdin_is_tty).await {
+        Ok(m) => m,
+        Err(e) => {
+            let msg = e.to_string();
+            emitter.on_error(&msg);
+            anyhow::bail!("{msg}");
+        }
+    };
+    if effective_model.is_some() {
+        options.model = effective_model;
+    }
 
     // Load config and spawn agent
     let t_spawn = Instant::now();
@@ -2161,5 +2409,99 @@ mod tests {
             handle_ext_notification(&notif, OutputFormat::Plain),
             ExtEvent::None
         ));
+    }
+
+    // ── Omnitrix auth flag kararları (saf; disk/ağ yok) ────────────────────
+
+    #[test]
+    fn auth_flags_any_detects_each_flag() {
+        let base = super::HeadlessAuthFlags::default();
+        assert!(!base.any());
+        for flag in [
+            super::HeadlessAuthFlags {
+                provider: Some("openai".to_string()),
+                ..base.clone()
+            },
+            super::HeadlessAuthFlags {
+                api_key: Some("sk-x".to_string()),
+                ..base.clone()
+            },
+            super::HeadlessAuthFlags {
+                base_url: Some("https://x/v1".to_string()),
+                ..base.clone()
+            },
+            super::HeadlessAuthFlags {
+                keychain_id: Some("k_1".to_string()),
+                ..base.clone()
+            },
+            super::HeadlessAuthFlags {
+                category: Some("work".to_string()),
+                ..base.clone()
+            },
+        ] {
+            assert!(flag.any());
+        }
+    }
+
+    #[test]
+    fn plan_key_store_tty_always_persists() {
+        assert_eq!(
+            plan_key_store(true, false).unwrap(),
+            KeyStorePlan::KeychainPersist
+        );
+        assert_eq!(
+            plan_key_store(true, true).unwrap(),
+            KeyStorePlan::KeychainPersist
+        );
+    }
+
+    #[test]
+    fn plan_key_store_non_tty_keychain_id_fails_closed() {
+        let err = plan_key_store(false, true).unwrap_err();
+        assert!(
+            err.to_string().contains("keychain kilitli"),
+            "non-TTY borrow must fail closed, got: {err}"
+        );
+    }
+
+    #[test]
+    fn plan_key_store_non_tty_api_key_is_runtime_only() {
+        // `--api-key` (ya da yalnızca config akışı) non-TTY'de keychain'e
+        // yazılamaz (master şifre sorulamaz) → oturum-scoped runtime store.
+        assert_eq!(
+            plan_key_store(false, false).unwrap(),
+            KeyStorePlan::RuntimeOnly
+        );
+    }
+
+    #[test]
+    fn effective_model_maps_provider_run_to_config_entry_key() {
+        // Provider akışı: `-m gpt-5` + provider openai → `omni-openai-gpt-5`
+        // (hem default_model_override hem ACP model switch bu anahtarla çözülür).
+        assert_eq!(
+            effective_model_for_auth_flags(Some("gpt-5"), Some("openai"), "gpt-5").as_deref(),
+            Some("omni-openai-gpt-5")
+        );
+        // `-m` verilmediyse çözülen modelin entry anahtarı döner.
+        assert_eq!(
+            effective_model_for_auth_flags(None, Some("openai"), "deepseek-chat").as_deref(),
+            Some("omni-openai-deepseek-chat")
+        );
+        // Özel karakterler entry anahtarında güvenli hale getirilir.
+        assert_eq!(
+            effective_model_for_auth_flags(Some("my llm"), Some("my provider"), "my llm")
+                .as_deref(),
+            Some("omni-my-provider-my-llm")
+        );
+    }
+
+    #[test]
+    fn effective_model_without_provider_keeps_cli_model() {
+        // Akış çalışmadıysa `-m` değeri aynen korunur (legacy davranış).
+        assert_eq!(
+            effective_model_for_auth_flags(Some("grok-4"), None, "ignored").as_deref(),
+            Some("grok-4")
+        );
+        assert_eq!(effective_model_for_auth_flags(None, None, "ignored"), None);
     }
 }

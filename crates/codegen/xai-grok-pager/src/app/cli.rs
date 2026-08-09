@@ -613,6 +613,21 @@ pub struct PagerArgs {
     /// Model ID to use.
     #[clap(short = 'm', long = "model", value_name = "MODEL")]
     pub model: Option<String>,
+    /// Provider id from models.dev to use for this session.
+    #[arg(long = "provider", value_name = "PROVIDER")]
+    pub provider: Option<String>,
+    /// API key for the selected provider (stored encrypted in the keychain).
+    #[arg(long = "api-key", value_name = "KEY")]
+    pub api_key: Option<String>,
+    /// Base URL override for a custom OpenAI/Anthropic-compatible endpoint.
+    #[arg(long = "base-url", value_name = "URL")]
+    pub base_url: Option<String>,
+    /// Use an existing keychain entry by id for this session.
+    #[arg(long = "keychain-id", value_name = "KEY_ID")]
+    pub keychain_id: Option<String>,
+    /// Keychain category to store/read the provider key.
+    #[arg(long = "category", value_name = "CATEGORY")]
+    pub category: Option<String>,
     /// Reasoning effort for reasoning models
     #[clap(
         long = "reasoning-effort",
@@ -1557,6 +1572,37 @@ mod tests {
                 && m == "gpt-4o" && kid == "k_1234" && c == "work"
         ));
     }
+    #[test]
+    fn headless_auth_flags_parse_on_pager() {
+        let args = PagerArgs::try_parse_from([
+            "grok",
+            "-p",
+            "hi",
+            "--provider",
+            "openai",
+            "--api-key",
+            "sk-test",
+            "--base-url",
+            "https://gateway.example/v1",
+            "--model",
+            "gpt-5",
+            "--keychain-id",
+            "k_1234",
+            "--category",
+            "work",
+        ])
+        .expect("headless auth flags parse");
+        assert_eq!(args.provider.as_deref(), Some("openai"));
+        assert_eq!(args.api_key.as_deref(), Some("sk-test"));
+        assert_eq!(args.base_url.as_deref(), Some("https://gateway.example/v1"));
+        assert_eq!(args.model.as_deref(), Some("gpt-5"));
+        assert_eq!(args.keychain_id.as_deref(), Some("k_1234"));
+        assert_eq!(args.category.as_deref(), Some("work"));
+        // Hiçbir flag verilmeden de headless akış aynen parse edilir.
+        let bare = PagerArgs::try_parse_from(["grok", "-p", "hi"]).expect("bare headless parses");
+        assert!(bare.provider.is_none() && bare.api_key.is_none() && bare.category.is_none());
+    }
+
     #[test]
     fn keys_subcommands_parse() {
         let list = PagerArgs::try_parse_from(["grok", "keys", "list"]).expect("keys list parses");

@@ -2070,6 +2070,13 @@ async fn async_main(args: PagerArgs) -> Result<()> {
                 background_wait_timeout: std::time::Duration::from_secs(
                     args.background_wait_timeout_secs,
                 ),
+                auth_flags: xai_grok_pager::headless::HeadlessAuthFlags {
+                    provider: args.provider.clone(),
+                    api_key: args.api_key.clone(),
+                    base_url: args.base_url.clone(),
+                    keychain_id: args.keychain_id.clone(),
+                    category: args.category.clone(),
+                },
             },
         )
         .await;

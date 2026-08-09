@@ -214,13 +214,23 @@ async fn resolve_catalog(
     provider_id: &str,
     args: &ConnectArgs,
 ) -> anyhow::Result<(Option<ProviderCatalog>, IndexMap<String, ModelInfo>)> {
+    resolve_catalog_for(grok_home, provider_id, args.base_url.is_some()).await
+}
+
+/// `resolve_catalog`'un `ConnectArgs`-bağımsız çekirdeği — headless
+/// (`grok -p --provider ... --api-key ...`) akışı da aynı çözümlemeyi kullanır.
+pub(crate) async fn resolve_catalog_for(
+    grok_home: &Path,
+    provider_id: &str,
+    has_base_url_flag: bool,
+) -> anyhow::Result<(Option<ProviderCatalog>, IndexMap<String, ModelInfo>)> {
     if provider_id == "custom" {
         return Ok((None, IndexMap::new()));
     }
     let cache = fetch_catalog(&reqwest::Client::new(), grok_home, false)
         .await
         .context("models.dev kataloğu çözümlenemedi")?;
-    match (cache.providers.get(provider_id), args.base_url.is_some()) {
+    match (cache.providers.get(provider_id), has_base_url_flag) {
         (Some(entry), _) => Ok((
             Some(entry.clone()),
             provider_models(&cache, provider_id).cloned().unwrap_or_default(),
@@ -257,7 +267,8 @@ pub(crate) async fn catalog_for_provider(
 
 /// Model id çözümleme (saf): flag/keychain kaydı varsa doğrula (katalog
 /// doluysa); yoksa tek modeli seç, çokluysa ilkini seç ve stderr'e not düş.
-fn resolve_model_id(
+/// Headless (`grok -p`) akışı da aynı çözümlemeyi kullanır (pub(crate)).
+pub(crate) fn resolve_model_id(
     explicit: Option<&str>,
     entry_model: Option<&str>,
     models: &IndexMap<String, ModelInfo>,
