@@ -304,14 +304,37 @@ Dokunulmayan: `xai-agent-lifecycle`, `xai-file-utils` Event enum'u (kanıt olayl
   `events.jsonl`'a `flow.*` etiketli satırlar.
 - Model: direktifler sistem mesajı olarak; redler tool sonucu olarak.
 
-## 9. Kapsam dışı (post-MVP)
+## 9. Kapsam (TAM teslim — 2026-08-09 itibarıyla hepsi uygulandı)
 
-- Judge (omni-router'dan taşınan yargıç) verify aşamasına bağlanması.
-- `AutonomousLoop`'un (autonomous.rs — ölü kod) EXECUTE aşaması executor'ı
-  olarak diriltilmesi.
-- TUI'da ayrı "flow paneli" görünümü (pager tarafı).
-- notify webhook/telgraf/telefon kanalları.
-- `config/flow/*.toml` canlı reload.
+Aşağıdakilerin tamamı uygulanmıştır:
+
+- **Judge (verify aşaması):** `flow/judge.rs` + S6 — `judge` persona'lı alt ajan
+  system-triggered görevlendirilir (üreten ≠ doğrulayan), karar `finalize_verify`
+  ile kesinleşir; redler bütçeyle sınırlı, spawn hatası fail-soft.
+- **Çoklu ajan yürütme (execute, duration=Full):** `flow/parallel.rs` bağımlılık
+  analizi → yürütme grafiği → SİSTEM her bloğu `executor` alt ajanı olarak
+  görevlendirir (grup içi paralel, gruplar sıralı); `reject_execute` bütçeyle
+  sınırlıdır.
+- **Paralel sorgu (parallel_query):** deterministik sistem pas geçişi —
+  `building_blocks` JSONL'inden dosya çakışması + `depends` analizi.
+- **Bildirim kanalları (notify):** `flow/notify.rs` — telegram (Bot API),
+  webhook, SMS (NetGSM uyumlu), çağrı (generic HTTP); `config/flow/notify.toml`;
+  fail-soft (kanal hatası akışı asla kilitlemez).
+- **TUI paneli:** `views/flow_detail.rs` — `F` tuşuyla açılan Flow Governor
+  paneli (`flow_events.jsonl` — mtime önbellekli).
+- **Runtime config:** `flow/config.rs` — `config/flow/{rules,flows,notify}.toml`
+  `$OMNITRIX_CONFIG_DIR` → `<cwd>/config/flow` → gömülü varsayılan; mtime
+  üzerinden canlı reload; `max_redirects_per_stage`, aşama direktif/araç grup
+  override'ları.
+- **Yerleşik araç zorunluluğu:** `cat/less/more/head/tail/grep/sed/awk/echo >/
+  >>/rm` bash ile yasak (TÜM akışlarda — `FlowGate::bash_command_allowed` +
+  S4-bash kancası).
+
+Kapsam dışı (bilinçli, kullanıcı onayı gerekirse ayrı iş): kullanıcı onaylı
+"sign-off" kapısı verify'da (şu an yargıç + otomatik kabul; kullanıcı onayı
+TUI/transkript üzerinden görseldir), `AutonomousLoop`'un (autonomous.rs — ölü
+kod) EXECUTE executor'ı olarak diriltilmesi (yerine sistem çoklu ajan
+yürütmesi kullanıldı — aynı amacı system-triggered karşılar).
 
 ## 10. Doğrulama (derleyici YASAK)
 
