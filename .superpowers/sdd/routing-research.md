@@ -119,7 +119,7 @@ Açıklamalar: `[kaynak URL veya paper ID]` — dış kaynak; `[SENTEZ]` — do�
 | `frugal-cascade` | composition | Query başına öğrenilmiş model zinciri; düşük güven/kalite tahmininde güçlü modele defer (FrugalGPT LLM cascade). [arXiv:2305.05176] |
 | `conformal-cascade` | composition | Conformal prediction set boyutu tek elemana inince kabul, değilse üst tiera defer; dağıtım-bağımsız accuracy garantisi (Conformal Cascade). [arXiv:2607.25018] |
 
-### Specialty (8)
+### Specialty (10)
 | ID | Sınıf | Blurb |
 |---|---|---|
 | `research-ocean-prefer` | policy | Research modlarında derin/ocean araştırma endpoint'lerini öncelikle seç (repo `research_tool` surface/deep/ocean + plan spec). [SENTEZ — repo research_tool] |
@@ -200,5 +200,5 @@ Not: `quality-diff-router` ve `learned-router` birer mod olarak Specialty'de yer
 
 - Toplam unique mod ID: **65** (Balance 13, Failover 12, RoleSplit 7, Hybrid 8, Specialty 10, Cost 7, Privacy 8)
 - Placeholder/TBD: 0
-- Dış kaynaklı her iddia URL veya paper ID taşıyor; `[SENTEZ]` etiketli 10 mod açıkça işaretli (rr dışındaki primitive'lerin çoğu kaynaklı).
+- Dış kaynaklı her iddia URL veya paper ID taşıyor; `[SENTEZ]` etiketli 11 mod açıkça işaretli (rr dışındaki primitive'lerin çoğu kaynaklı).
 - Araçlar: firecrawl search ×4 alan + 2 ek; paper-search (arxiv/semantic/crossref) ×2; Context7 resolve + query (LiteLLM); exa fetch ×1 (9router README).
