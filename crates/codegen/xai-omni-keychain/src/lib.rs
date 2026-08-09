@@ -11,6 +11,7 @@ mod ttl;
 
 pub use export::{export_keychain, import_keychain, ExportScope, ImportSummary};
 pub use store::{
-    BorrowedKey, KeyEntry, KeySource, Keychain, KeychainError, KeychainOptions, KeyId,
+    BorrowedKey, KeyEntry, KeySource, KeyType, Keychain, KeychainError, KeychainOptions, KeyId,
+    auto_category, detect_key_type,
 };
 pub use ttl::{MasterKeyCache, MasterKeyTtl};

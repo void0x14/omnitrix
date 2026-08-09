@@ -1,18 +1,15 @@
-//! Task 8: BaseUrl / Key / Category adımları.
+//! Task 8: BaseUrl / Key adımları.
 //!
 //! - BaseUrl: custom provider'lar için tek satırlık URL girişi (öneriyle
 //!   önceden dolu); Enter → `http(s)` doğrulaması → `PickBaseUrl`.
 //! - Key: keychain kayıtları (bu provider'a ait) + "yeni key gir" (maskeli
-//!   giriş, `ctrl+t`/`Tab` göster/gizle) + "ortam değişkeni kullan" (env adı
-//!   girişi, models.dev `env[0]` önerisi). Seçim → `PickKeyMode`.
-//! - Category: mevcut kategoriler + "yeni kategori…" girişi; default kategori
-//!   önceden seçili. Seçim → `Next` (Model adımına).
+//!   giriş, `ctrl+t`/`Tab` göster/gizle). Seçim → `PickKeyMode`.
 //!
 //! Güvenlik: key asla düz metin render edilmez — maskeli modda `•` gösterilir;
 //! `ctrl+t`/`Tab` ile yalnızca kullanıcı isterse açılır. Onaylanan key
 //! `flow.draft_key: Zeroizing<String>` içine taşınır; editör temizlenir.
 
-use crossterm::event::{Event, KeyCode, KeyEventKind, KeyModifiers};
+use crossterm::event::{Event, KeyCode, KeyEventKind, KeyModifiers, MouseEventKind};
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Style};
@@ -45,36 +42,11 @@ fn provider_keychain_entries(flow: &ProviderConnectFlow) -> Vec<KeyEntry> {
 /// Key adımına girerken geçici durumu sıfırla (editörler, hata, gösterim).
 pub(super) fn enter_key_step(flow: &mut ProviderConnectFlow) {
     flow.key_edit_mode = false;
-    flow.env_edit_mode = false;
     flow.key_editor.reset();
-    flow.env_editor.reset();
     flow.key_error = None;
     flow.key_show = false;
     flow.key_cursor = 0;
-}
-
-/// Category adımına girerken satırları kur: mevcut kategoriler (keychain
-/// kayıtlarından benzersiz) veya hiç yoksa default `personal`; "yeni kategori…"
-/// satırı örtük son satırdır (`category_cursor == rows.len()`).
-pub(super) fn enter_category_step(flow: &mut ProviderConnectFlow) {
-    let mut cats: Vec<String> = Vec::new();
-    for entry in &flow.keychain_entries {
-        if !cats.contains(&entry.category) {
-            cats.push(entry.category.clone());
-        }
-    }
-    if cats.is_empty() {
-        cats.push("personal".to_string());
-    }
-    flow.category_rows = cats;
-    flow.category_cursor = flow
-        .category_rows
-        .iter()
-        .position(|c| c == "personal")
-        .unwrap_or(0);
-    flow.category_edit_mode = false;
-    flow.category_editor.reset();
-    flow.category_error = None;
+    flow.key_row_rects.clear();
 }
 
 // ---------------------------------------------------------------------------
@@ -224,8 +196,8 @@ pub(super) fn handle_key_step_input(flow: &mut ProviderConnectFlow, ev: &Event) 
     if flow.key_edit_mode {
         return handle_key_typing(flow, ev);
     }
-    if flow.env_edit_mode {
-        return handle_env_typing(flow, ev);
+    if let Event::Mouse(mouse) = ev {
+        return handle_key_list_mouse(flow, mouse);
     }
     match ev {
         Event::Key(key) if key.kind == KeyEventKind::Press => match key.code {
@@ -270,41 +242,43 @@ pub(super) fn handle_key_step_input(flow: &mut ProviderConnectFlow, ev: &Event) 
     }
 }
 
-/// Key listesi satır sayısı: keychain kayıtları + "yeni key gir" + "env".
+/// Key listesi satır sayısı: keychain kayıtları + "yeni key gir".
 fn key_row_count(flow: &ProviderConnectFlow) -> usize {
-    provider_keychain_entries(flow).len() + 2
+    provider_keychain_entries(flow).len() + 1
 }
 
-/// Liste modunda Enter: cursor'a göre keychain kaydı / yeni key / env.
+/// Fare: satıra tıkla → imleci oraya taşı + Enter davranışını uygula.
+fn handle_key_list_mouse(flow: &mut ProviderConnectFlow, mouse: &crossterm::event::MouseEvent) -> ConnectOutcome {
+    if !matches!(mouse.kind, MouseEventKind::Down(crossterm::event::MouseButton::Left)) {
+        return ConnectOutcome::Nothing;
+    }
+    let pos = ratatui::layout::Position::new(mouse.column, mouse.row);
+    for (i, rect) in flow.key_row_rects.iter().enumerate() {
+        if rect.contains(pos) {
+            flow.key_cursor = i;
+            return handle_key_list_enter(flow);
+        }
+    }
+    ConnectOutcome::Nothing
+}
+
+/// Liste modunda Enter: cursor'a göre keychain kaydı / yeni key.
 fn handle_key_list_enter(flow: &mut ProviderConnectFlow) -> ConnectOutcome {
     let entries = provider_keychain_entries(flow);
     let new_key_idx = entries.len();
-    let env_idx = new_key_idx + 1;
     match flow.key_cursor {
         i if i < entries.len() => {
             let entry = &entries[i];
             flow.key_mode = KeyMode::Keychain(entry.id.clone());
             flow.draft_key = Zeroizing::new(String::new());
             flow.key_error = None;
-            flow.step = ConnectStep::Category;
-            enter_category_step(flow);
+            flow.step = ConnectStep::Model;
+            super::model_select::enter_model_step(flow);
             ConnectOutcome::PickKeyMode(KeyMode::Keychain(entry.id.clone()))
         }
         i if i == new_key_idx => {
             flow.key_edit_mode = true;
             flow.key_editor.reset();
-            flow.key_error = None;
-            ConnectOutcome::Nothing
-        }
-        i if i == env_idx => {
-            flow.env_edit_mode = true;
-            let suggestion = flow
-                .selected_provider
-                .as_ref()
-                .and_then(|s| flow.catalog.providers.get(&s.provider_id))
-                .and_then(|p| p.env.first().cloned())
-                .unwrap_or_else(|| "API_KEY".to_string());
-            flow.env_editor.set_text(suggestion);
             flow.key_error = None;
             ConnectOutcome::Nothing
         }
@@ -333,8 +307,8 @@ fn handle_key_typing(flow: &mut ProviderConnectFlow, ev: &Event) -> ConnectOutco
                 flow.key_edit_mode = false;
                 flow.key_editor.reset();
                 flow.key_error = None;
-                flow.step = ConnectStep::Category;
-                enter_category_step(flow);
+                flow.step = ConnectStep::Model;
+                super::model_select::enter_model_step(flow);
                 ConnectOutcome::PickKeyMode(KeyMode::New)
             }
             KeyCode::Tab => {
@@ -360,45 +334,6 @@ fn handle_key_typing(flow: &mut ProviderConnectFlow, ev: &Event) -> ConnectOutco
     }
 }
 
-/// Env adı girişi modu: Enter → onayla, Esc → listeye dön.
-fn handle_env_typing(flow: &mut ProviderConnectFlow, ev: &Event) -> ConnectOutcome {
-    match ev {
-        Event::Key(key) if key.kind == KeyEventKind::Press => match key.code {
-            KeyCode::Esc => {
-                flow.env_edit_mode = false;
-                flow.env_editor.reset();
-                flow.key_error = None;
-                ConnectOutcome::Nothing
-            }
-            KeyCode::Enter => {
-                let name = flow.env_editor.text().trim().to_string();
-                if name.is_empty() {
-                    flow.key_error = Some("env değişkeni adı boş olamaz".to_string());
-                    return ConnectOutcome::Nothing;
-                }
-                flow.key_mode = KeyMode::Env(name.clone());
-                flow.env_edit_mode = false;
-                flow.env_editor.reset();
-                flow.key_error = None;
-                flow.step = ConnectStep::Category;
-                enter_category_step(flow);
-                ConnectOutcome::PickKeyMode(KeyMode::Env(name))
-            }
-            _ => {
-                flow.env_editor.handle_key(key);
-                flow.key_error = None;
-                ConnectOutcome::Nothing
-            }
-        },
-        Event::Paste(text) => {
-            flow.env_editor.insert_paste(text);
-            flow.key_error = None;
-            ConnectOutcome::Nothing
-        }
-        _ => ConnectOutcome::Nothing,
-    }
-}
-
 pub(super) fn render_key_step(
     buf: &mut Buffer,
     content: Rect,
@@ -410,6 +345,7 @@ pub(super) fn render_key_step(
     if content.height == 0 || content.width == 0 {
         return;
     }
+    flow.key_row_rects.clear();
     let mut y = content.y;
     let provider = flow
         .selected_provider
@@ -417,76 +353,111 @@ pub(super) fn render_key_step(
         .map(|s| s.label.as_str())
         .unwrap_or("");
 
-    // Başlık.
+    // Başlık (ortalanmış, vurgulu).
+    let title = format!("API Key \u{2014} {provider}");
+    let title_style = Style::default()
+        .fg(theme.text_primary)
+        .bg(theme.bg_base)
+        .add_modifier(ratatui::style::Modifier::BOLD);
     buf.set_line(
-        inner_x,
+        inner_x + inner_width.saturating_sub(title.width() as u16) / 2,
         y,
-        &Line::from(Span::styled(
-            format!("Key \u{2014} {provider}"),
-            Style::default().fg(theme.gray).bg(theme.bg_base),
-        )),
+        &Line::from(Span::styled(&title, title_style)),
         inner_width,
     );
     y += 1;
+    crate::views::picker::render_divider(buf, inner_x, y, inner_width, theme, Some(theme.bg_base));
+    y += 1;
 
-    // Liste satırları.
+    // Keychain kayıtları.
     let entries = provider_keychain_entries(flow);
     let selected_style = |sel: bool| {
         if sel {
             Style::default()
-                .fg(theme.text_primary)
-                .bg(theme.bg_base)
-                .add_modifier(ratatui::style::Modifier::REVERSED)
+                .fg(theme.bg_base)
+                .bg(theme.text_primary)
         } else {
             Style::default().fg(theme.text_primary).bg(theme.bg_base)
         }
     };
-    for (row_index, entry) in entries.iter().enumerate() {
-        if y >= content.y + content.height {
-            return;
+    let row_style = |sel: bool| {
+        if sel {
+            Style::default()
+                .fg(theme.bg_base)
+                .bg(theme.text_primary)
+        } else {
+            Style::default().fg(theme.text_secondary).bg(theme.bg_base)
         }
-        let label = format!("{} / {}  kullan", entry.category, entry.masked);
-        buf.set_line(
-            inner_x,
-            y,
-            &Line::from(Span::styled(
-                label,
-                selected_style(flow.key_cursor == row_index),
-            )),
-            inner_width,
-        );
-        y += 1;
+    };
+    if entries.is_empty() {
+        if y < content.y + content.height {
+            buf.set_line(
+                inner_x,
+                y,
+                &Line::from(Span::styled(
+                    "kayıtlı key yok \u{2014} aşağıdan yeni key ekle",
+                    Style::default().fg(theme.gray_dim).bg(theme.bg_base),
+                )),
+                inner_width,
+            );
+            y += 1;
+        }
+    } else {
+        for (row_index, entry) in entries.iter().enumerate() {
+            if y >= content.y + content.height {
+                return;
+            }
+            flow.key_row_rects.push(Rect::new(inner_x, y, inner_width, 1));
+            let label = format!("[key] {}", entry.masked);
+            let cat = format!("  {}", entry.category);
+            let line = Line::from(vec![
+                Span::styled(
+                    label,
+                    row_style(flow.key_cursor == row_index)
+                        .fg(if flow.key_cursor == row_index {
+                            theme.bg_base
+                        } else {
+                            theme.accent_system
+                        }),
+                ),
+                Span::styled(
+                    cat,
+                    row_style(flow.key_cursor == row_index)
+                        .fg(if flow.key_cursor == row_index {
+                            theme.bg_base
+                        } else {
+                            theme.gray
+                        }),
+                ),
+            ]);
+            buf.set_line(inner_x, y, &line, inner_width);
+            y += 1;
+        }
     }
+
+    // "Yeni key gir" satırı.
     if y >= content.y + content.height {
         return;
     }
     let new_idx = entries.len();
+    flow.key_row_rects.push(Rect::new(inner_x, y, inner_width, 1));
+    let new_label = if flow.key_edit_mode {
+        "yeni key yazılıyor\u{2026}".to_string()
+    } else {
+        "+ yeni key gir".to_string()
+    };
     buf.set_line(
         inner_x,
         y,
         &Line::from(Span::styled(
-            "yeni key gir",
+            new_label,
             selected_style(flow.key_cursor == new_idx),
         )),
         inner_width,
     );
     y += 1;
-    if y >= content.y + content.height {
-        return;
-    }
-    let env_idx = new_idx + 1;
-    buf.set_line(
-        inner_x,
-        y,
-        &Line::from(Span::styled(
-            "ortam değişkeni kullan",
-            selected_style(flow.key_cursor == env_idx),
-        )),
-        inner_width,
-    );
-    y += 1;
 
-    // Alt bölüm: yazım modları + ipucu + hata.
+    // Yazım modu: maskeli editör + ipucu.
     if flow.key_edit_mode && y < content.y + content.height {
         let state = if flow.key_show { "açık" } else { "gizli" };
         render_masked_editor(
@@ -512,17 +483,15 @@ pub(super) fn render_key_step(
                 inner_width,
             );
         }
-    } else if flow.env_edit_mode && y < content.y + content.height {
-        crate::views::picker::render_line_editor_search_bar(
-            buf,
+    } else if y < content.y + content.height {
+        buf.set_line(
             inner_x,
             y,
+            &Line::from(Span::styled(
+                "Enter: seç \u{00b7} ctrl+t: göster/gizle \u{00b7} Esc: geri",
+                Style::default().fg(theme.gray_dim).bg(theme.bg_base),
+            )),
             inner_width,
-            theme,
-            &flow.env_editor,
-            true,
-            false,
-            Some(theme.bg_base),
         );
     }
     if let Some(err) = &flow.key_error {
@@ -603,182 +572,6 @@ fn render_masked_editor(
     }
 }
 
-// ---------------------------------------------------------------------------
-// Category
-// ---------------------------------------------------------------------------
-
-pub(super) fn handle_category_step_input(
-    flow: &mut ProviderConnectFlow,
-    ev: &Event,
-) -> ConnectOutcome {
-    if flow.category_edit_mode {
-        return handle_category_typing(flow, ev);
-    }
-    match ev {
-        Event::Key(key) if key.kind == KeyEventKind::Press => match key.code {
-            KeyCode::Esc => {
-                flow.step = ConnectStep::Key;
-                enter_key_step(flow);
-                ConnectOutcome::Back
-            }
-            KeyCode::Up | KeyCode::Char('k') if key.modifiers.is_empty() => {
-                flow.category_cursor = flow.category_cursor.saturating_sub(1);
-                ConnectOutcome::Nothing
-            }
-            KeyCode::Down | KeyCode::Char('j') if key.modifiers.is_empty() => {
-                if flow.category_cursor + 1 <= flow.category_rows.len() {
-                    flow.category_cursor += 1;
-                }
-                ConnectOutcome::Nothing
-            }
-            KeyCode::Enter => {
-                if flow.category_cursor < flow.category_rows.len() {
-                    flow.selected_category = Some(flow.category_rows[flow.category_cursor].clone());
-                    flow.category_error = None;
-                    flow.step = ConnectStep::Model;
-                    super::model_select::enter_model_step(flow);
-                    ConnectOutcome::Next
-                } else {
-                    flow.category_edit_mode = true;
-                    flow.category_editor.reset();
-                    flow.category_error = None;
-                    ConnectOutcome::Nothing
-                }
-            }
-            _ => ConnectOutcome::Nothing,
-        },
-        _ => ConnectOutcome::Nothing,
-    }
-}
-
-/// Yeni kategori girişi: Enter → onayla, Esc → listeye dön.
-fn handle_category_typing(flow: &mut ProviderConnectFlow, ev: &Event) -> ConnectOutcome {
-    match ev {
-        Event::Key(key) if key.kind == KeyEventKind::Press => match key.code {
-            KeyCode::Esc => {
-                flow.category_edit_mode = false;
-                flow.category_editor.reset();
-                flow.category_error = None;
-                ConnectOutcome::Nothing
-            }
-            KeyCode::Enter => {
-                let name = flow.category_editor.text().trim().to_string();
-                if name.is_empty() {
-                    flow.category_error = Some("kategori adı boş olamaz".to_string());
-                    return ConnectOutcome::Nothing;
-                }
-                flow.selected_category = Some(name);
-                flow.category_edit_mode = false;
-                flow.category_editor.reset();
-                flow.category_error = None;
-                flow.step = ConnectStep::Model;
-                super::model_select::enter_model_step(flow);
-                ConnectOutcome::Next
-            }
-            _ => {
-                flow.category_editor.handle_key(key);
-                flow.category_error = None;
-                ConnectOutcome::Nothing
-            }
-        },
-        Event::Paste(text) => {
-            flow.category_editor.insert_paste(text);
-            flow.category_error = None;
-            ConnectOutcome::Nothing
-        }
-        _ => ConnectOutcome::Nothing,
-    }
-}
-
-pub(super) fn render_category_step(
-    buf: &mut Buffer,
-    content: Rect,
-    inner_x: u16,
-    inner_width: u16,
-    theme: &crate::theme::Theme,
-    flow: &mut ProviderConnectFlow,
-) {
-    if content.height == 0 || content.width == 0 {
-        return;
-    }
-    let mut y = content.y;
-    buf.set_line(
-        inner_x,
-        y,
-        &Line::from(Span::styled(
-            "Kategori (Enter: seç)",
-            Style::default().fg(theme.gray).bg(theme.bg_base),
-        )),
-        inner_width,
-    );
-    y += 1;
-    let selected_style = |sel: bool| {
-        if sel {
-            Style::default()
-                .fg(theme.text_primary)
-                .bg(theme.bg_base)
-                .add_modifier(ratatui::style::Modifier::REVERSED)
-        } else {
-            Style::default().fg(theme.text_primary).bg(theme.bg_base)
-        }
-    };
-    for (i, cat) in flow.category_rows.iter().enumerate() {
-        if y >= content.y + content.height {
-            return;
-        }
-        buf.set_line(
-            inner_x,
-            y,
-            &Line::from(Span::styled(
-                cat.as_str(),
-                selected_style(flow.category_cursor == i),
-            )),
-            inner_width,
-        );
-        y += 1;
-    }
-    if y >= content.y + content.height {
-        return;
-    }
-    buf.set_line(
-        inner_x,
-        y,
-        &Line::from(Span::styled(
-            "yeni kategori\u{2026}",
-            selected_style(flow.category_cursor == flow.category_rows.len()),
-        )),
-        inner_width,
-    );
-    y += 1;
-    if flow.category_edit_mode && y < content.y + content.height {
-        crate::views::picker::render_line_editor_search_bar(
-            buf,
-            inner_x,
-            y,
-            inner_width,
-            theme,
-            &flow.category_editor,
-            true,
-            false,
-            Some(theme.bg_base),
-        );
-    }
-    if let Some(err) = &flow.category_error {
-        let err_y = content.y + content.height.saturating_sub(1);
-        if err_y >= y {
-            buf.set_line(
-                inner_x,
-                err_y,
-                &Line::from(Span::styled(
-                    format!("\u{2717} {err}"),
-                    Style::default().fg(theme.accent_error).bg(theme.bg_base),
-                )),
-                inner_width,
-            );
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -834,6 +627,8 @@ mod tests {
             created_at: "2026-01-01T00:00:00Z".to_string(),
             last_used: None,
             source: KeySource::Manual,
+            key_type: xai_omni_keychain::KeyType::Legacy,
+            balance: None,
         }
     }
 
@@ -941,7 +736,7 @@ mod tests {
             out,
             ConnectOutcome::PickKeyMode(KeyMode::Keychain("k_custom-openai".to_string()))
         );
-        assert_eq!(flow.step, ConnectStep::Category);
+        assert_eq!(flow.step, ConnectStep::Model);
         assert_eq!(
             flow.key_mode,
             KeyMode::Keychain("k_custom-openai".to_string())
@@ -987,7 +782,7 @@ mod tests {
         type_text(&mut flow, "sk-yeni-key");
         let out = handle_key_step_input(&mut flow, &press(KeyCode::Enter));
         assert_eq!(out, ConnectOutcome::PickKeyMode(KeyMode::New));
-        assert_eq!(flow.step, ConnectStep::Category);
+        assert_eq!(flow.step, ConnectStep::Model);
         assert_eq!(flow.draft_key.as_str(), "sk-yeni-key");
         assert!(!flow.key_edit_mode, "onay sonrası yazım modu kapanır");
         assert!(flow.key_editor.text().is_empty(), "editör temizlenir");
@@ -1017,20 +812,51 @@ mod tests {
     }
 
     #[test]
-    fn env_selection_suggests_and_confirms() {
+    fn key_mouse_click_selects_row() {
+        use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
+        let entry = keychain_entry("custom-openai");
+        let mut flow = ProviderConnectFlow::new(empty_catalog(), vec![entry]);
+        let _ = super::super::handle_connect_input(&mut flow, &press(KeyCode::Enter));
+        let _ = handle_base_url_input(&mut flow, &press(KeyCode::Enter));
+        assert_eq!(flow.step, ConnectStep::Key);
+        // Render satır rect'lerini doldurur (keychain satırı + yeni key).
+        let mut buf = ratatui::buffer::Buffer::empty(ratatui::layout::Rect::new(0, 0, 80, 10));
+        let theme = crate::theme::Theme::current();
+        render_key_step(&mut buf, ratatui::layout::Rect::new(0, 0, 80, 10), 2, 76, &theme, &mut flow);
+        assert_eq!(flow.key_row_rects.len(), 2);
+        let row0 = flow.key_row_rects[0];
+        let click = |row: ratatui::layout::Rect| Event::Mouse(MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: row.x + 1,
+            row: row.y,
+            modifiers: KeyModifiers::NONE,
+        });
+        // Keychain satırına tıkla → Model adımına ilerler.
+        let out = handle_key_step_input(&mut flow, &click(row0));
+        assert_eq!(
+            out,
+            ConnectOutcome::PickKeyMode(KeyMode::Keychain("k_custom-openai".to_string()))
+        );
+        assert_eq!(flow.step, ConnectStep::Model);
+    }
+
+    #[test]
+    fn key_mouse_click_on_new_key_row_enters_typing() {
+        use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
         let mut flow = flow_at_key();
-        // cursor 1 = "yeni key gir", 2 = "ortam değişkeni kullan".
-        let _ = handle_key_step_input(&mut flow, &press(KeyCode::Down));
-        let _ = handle_key_step_input(&mut flow, &press(KeyCode::Down));
-        let out = handle_key_step_input(&mut flow, &press(KeyCode::Enter));
+        let mut buf = ratatui::buffer::Buffer::empty(ratatui::layout::Rect::new(0, 0, 80, 10));
+        let theme = crate::theme::Theme::current();
+        render_key_step(&mut buf, ratatui::layout::Rect::new(0, 0, 80, 10), 2, 76, &theme, &mut flow);
+        let row1 = flow.key_row_rects[1];
+        let out = handle_key_step_input(&mut flow, &Event::Mouse(MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: row1.x + 1,
+            row: row1.y,
+            modifiers: KeyModifiers::NONE,
+        }));
         assert_eq!(out, ConnectOutcome::Nothing);
-        assert!(flow.env_edit_mode);
-        // Katalog yok → generic öneri.
-        assert_eq!(flow.env_editor.text(), "API_KEY");
-        flow.env_editor.set_text("MY_CUSTOM_KEY");
-        let out = handle_key_step_input(&mut flow, &press(KeyCode::Enter));
-        assert_eq!(out, ConnectOutcome::PickKeyMode(KeyMode::Env("MY_CUSTOM_KEY".to_string())));
-        assert_eq!(flow.step, ConnectStep::Category);
+        assert!(flow.key_edit_mode, "yeni key satırına tıklama yazım modu açar");
+        assert_eq!(flow.step, ConnectStep::Key);
     }
 
     #[test]
@@ -1043,64 +869,13 @@ mod tests {
     }
 
     #[test]
-    fn category_default_preselected_and_enter_advances() {
+    fn new_key_confirm_advances_directly_to_model() {
         let mut flow = flow_at_key();
         let _ = handle_key_step_input(&mut flow, &press(KeyCode::Enter)); // yeni key modu
         type_text(&mut flow, "sk-x");
-        let _ = handle_key_step_input(&mut flow, &press(KeyCode::Enter)); // → Category
-        assert_eq!(flow.step, ConnectStep::Category);
-        assert_eq!(flow.category_rows, vec!["personal".to_string()]);
-        assert_eq!(flow.category_cursor, 0, "default kategori önceden seçili");
-        let out = handle_category_step_input(&mut flow, &press(KeyCode::Enter));
-        assert_eq!(out, ConnectOutcome::Next);
-        assert_eq!(flow.step, ConnectStep::Model);
-        assert_eq!(flow.selected_category.as_deref(), Some("personal"));
-    }
-
-    #[test]
-    fn new_category_input_advances() {
-        let mut flow = flow_at_key();
-        let _ = handle_key_step_input(&mut flow, &press(KeyCode::Enter));
-        type_text(&mut flow, "sk-x");
-        let _ = handle_key_step_input(&mut flow, &press(KeyCode::Enter));
-        assert_eq!(flow.step, ConnectStep::Category);
-        // "yeni kategori…" son satır.
-        flow.category_cursor = flow.category_rows.len();
-        let _ = handle_category_step_input(&mut flow, &press(KeyCode::Enter));
-        assert!(flow.category_edit_mode);
-        for c in "work".chars() {
-            let _ = handle_category_step_input(&mut flow, &press(KeyCode::Char(c)));
-        }
-        let out = handle_category_step_input(&mut flow, &press(KeyCode::Enter));
-        assert_eq!(out, ConnectOutcome::Next);
-        assert_eq!(flow.selected_category.as_deref(), Some("work"));
-        assert_eq!(flow.step, ConnectStep::Model);
-    }
-
-    #[test]
-    fn empty_category_name_rejected() {
-        let mut flow = flow_at_key();
-        let _ = handle_key_step_input(&mut flow, &press(KeyCode::Enter));
-        type_text(&mut flow, "sk-x");
-        let _ = handle_key_step_input(&mut flow, &press(KeyCode::Enter));
-        flow.category_cursor = flow.category_rows.len();
-        let _ = handle_category_step_input(&mut flow, &press(KeyCode::Enter));
-        let out = handle_category_step_input(&mut flow, &press(KeyCode::Enter));
-        assert_eq!(out, ConnectOutcome::Nothing);
-        assert_eq!(flow.step, ConnectStep::Category);
-        assert!(flow.category_error.is_some());
-    }
-
-    #[test]
-    fn esc_from_category_goes_back_to_key() {
-        let mut flow = flow_at_key();
-        let _ = handle_key_step_input(&mut flow, &press(KeyCode::Enter));
-        type_text(&mut flow, "sk-x");
-        let _ = handle_key_step_input(&mut flow, &press(KeyCode::Enter));
-        assert_eq!(flow.step, ConnectStep::Category);
-        let out = handle_category_step_input(&mut flow, &press(KeyCode::Esc));
-        assert_eq!(out, ConnectOutcome::Back);
-        assert_eq!(flow.step, ConnectStep::Key);
+        let out = handle_key_step_input(&mut flow, &press(KeyCode::Enter));
+        assert_eq!(out, ConnectOutcome::PickKeyMode(KeyMode::New));
+        assert_eq!(flow.step, ConnectStep::Model, "kategori adımı yok — doğrudan Model");
     }
 
     #[test]

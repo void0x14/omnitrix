@@ -1896,8 +1896,7 @@ pub(crate) fn execute(
                     TaskResult::ModelsCatalogFetched { result }
                 });
         }
-        Effect::FetchProviderModels { base_url, api_key } => {
-            tasks
+        Effect::FetchProviderModels { base_url, api_key } => {            tasks
                 .spawn(async move {
                     let result = xai_grok_shell::util::models_dev::fetch_provider_models(
                             &reqwest::Client::new(),
@@ -1907,6 +1906,26 @@ pub(crate) fn execute(
                         .await
                         .map_err(|e| e.to_string());
                     TaskResult::ProviderModelsFetched { base_url, result }
+                });
+        }
+        Effect::ProbeKeyBalances { entries } => {
+            // Bakiye sorgusu: en iyi çaba, timeout'lu; ham key'ler task
+            // içinde sıfırlanır, loglanmaz.
+            tasks
+                .spawn(async move {
+                    let client = reqwest::Client::new();
+                    let mut results = Vec::with_capacity(entries.len());
+                    for (id, provider_id, base_url, key) in entries {
+                        let balance = xai_grok_shell::util::key_balance::probe_balance(
+                            &client,
+                            &provider_id,
+                            base_url.as_deref(),
+                            key.as_str(),
+                        )
+                        .await;
+                        results.push((id, balance));
+                    }
+                    TaskResult::KeyBalancesProbed { results }
                 });
         }
         Effect::FetchChangelog => {

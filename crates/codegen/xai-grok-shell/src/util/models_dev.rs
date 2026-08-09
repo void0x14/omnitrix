@@ -218,6 +218,7 @@ async fn fetch_remote(
 ) -> anyhow::Result<IndexMap<String, ProviderCatalog>> {
     let response = client
         .get(MODELS_DEV_URL)
+        .timeout(std::time::Duration::from_secs(10))
         .send()
         .await
         .context("models.dev request failed")?;
@@ -254,7 +255,7 @@ pub async fn fetch_provider_models(
     let attempt = |with_key: bool| {
         let url = url.clone();
         async move {
-            let mut request = client.get(&url);
+            let mut request = client.get(&url).timeout(std::time::Duration::from_secs(10));
             if with_key
                 && let Some(key) = api_key
             {

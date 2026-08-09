@@ -292,10 +292,8 @@ pub enum KeysCommand {
     List,
     /// Reveal a full key (requires master password)
     Show { id: String },
-    /// Add a key (prompts for values)
+    /// Add a key (prompts for values; category auto-detected per provider)
     Add {
-        #[arg(long)]
-        category: Option<String>,
         #[arg(long)]
         provider: String,
         #[arg(long)]
@@ -314,8 +312,6 @@ pub enum KeysCommand {
         base_url: Option<String>,
         #[arg(long)]
         api_key: Option<String>,
-        #[arg(long)]
-        category: Option<String>,
     },
     /// Remove a key entry
     Remove { id: String },
@@ -1628,8 +1624,6 @@ mod tests {
             "openai",
             "--api-key",
             "sk-x",
-            "--category",
-            "work",
             "--model",
             "gpt-5",
             "--base-url",
@@ -1640,13 +1634,12 @@ mod tests {
             add.command,
             Some(Command::Keys(KeysArgs {
                 command: KeysCommand::Add {
-                    category: Some(ref c),
                     provider: ref p,
                     api_key: Some(ref k),
                     model: Some(ref m),
                     base_url: Some(ref b),
                 },
-            })) if c == "work" && p == "openai" && k == "sk-x" && m == "gpt-5" && b == "https://api.openai.com/v1"
+            })) if p == "openai" && k == "sk-x" && m == "gpt-5" && b == "https://api.openai.com/v1"
         ));
         let edit = PagerArgs::try_parse_from([
             "grok",
@@ -1659,8 +1652,6 @@ mod tests {
             "https://x/v1",
             "--api-key",
             "sk-y",
-            "--category",
-            "personal",
         ])
         .expect("keys edit parses");
         assert!(matches!(
@@ -1671,9 +1662,8 @@ mod tests {
                     model: Some(ref m),
                     base_url: Some(ref b),
                     api_key: Some(ref k),
-                    category: Some(ref c),
                 },
-            })) if id == "k_1" && m == "gpt-4o" && b == "https://x/v1" && k == "sk-y" && c == "personal"
+            })) if id == "k_1" && m == "gpt-4o" && b == "https://x/v1" && k == "sk-y"
         ));
         let remove = PagerArgs::try_parse_from(["grok", "keys", "remove", "k_1"])
             .expect("keys remove parses");

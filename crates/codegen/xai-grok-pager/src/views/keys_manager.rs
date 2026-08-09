@@ -37,6 +37,47 @@ use crate::views::modal_window::{ModalSizing, ModalWindowConfig, ModalWindowStat
 // Modlar
 // ---------------------------------------------------------------------------
 
+/// Türetilmiş kategori filtresi — kullanıcı kategori "ayarı" yapmaz; sistem
+/// key'leri sağlayıcıya göre otomatik kategoriler, bakiye/key tipi verileriyle
+/// türetilmiş gruplar halinde sunar.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CategoryFilter {
+    /// Tümü (filtre yok).
+    All,
+    /// Bakiye sorgusu ≥ $10 ("yüksek bakiyeli").
+    HighBalance,
+    /// Aynı sağlayıcıdan ≥ 3 key ("çoklu anahtar").
+    MultiKey,
+    /// Key tipi grubu (proje / servis hesabı / legacy…).
+    KeyType(xai_omni_keychain::KeyType),
+    /// Sağlayıcı kategorisi (otomatik kategori — keychain'de yazılıdır).
+    Provider(String),
+}
+
+impl CategoryFilter {
+    /// Kısa liste etiketi.
+    pub fn label(&self) -> String {
+        match self {
+            Self::All => "tümü".to_string(),
+            Self::HighBalance => "yüksek bakiyeli ($10+)".to_string(),
+            Self::MultiKey => "çoklu anahtar (3+)".to_string(),
+            Self::KeyType(t) => format!("{} anahtarları", t.label()),
+            Self::Provider(p) => p.clone(),
+        }
+    }
+
+    /// Bu kayıt filtreye uyuyor mu?
+    pub fn matches(&self, entry: &KeyEntry) -> bool {
+        match self {
+            Self::All => true,
+            Self::HighBalance => entry.balance.is_some_and(|b| b >= 10.0),
+            Self::MultiKey => false, // giriş sayısına bağlı; aşağıda hesaplanır
+            Self::KeyType(t) => entry.key_type == *t,
+            Self::Provider(p) => entry.category == *p,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum KeysManagerMode {
     /// Keychain yok/kilitli: master password mini-input (maskeli).
@@ -80,8 +121,13 @@ pub enum KeysManagerMode {
 pub struct KeysManagerState {
     pub window: ModalWindowState,
     pub entries: Vec<KeyEntry>,
+    /// Export kapsamı için kategori adları (otomatik kategoriler).
     pub categories: Vec<String>,
     pub default_category: String,
+    /// Aktif türetilmiş kategori filtresi (`None` = tümü).
+    pub category_filter: Option<CategoryFilter>,
+    /// Kategoriler ekranı satırları (türetilmiş; `c` ile girilir).
+    pub category_rows: Vec<CategoryFilter>,
     pub selected: usize,
     pub scroll_offset: usize,
     pub mode: KeysManagerMode,
@@ -96,10 +142,9 @@ pub struct KeysManagerState {
     pub path_editor: LineEditor,
     pub provider_editor: LineEditor,
     pub key_editor: LineEditor,
-    pub category_editor: LineEditor,
     pub model_editor: LineEditor,
     pub base_url_editor: LineEditor,
-    /// Odaklanan form alanı indeksi (Add: 5 alan, Edit: 3 alan).
+    /// Odaklanan form alanı indeksi (Add: 4 alan, Edit: 3 alan).
     pub form_field: usize,
     pub category_cursor: usize,
     pub scope_cursor: usize,
@@ -117,6 +162,8 @@ impl KeysManagerState {
             entries,
             categories: Vec::new(),
             default_category: String::new(),
+            category_filter: None,
+            category_rows: Vec::new(),
             selected: 0,
             scroll_offset: 0,
             mode: if locked {
@@ -131,7 +178,6 @@ impl KeysManagerState {
             path_editor: LineEditor::default(),
             provider_editor: LineEditor::default(),
             key_editor: LineEditor::default(),
-            category_editor: LineEditor::default(),
             model_editor: LineEditor::default(),
             base_url_editor: LineEditor::default(),
             form_field: 0,
@@ -157,8 +203,41 @@ impl KeysManagerState {
         self.categories = cats;
     }
 
-    pub fn selected_entry(&self) -> Option<&KeyEntry> {
-        self.entries.get(self.selected)
+    pub fn selected_entry(&self) -> Option<KeyEntry> {
+        self.visible_entries().get(self.selected).cloned()
+    }
+
+    /// Belirli bir filtreye uyan kayıtlar (kopya; render/gezinme ortak).
+    pub fn visible_entries_for(&self, filter: &CategoryFilter) -> Vec<KeyEntry> {
+        if *filter == CategoryFilter::All {
+            return self.entries.clone();
+        }
+        if *filter == CategoryFilter::MultiKey {
+            // ≥ 3 keyi olan sağlayıcıların tüm kayıtları.
+            let mut counts: std::collections::HashMap<&str, usize> = std::collections::HashMap::new();
+            for e in &self.entries {
+                *counts.entry(e.provider_id.as_str()).or_insert(0) += 1;
+            }
+            return self
+                .entries
+                .iter()
+                .filter(|e| counts.get(e.provider_id.as_str()).is_some_and(|c| *c >= 3))
+                .cloned()
+                .collect();
+        }
+        self.entries
+            .iter()
+            .filter(|e| filter.matches(e))
+            .cloned()
+            .collect()
+    }
+
+    /// Aktif kategori filtresine uyan kayıtlar (kopya; render/gezinme ortak).
+    pub fn visible_entries(&self) -> Vec<KeyEntry> {
+        let Some(filter) = self.category_filter.as_ref() else {
+            return self.entries.clone();
+        };
+        self.visible_entries_for(filter)
     }
 
     /// Dispatch: keychain'den çekilen güncel kayıtları uygular.
@@ -204,10 +283,10 @@ impl KeysManagerState {
     }
 
     fn move_selection(&mut self, delta: isize) {
-        if self.entries.is_empty() {
+        if self.visible_entries().is_empty() {
             return;
         }
-        let len = self.entries.len() as isize;
+        let len = self.visible_entries().len() as isize;
         let next = (self.selected as isize + delta).rem_euclid(len) as usize;
         self.selected = next;
         self.error = None;
@@ -263,9 +342,6 @@ pub fn handle_keys_manager_event(state: &mut KeysManagerState, ev: &Event) -> Ke
                         let _ = state.key_editor.insert_paste(text);
                     }
                     2 => {
-                        let _ = state.category_editor.insert_paste(text);
-                    }
-                    3 => {
                         let _ = state.model_editor.insert_paste(text);
                     }
                     _ => {
@@ -438,7 +514,6 @@ fn handle_browse(state: &mut KeysManagerState, key: &KeyEvent) -> KeysManagerOut
             for editor in [
                 &mut state.provider_editor,
                 &mut state.key_editor,
-                &mut state.category_editor,
                 &mut state.model_editor,
                 &mut state.base_url_editor,
             ] {
@@ -447,7 +522,7 @@ fn handle_browse(state: &mut KeysManagerState, key: &KeyEvent) -> KeysManagerOut
             KeysManagerOutcome::Changed
         }
         KeyCode::Char('e') => {
-            let Some(entry) = state.selected_entry().cloned() else {
+            let Some(entry) = state.selected_entry() else {
                 return KeysManagerOutcome::Unchanged;
             };
             state.mode = KeysManagerMode::Edit {
@@ -485,8 +560,8 @@ fn handle_browse(state: &mut KeysManagerState, key: &KeyEvent) -> KeysManagerOut
             KeysManagerOutcome::Changed
         }
         KeyCode::Char('c') => {
+            enter_categories(state);
             state.mode = KeysManagerMode::Categories;
-            state.category_cursor = 0;
             state.error = None;
             KeysManagerOutcome::Changed
         }
@@ -506,7 +581,8 @@ fn handle_browse(state: &mut KeysManagerState, key: &KeyEvent) -> KeysManagerOut
     }
 }
 
-/// Add formu: 5 alan (provider, key, kategori, model, base_url).
+/// Add formu: 4 alan (provider, key, model, base_url). Kategori yok —
+/// sistem sağlayıcıya göre otomatik belirler.
 /// Tab/Up/Down alan değiştirir; Enter `KeychainAdd` üretir; ctrl+t key'i
 /// gösterir.
 fn handle_add_form(state: &mut KeysManagerState, key: &KeyEvent) -> KeysManagerOutcome {
@@ -517,7 +593,7 @@ fn handle_add_form(state: &mut KeysManagerState, key: &KeyEvent) -> KeysManagerO
             KeysManagerOutcome::Changed
         }
         KeyCode::Tab | KeyCode::Up | KeyCode::Down => {
-            state.form_field = (state.form_field + 1) % 5;
+            state.form_field = (state.form_field + 1) % 4;
             KeysManagerOutcome::Changed
         }
         KeyCode::Char('t') if key.modifiers.contains(KeyModifiers::CONTROL) => {
@@ -535,14 +611,6 @@ fn handle_add_form(state: &mut KeysManagerState, key: &KeyEvent) -> KeysManagerO
                 state.error = Some("api key boş olamaz".to_string());
                 return KeysManagerOutcome::Changed;
             }
-            let category = {
-                let c = state.category_editor.text().trim().to_string();
-                if c.is_empty() {
-                    "personal".to_string()
-                } else {
-                    c
-                }
-            };
             let model_id = {
                 let m = state.model_editor.text().trim().to_string();
                 if m.is_empty() { None } else { Some(m) }
@@ -552,7 +620,6 @@ fn handle_add_form(state: &mut KeysManagerState, key: &KeyEvent) -> KeysManagerO
                 if b.is_empty() { None } else { Some(b) }
             };
             KeysManagerOutcome::Action(Action::KeychainAdd {
-                category,
                 provider_id: provider,
                 api_key: Zeroizing::new(api_key),
                 model_id,
@@ -563,8 +630,7 @@ fn handle_add_form(state: &mut KeysManagerState, key: &KeyEvent) -> KeysManagerO
             let editor = match state.form_field {
                 0 => &mut state.provider_editor,
                 1 => &mut state.key_editor,
-                2 => &mut state.category_editor,
-                3 => &mut state.model_editor,
+                2 => &mut state.model_editor,
                 _ => &mut state.base_url_editor,
             };
             editor.handle_key(key);
@@ -631,7 +697,43 @@ fn handle_edit_form(
     }
 }
 
-/// Kategori listesi: Enter → `KeychainSetDefaultCategory`.
+/// Kategori ekranına girerken türetilmiş satırları kurar: genel gruplar
+/// (yüksek bakiyeli, çoklu anahtar, key tipleri) + sağlayıcı kategorileri.
+fn enter_categories(state: &mut KeysManagerState) {
+    use std::collections::BTreeMap;
+    let mut rows = vec![CategoryFilter::All];
+    let mut prov_counts: BTreeMap<&str, usize> = BTreeMap::new();
+    let mut types: Vec<xai_omni_keychain::KeyType> = Vec::new();
+    for e in &state.entries {
+        *prov_counts.entry(e.provider_id.as_str()).or_insert(0) += 1;
+        if e.key_type != xai_omni_keychain::KeyType::Unknown
+            && !types.contains(&e.key_type)
+        {
+            types.push(e.key_type.clone());
+        }
+    }
+    if state
+        .entries
+        .iter()
+        .any(|e| e.balance.is_some_and(|b| b >= 10.0))
+    {
+        rows.push(CategoryFilter::HighBalance);
+    }
+    if prov_counts.values().any(|c| *c >= 3) {
+        rows.push(CategoryFilter::MultiKey);
+    }
+    for t in types {
+        rows.push(CategoryFilter::KeyType(t));
+    }
+    for (provider, _count) in prov_counts {
+        rows.push(CategoryFilter::Provider(provider.to_string()));
+    }
+    state.category_rows = rows;
+    state.category_cursor = 0;
+}
+
+/// Kategori listesi: Enter → Browse'ı o filtreyle açar. Kategori "ayarı"
+/// değil, türetilmiş görünüm filtresidir.
 fn handle_categories(state: &mut KeysManagerState, key: &KeyEvent) -> KeysManagerOutcome {
     match key.code {
         KeyCode::Esc => {
@@ -639,25 +741,30 @@ fn handle_categories(state: &mut KeysManagerState, key: &KeyEvent) -> KeysManage
             KeysManagerOutcome::Changed
         }
         KeyCode::Up | KeyCode::Char('k') => {
-            if state.categories.is_empty() {
+            if state.category_rows.is_empty() {
                 return KeysManagerOutcome::Unchanged;
             }
             state.category_cursor =
-                (state.category_cursor + state.categories.len() - 1) % state.categories.len();
+                (state.category_cursor + state.category_rows.len() - 1) % state.category_rows.len();
             KeysManagerOutcome::Changed
         }
         KeyCode::Down | KeyCode::Char('j') => {
-            if state.categories.is_empty() {
+            if state.category_rows.is_empty() {
                 return KeysManagerOutcome::Unchanged;
             }
-            state.category_cursor = (state.category_cursor + 1) % state.categories.len();
+            state.category_cursor = (state.category_cursor + 1) % state.category_rows.len();
             KeysManagerOutcome::Changed
         }
         KeyCode::Enter => {
-            let Some(name) = state.categories.get(state.category_cursor).cloned() else {
+            let Some(filter) = state.category_rows.get(state.category_cursor).cloned() else {
                 return KeysManagerOutcome::Unchanged;
             };
-            KeysManagerOutcome::Action(Action::KeychainSetDefaultCategory { name })
+            state.category_filter = Some(filter);
+            state.selected = 0;
+            state.scroll_offset = 0;
+            state.mode = KeysManagerMode::Browse;
+            state.error = None;
+            KeysManagerOutcome::Changed
         }
         _ => KeysManagerOutcome::Unchanged,
     }
@@ -1313,13 +1420,20 @@ fn render_browse(
         return;
     }
     let mut y = content.y;
+    let filter_label = state
+        .category_filter
+        .as_ref()
+        .filter(|f| **f != CategoryFilter::All)
+        .map(|f| format!(" \u{2014} {}", f.label()))
+        .unwrap_or_default();
     let header = format!(
-        "{}  {}  {}  {}  {}",
+        "{}  {}  {}  {}  {}{}",
         crate::keys_cmd::pad("KATEGORI", COL_KATEGORI),
         crate::keys_cmd::pad("PROVIDER", COL_PROVIDER),
         crate::keys_cmd::pad("MASKELI", COL_MASKELI),
         crate::keys_cmd::pad("MODEL", COL_MODEL),
         crate::keys_cmd::pad("SON_KULLANIM", COL_LAST),
+        filter_label,
     );
     render_line(
         buf,
@@ -1337,6 +1451,8 @@ fn render_browse(
     let rows_area_end = action_bar_y;
     let list_height = rows_area_end.saturating_sub(y);
 
+    let visible = state.visible_entries();
+
     // Seçimi görünür alana clamp et (scroll).
     if state.selected < state.scroll_offset {
         state.scroll_offset = state.selected;
@@ -1347,7 +1463,7 @@ fn render_browse(
 
     state.list_rect = Rect::new(inner_x, y, inner_width, list_height);
     state.row_rects.clear();
-    for (i, entry) in state.entries.iter().enumerate() {
+    for (i, entry) in visible.iter().enumerate() {
         if i < state.scroll_offset {
             continue;
         }
@@ -1362,9 +1478,13 @@ fn render_browse(
         } else {
             Style::default().fg(theme.text_secondary)
         };
+        let category_cell = match entry.balance {
+            Some(b) if b >= 1.0 => format!("{} \u{00b7} ${b:.1}", entry.category),
+            _ => entry.category.clone(),
+        };
         let row = format!(
             "{}  {}  {}  {}  {}",
-            crate::keys_cmd::pad(&entry.category, COL_KATEGORI),
+            crate::keys_cmd::pad(&category_cell, COL_KATEGORI),
             crate::keys_cmd::pad(&entry.provider_id, COL_PROVIDER),
             crate::keys_cmd::pad(&entry.masked, COL_MASKELI),
             crate::keys_cmd::pad(entry.model_id.as_deref().unwrap_or("-"), COL_MODEL),
@@ -1539,7 +1659,7 @@ fn render_confirm(
     );
 }
 
-const ADD_FIELD_LABELS: [&str; 5] = ["provider", "api key", "kategori", "model", "base url"];
+const ADD_FIELD_LABELS: [&str; 4] = ["provider", "api key", "model", "base url"];
 
 fn render_add_form(
     buf: &mut Buffer,
@@ -1554,15 +1674,14 @@ fn render_add_form(
         inner_x,
         content.y,
         inner_width,
-        "Yeni key",
+        "Yeni key (kategori otomatik: sağlayıcıya göre)",
         Style::default()
             .fg(theme.text_primary)
             .add_modifier(Modifier::BOLD),
     );
-    let editors: [&LineEditor; 5] = [
+    let editors: [&LineEditor; 4] = [
         &state.provider_editor,
         &state.key_editor,
-        &state.category_editor,
         &state.model_editor,
         &state.base_url_editor,
     ];
@@ -1684,24 +1803,24 @@ fn render_categories(
         inner_x,
         content.y,
         inner_width,
-        "Kategoriler (Enter: varsayılan yap)",
+        "Kategoriler (otomatik; Enter: filtrele)",
         Style::default()
             .fg(theme.text_primary)
             .add_modifier(Modifier::BOLD),
     );
     let mut y = content.y + 1;
-    if state.categories.is_empty() {
+    if state.category_rows.is_empty() {
         render_line(
             buf,
             inner_x,
             y,
             inner_width,
-            "(kategori yok)",
+            "(kayıt yok)",
             Style::default().fg(theme.gray),
         );
         return;
     }
-    for (i, cat) in state.categories.iter().enumerate() {
+    for (i, filter) in state.category_rows.iter().enumerate() {
         if y >= content.y + content.height {
             break;
         }
@@ -1713,17 +1832,20 @@ fn render_categories(
         } else {
             Style::default().fg(theme.text_secondary)
         };
-        let suffix = if *cat == state.default_category {
-            " (varsayilan)"
-        } else {
-            ""
-        };
+        let count = state
+            .visible_entries_for(filter)
+            .len();
+        let active = state
+            .category_filter
+            .as_ref()
+            .is_some_and(|f| f == filter);
+        let suffix = if active { " (aktif)" } else { "" };
         render_line(
             buf,
             inner_x,
             y,
             inner_width,
-            &format!("{cat}{suffix}"),
+            &format!("{}  [{count}]{suffix}", filter.label()),
             style,
         );
         y += 1;

@@ -155,7 +155,8 @@ pub(super) fn handle_model_step_input(
         }
         PickerOutcome::Closed => {
             flow.picker.reset();
-            flow.step = ConnectStep::Category;
+            flow.step = ConnectStep::Key;
+            super::key_input::enter_key_step(flow);
             ConnectOutcome::Back
         }
         PickerOutcome::QueryChanged
@@ -441,7 +442,7 @@ mod tests {
     fn flow_at_model() -> ProviderConnectFlow {
         let catalog = catalog_with_models();
         let mut flow = ProviderConnectFlow::new(catalog, vec![]);
-        // builtin openai seç → Key → (yeni key) → Category → Model.
+        // builtin openai seç → Key → (yeni key) → Model.
         let _ = super::super::handle_connect_input(&mut flow, &press(KeyCode::Enter));
         assert_eq!(flow.step, ConnectStep::Key);
         let _ = super::super::key_input::handle_key_step_input(&mut flow, &press(KeyCode::Enter));
@@ -449,7 +450,6 @@ mod tests {
             let _ = super::super::key_input::handle_key_step_input(&mut flow, &press(KeyCode::Char(c)));
         }
         let _ = super::super::key_input::handle_key_step_input(&mut flow, &press(KeyCode::Enter));
-        let _ = super::super::key_input::handle_category_step_input(&mut flow, &press(KeyCode::Enter));
         assert_eq!(flow.step, ConnectStep::Model);
         flow
     }
@@ -574,11 +574,11 @@ mod tests {
     }
 
     #[test]
-    fn esc_from_model_goes_back_to_category() {
+    fn esc_from_model_goes_back_to_key() {
         let mut flow = flow_at_model();
         let out = handle_model_step_input(&mut flow, &press(KeyCode::Esc));
         assert_eq!(out, ConnectOutcome::Back);
-        assert_eq!(flow.step, ConnectStep::Category);
+        assert_eq!(flow.step, ConnectStep::Key);
     }
 
     #[test]

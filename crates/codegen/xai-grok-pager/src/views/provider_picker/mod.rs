@@ -34,7 +34,7 @@ use crate::views::picker::{
     render_picker_content_with_scrollbar_x,
 };
 
-use self::providers::{EnvMap, ProviderBadge, ProviderRow, filter_provider_rows, provider_rows};
+use self::providers::{ProviderBadge, ProviderRow, filter_provider_rows, provider_rows};
 
 /// Wizard adımı.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -43,10 +43,8 @@ pub enum ConnectStep {
     Provider,
     /// Custom provider'larda base URL girişi.
     BaseUrl,
-    /// Key girişi / keychain seçimi / env seçimi.
+    /// Key girişi / keychain seçimi.
     Key,
-    /// Kategori seçimi (opsiyonel, default kullanılabilir).
-    Category,
     /// Model seçimi.
     Model,
     /// Config yazma + switch (async).
@@ -64,7 +62,7 @@ pub enum KeyMode {
     New,
     /// Mevcut keychain kaydı (id).
     Keychain(String),
-    /// Ortam değişkeninden key (ad).
+    /// Ortam değişkeninden key (ad) — legacy; wizard UI'da sunulmaz.
     Env(String),
 }
 
@@ -102,27 +100,19 @@ pub struct ProviderConnectFlow {
     /// Provider adımının paylaşılan picker state'i (query, seçim, scroll).
     pub picker: PickerState,
     // ── Task 8: adım içi durum ──
-    /// Category adımında seçilen kategori (Apply'a `category` olarak gider).
-    pub selected_category: Option<String>,
     /// Apply onaylandı; sonuç (task result) beklenirken çift tetiklemeyi engeller.
     pub apply_pending: bool,
     /// BaseUrl adımı editörü + doğrulama hatası.
     pub(crate) base_url_editor: LineEditor,
     pub base_url_error: Option<String>,
-    /// Key adımı: liste cursor'ı + yeni key / env yazım modları + maskeli editör.
+    /// Key adımı: liste cursor'ı + yeni key yazım modu + maskeli editör.
     pub(crate) key_editor: LineEditor,
     pub key_cursor: usize,
     pub key_edit_mode: bool,
     pub key_show: bool,
     pub key_error: Option<String>,
-    pub(crate) env_editor: LineEditor,
-    pub env_edit_mode: bool,
-    /// Category adımı: satırlar (keychain kategorileri) + yeni kategori girişi.
-    pub category_rows: Vec<String>,
-    pub category_cursor: usize,
-    pub category_edit_mode: bool,
-    pub(crate) category_editor: LineEditor,
-    pub category_error: Option<String>,
+    /// Key adımı satır rect'leri (fare tıklaması için; render'da doldurulur).
+    pub key_row_rects: Vec<Rect>,
     /// Model adımı: manuel ID editörü + `/models` fetch durumu.
     pub(crate) model_editor: LineEditor,
     pub model_manual_mode: bool,
@@ -133,20 +123,12 @@ impl ProviderConnectFlow {
     /// Yeni wizard: provider adımında, type-to-find arama açık başlar.
     ///
     /// Config `[model_providers.*]` kayıtları şimdilik boş geçilir (Task 8
-    /// dispatch'ten gerçek config'i enjekte eder); env görünümü process
-    /// ortamından (`std::env::var_os`) doldurulur.
+    /// dispatch'ten gerçek config'i enjekte eder).
     pub fn new(catalog: CatalogCache, keychain_entries: Vec<KeyEntry>) -> Self {
-        let env_names: Vec<String> = catalog
-            .providers
-            .values()
-            .filter_map(|p| p.env.first().cloned())
-            .collect();
-        let env = EnvMap::from_env_vars(&env_names);
         let rows = provider_rows(
             &catalog,
             &keychain_entries,
             &indexmap::IndexMap::new(),
-            &env,
         );
         Self {
             step: ConnectStep::Provider,
@@ -160,7 +142,6 @@ impl ProviderConnectFlow {
             keychain_entries,
             rows,
             picker: PickerState::input_active(),
-            selected_category: None,
             apply_pending: false,
             base_url_editor: LineEditor::default(),
             base_url_error: None,
@@ -169,13 +150,7 @@ impl ProviderConnectFlow {
             key_edit_mode: false,
             key_show: false,
             key_error: None,
-            env_editor: LineEditor::default(),
-            env_edit_mode: false,
-            category_rows: Vec::new(),
-            category_cursor: 0,
-            category_edit_mode: false,
-            category_editor: LineEditor::default(),
-            category_error: None,
+            key_row_rects: Vec::new(),
             model_editor: LineEditor::default(),
             model_manual_mode: false,
             models_fetch_state: ModelFetchState::Idle,
@@ -186,18 +161,10 @@ impl ProviderConnectFlow {
     pub fn set_catalog(&mut self, catalog: CatalogCache) {
         self.catalog = catalog;
         self.error = None;
-        let env_names: Vec<String> = self
-            .catalog
-            .providers
-            .values()
-            .filter_map(|p| p.env.first().cloned())
-            .collect();
-        let env = EnvMap::from_env_vars(&env_names);
         self.rows = provider_rows(
             &self.catalog,
             &self.keychain_entries,
             &indexmap::IndexMap::new(),
-            &env,
         );
     }
 
@@ -278,7 +245,6 @@ pub fn handle_connect_input(flow: &mut ProviderConnectFlow, ev: &Event) -> Conne
         ConnectStep::Provider => handle_provider_step_input(flow, ev),
         ConnectStep::BaseUrl => self::key_input::handle_base_url_input(flow, ev),
         ConnectStep::Key => self::key_input::handle_key_step_input(flow, ev),
-        ConnectStep::Category => self::key_input::handle_category_step_input(flow, ev),
         ConnectStep::Model => self::model_select::handle_model_step_input(flow, ev),
         ConnectStep::Apply => self::apply::handle_apply_input(flow, ev),
         ConnectStep::Done => self::apply::handle_done_input(ev),
@@ -364,9 +330,6 @@ pub fn render_connect_flow(
         ConnectStep::Key => {
             self::key_input::render_key_step(buf, content, inner_x, inner_width, theme, flow);
         }
-        ConnectStep::Category => {
-            self::key_input::render_category_step(buf, content, inner_x, inner_width, theme, flow);
-        }
         ConnectStep::Model => {
             self::model_select::render_model_step(buf, content, inner_x, inner_width, theme, flow);
         }
@@ -433,7 +396,14 @@ fn render_provider_step(
     };
 
     let filtered = filter_provider_rows(&flow.rows, flow.picker.query());
-    let badge_labels: Vec<String> = filtered.iter().map(|r| r.badge.label()).collect();
+    let badge_labels: Vec<String> = filtered
+        .iter()
+        .map(|r| r.badge.as_ref().map(ProviderBadge::label).unwrap_or_default())
+        .collect();
+    let badge_color_for: Vec<Option<Color>> = filtered
+        .iter()
+        .map(|r| r.badge.as_ref().map(|b| badge_color(b, theme)))
+        .collect();
     let entries: Vec<PickerEntry> = filtered
         .iter()
         .enumerate()
@@ -449,8 +419,12 @@ fn render_provider_step(
                 summary_lines: &[],
                 dimmed: false,
                 indent: 0,
-                badge: &badge_labels[i],
-                badge_color: Some(badge_color(&row.badge, theme)),
+                badge: if row.badge.is_some() {
+                    badge_labels.get(i).map(String::as_str).unwrap_or("")
+                } else {
+                    ""
+                },
+                badge_color: badge_color_for[i],
                 collapsible: false,
                 underline_last_desc: false,
             })
@@ -479,12 +453,10 @@ fn render_provider_step(
     });
 }
 
-/// Rozet rengi: keychain yeşil, env mavi, yeni gri.
+/// Rozet rengi: keychain yeşil (yeni/env rozetleri kaldırıldı).
 fn badge_color(badge: &ProviderBadge, theme: &crate::theme::Theme) -> Color {
     match badge {
         ProviderBadge::Keychain => theme.accent_system,
-        ProviderBadge::Env(_) => theme.accent_user,
-        ProviderBadge::New => theme.gray,
     }
 }
 
@@ -731,9 +703,11 @@ mod tests {
             created_at: "2026-01-01T00:00:00Z".to_string(),
             last_used: None,
             source: KeySource::Manual,
+            key_type: xai_omni_keychain::KeyType::Legacy,
+            balance: None,
         };
         let flow = ProviderConnectFlow::new(catalog_with_openai(), vec![entry]);
-        assert_eq!(flow.rows[0].badge, ProviderBadge::Keychain);
+        assert_eq!(flow.rows[0].badge, Some(ProviderBadge::Keychain));
     }
 
     #[test]
@@ -764,13 +738,8 @@ mod tests {
         assert!(flow.draft_key.is_empty(), "onay öncesi draft boş");
         let out = handle_connect_input(&mut flow, &key_enter());
         assert_eq!(out, ConnectOutcome::PickKeyMode(KeyMode::New));
-        assert_eq!(flow.step, ConnectStep::Category);
-        assert_eq!(flow.draft_key.as_str(), "sk-test-123");
-        // Category: default "personal" → Model.
-        let out = handle_connect_input(&mut flow, &key_enter());
-        assert_eq!(out, ConnectOutcome::Next);
         assert_eq!(flow.step, ConnectStep::Model);
-        assert_eq!(flow.selected_category.as_deref(), Some("personal"));
+        assert_eq!(flow.draft_key.as_str(), "sk-test-123");
         // Model: boş liste (offline) → Enter manuel moda; ID gir → Apply.
         let _ = handle_connect_input(&mut flow, &key_enter());
         assert!(flow.model_manual_mode);
@@ -794,24 +763,19 @@ mod tests {
     #[test]
     fn back_navigation_returns_correctly() {
         let mut flow = ProviderConnectFlow::new(empty_catalog(), vec![]);
-        // custom: Provider → BaseUrl → Key → Category → Model.
+        // custom: Provider → BaseUrl → Key → Model.
         let _ = handle_connect_input(&mut flow, &key_enter());
         assert_eq!(flow.step, ConnectStep::BaseUrl);
         let _ = handle_connect_input(&mut flow, &key_enter());
         assert_eq!(flow.step, ConnectStep::Key);
-        // Yeni key gir + onayla → Category.
+        // Yeni key gir + onayla → Model.
         let _ = handle_connect_input(&mut flow, &key_enter());
         for c in "sk-x".chars() {
             let _ = handle_connect_input(&mut flow, &press(KeyCode::Char(c)));
         }
         let _ = handle_connect_input(&mut flow, &key_enter());
-        assert_eq!(flow.step, ConnectStep::Category);
-        let _ = handle_connect_input(&mut flow, &key_enter());
         assert_eq!(flow.step, ConnectStep::Model);
-        // Model ← Category ← Key ← BaseUrl ← Provider.
-        let out = handle_connect_input(&mut flow, &key_esc());
-        assert_eq!(out, ConnectOutcome::Back);
-        assert_eq!(flow.step, ConnectStep::Category);
+        // Model ← Key ← BaseUrl ← Provider.
         let out = handle_connect_input(&mut flow, &key_esc());
         assert_eq!(out, ConnectOutcome::Back);
         assert_eq!(flow.step, ConnectStep::Key);

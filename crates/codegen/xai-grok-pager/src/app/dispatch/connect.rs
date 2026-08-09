@@ -152,6 +152,10 @@ pub(super) fn dispatch_open_keys_manager(app: &mut AppView) -> Vec<Effect> {
             state: Box::new(KeysManagerState::new(entries, locked)),
         });
     }
+    // Açıkken (kilitli değilse) bilinmeyen bakiyeler için arka plan sorgusu.
+    if !locked {
+        effects.extend(probe_key_balances_effect(app));
+    }
     effects
 }
 
@@ -198,7 +202,7 @@ fn keys_manager_export_dir(app: &AppView) -> PathBuf {
 }
 
 /// Keychain'den güncel kayıtları modal state'ine taşır.
-fn reload_keys_manager_entries(app: &mut AppView) {
+pub(super) fn reload_keys_manager_entries(app: &mut AppView) {
     let entries = match app.keychain.as_mut() {
         Some(kc) => kc.list_keys().unwrap_or_default(),
         None => vec![],
@@ -209,6 +213,35 @@ fn reload_keys_manager_entries(app: &mut AppView) {
         .map(|kc| kc.default_category())
         .unwrap_or_default();
     with_keys_manager(app, |state| state.apply_entries(entries, default));
+}
+
+/// Bakiye sorgusu efekti üretir: bakiyesi henüz bilinmeyen (sorgulanmamış)
+/// kayıtlar için. Ham key'ler `Zeroizing` ile task'a gider, loglanmaz.
+/// Keychain yoksa / boşsa boş liste döner (efekt üretilmez).
+fn probe_key_balances_effect(app: &mut AppView) -> Vec<Effect> {
+    let Some(kc) = app.keychain.as_mut() else {
+        return vec![];
+    };
+    let entries = kc.list_keys().unwrap_or_default();
+    let mut probes = Vec::new();
+    for e in entries {
+        if e.balance.is_some() {
+            continue; // zaten biliniyor
+        }
+        let Ok(borrowed) = kc.borrow(e.id.clone()) else {
+            continue;
+        };
+        probes.push((
+            e.id,
+            e.provider_id,
+            e.base_url,
+            zeroize::Zeroizing::new(borrowed.get().to_string()),
+        ));
+    }
+    if probes.is_empty() {
+        return vec![];
+    }
+    vec![Effect::ProbeKeyBalances { entries: probes }]
 }
 
 /// Keychain açma: master password → `Keychain::open` (dosya yoksa yeni
@@ -229,6 +262,8 @@ pub(super) fn dispatch_keychain_unlock(
             app.keychain = Some(kc);
             reload_keys_manager_entries(app);
             with_keys_manager(app, |state| state.apply_unlocked());
+            // Açılışta bilinmeyen bakiyeleri arka planda sorgula.
+            return probe_key_balances_effect(app);
         }
         Err(_) => {
             with_keys_manager(app, |state| {
@@ -267,42 +302,48 @@ pub(super) fn dispatch_keychain_reveal(app: &mut AppView, id: String) -> Vec<Eff
 /// Yeni kayıt: RAM `add_key` + küçük atomik `save()` → satırlar taze.
 pub(super) fn dispatch_keychain_add(
     app: &mut AppView,
-    category: String,
     provider_id: String,
     api_key: Zeroizing<String>,
     model_id: Option<String>,
     base_url: Option<String>,
 ) -> Vec<Effect> {
+    let mut effects = Vec::new();
     match app.keychain.as_mut() {
-        Some(kc) => match kc.add_key(&category, &provider_id, &api_key, model_id, base_url) {
-            Ok(_id) => {
-                if let Err(e) = kc.save() {
-                    tracing::warn!(target: "keys", error = %e, "keychain save failed after add");
+        Some(kc) => {
+            // Kategori otomatik: sağlayıcıya göre sistem belirler, kullanıcı
+            // seçmez (kategoriler yalnızca import/export metadata'sıdır).
+            match kc.add_key_auto(&provider_id, &api_key, model_id, base_url) {
+                Ok(_id) => {
+                    if let Err(e) = kc.save() {
+                        tracing::warn!(target: "keys", error = %e, "keychain save failed after add");
+                    }
+                    reload_keys_manager_entries(app);
+                    with_keys_manager(app, |state| {
+                        state.mode = KeysManagerMode::Browse;
+                        state.error = None;
+                        state.selected = 0;
+                        state.master_editor.reset();
+                    });
+                    // Yeni key'in bakiyesini arka planda sorgula.
+                    effects.extend(probe_key_balances_effect(app));
                 }
-                reload_keys_manager_entries(app);
-                with_keys_manager(app, |state| {
-                    state.mode = KeysManagerMode::Browse;
-                    state.error = None;
-                    state.selected = 0;
-                    state.master_editor.reset();
-                });
+                Err(e) => {
+                    with_keys_manager(app, |state| {
+                        state.apply_error_and_browse(format!(
+                            "kayıt başarısız: {}",
+                            keychain_error_msg(&e)
+                        ));
+                    });
+                }
             }
-            Err(e) => {
-                with_keys_manager(app, |state| {
-                    state.apply_error_and_browse(format!(
-                        "kayıt başarısız: {}",
-                        keychain_error_msg(&e)
-                    ));
-                });
-            }
-        },
+        }
         None => {
             with_keys_manager(app, |state| {
                 state.apply_error_and_browse(KEYCHAIN_LOCKED_MSG.to_string());
             });
         }
     }
-    vec![]
+    effects
 }
 
 /// Kayıt güncelle (model / base_url / opsiyonel key).
@@ -395,41 +436,6 @@ pub(super) fn dispatch_keychain_remove_category(app: &mut AppView, name: String)
                 with_keys_manager(app, |state| {
                     state.apply_error_and_browse(format!(
                         "kategori silme başarısız: {}",
-                        keychain_error_msg(&e)
-                    ));
-                });
-            }
-        },
-        None => {
-            with_keys_manager(app, |state| {
-                state.apply_error_and_browse(KEYCHAIN_LOCKED_MSG.to_string());
-            });
-        }
-    }
-    vec![]
-}
-
-/// Varsayılan kategori.
-pub(super) fn dispatch_keychain_set_default_category(
-    app: &mut AppView,
-    name: String,
-) -> Vec<Effect> {
-    match app.keychain.as_mut() {
-        Some(kc) => match kc.set_default_category(&name) {
-            Ok(()) => {
-                if let Err(e) = kc.save() {
-                    tracing::warn!(target: "keys", error = %e, "keychain save failed after default change");
-                }
-                reload_keys_manager_entries(app);
-                with_keys_manager(app, |state| {
-                    state.mode = KeysManagerMode::Browse;
-                    state.error = None;
-                });
-            }
-            Err(e) => {
-                with_keys_manager(app, |state| {
-                    state.apply_error_and_browse(format!(
-                        "varsayılan ayarlanamadı: {}",
                         keychain_error_msg(&e)
                     ));
                 });
@@ -610,7 +616,6 @@ pub(super) fn dispatch_connect_provider(
             app,
             s,
             &provider_id,
-            category.as_deref(),
             &model_id,
             base_url.as_deref(),
         ) {
@@ -700,7 +705,6 @@ fn resolve_wizard_key(
     app: &mut AppView,
     s: &ConnectFlowSnapshot,
     provider_id: &str,
-    category: Option<&str>,
     model_id: &str,
     base_url: Option<&str>,
 ) -> Result<(String, String, String, bool), String> {
@@ -727,10 +731,9 @@ fn resolve_wizard_key(
         KeyMode::New => {
             let key = s.draft_key.as_str();
             if let Some(kc) = app.keychain.as_mut() {
-                let cat = category.unwrap_or("personal").to_string();
+                // Kategori otomatik: sağlayıcıya göre sistem belirler.
                 let key_id = kc
-                    .add_key(
-                        &cat,
+                    .add_key_auto(
                         provider_id,
                         key,
                         Some(model_id.to_string()),
@@ -742,12 +745,12 @@ fn resolve_wizard_key(
                 if let Err(e) = kc.save() {
                     tracing::warn!(target: "connect", error = %e, "keychain save failed for new wizard key");
                 }
-                Ok((key.to_string(), key_id, cat, false))
+                Ok((key.to_string(), key_id, xai_omni_keychain::auto_category(provider_id), false))
             } else {
                 Ok((
                     key.to_string(),
                     "draft".to_string(),
-                    category.unwrap_or("personal").to_string(),
+                    xai_omni_keychain::auto_category(provider_id),
                     true,
                 ))
             }
@@ -758,7 +761,7 @@ fn resolve_wizard_key(
             Ok((
                 value,
                 name.clone(),
-                category.unwrap_or("personal").to_string(),
+                xai_omni_keychain::auto_category(provider_id),
                 true,
             ))
         }

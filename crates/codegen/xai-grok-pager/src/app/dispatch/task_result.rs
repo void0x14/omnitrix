@@ -1315,8 +1315,7 @@ pub(super) fn dispatch_task_result(result: TaskResult, app: &mut AppView) -> Vec
             }
             vec![]
         }
-        TaskResult::ProviderModelsFetched { base_url, result } => {
-            // Custom provider `/models` sonucu: hâlâ Model adımında ve aynı
+        TaskResult::ProviderModelsFetched { base_url, result } => {            // Custom provider `/models` sonucu: hâlâ Model adımında ve aynı
             // base URL'deyse listeyi doldur (Loaded) / hata satırını kur
             // (Failed — manuel ID girişi kullanılır).
             use crate::views::modal::ActiveModal;
@@ -1367,6 +1366,25 @@ pub(super) fn dispatch_task_result(result: TaskResult, app: &mut AppView) -> Vec
                 models = result.as_ref().map(|v| v.len()).unwrap_or(0),
                 "provider /models fetch completed",
             );
+            vec![]
+        }
+        TaskResult::KeyBalancesProbed { results } => {
+            // Bakiye sonuçlarını keychain'e yazar; keys manager açıksa
+            // satırlar tazelenir (türetilmiş "yüksek bakiyeli" kategorisi
+            // bu veriye dayanır).
+            let mut changed = false;
+            if let Some(kc) = app.keychain.as_mut() {
+                for (id, balance) in results {
+                    kc.set_key_balance(&id, balance);
+                    changed = true;
+                }
+                if changed {
+                    if let Err(e) = kc.save() {
+                        tracing::warn!(target: "keys", error = %e, "keychain save failed after balance probe");
+                    }
+                    super::connect::reload_keys_manager_entries(app);
+                }
+            }
             vec![]
         }
     }

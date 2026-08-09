@@ -7,7 +7,7 @@ use crate::app::dispatch::connect::{
     dispatch_connect_provider, dispatch_fetch_provider_models, dispatch_keychain_add,
     dispatch_keychain_borrow, dispatch_keychain_export, dispatch_keychain_import,
     dispatch_keychain_remove, dispatch_keychain_remove_category, dispatch_keychain_reveal,
-    dispatch_keychain_set_default_category, dispatch_keychain_unlock, dispatch_keychain_update,
+    dispatch_keychain_unlock, dispatch_keychain_update,
     dispatch_open_connect_picker, dispatch_open_keys_manager,
 };
 use crate::views::keys_manager::{KeysManagerMode, KeysManagerState};
@@ -461,7 +461,6 @@ fn wizard_at_apply(app: &mut AppView, key: &str) {
     flow.base_url_draft = "http://localhost:8000/v1".to_string();
     flow.key_mode = KeyMode::New;
     flow.draft_key = Zeroizing::new(key.to_string());
-    flow.selected_category = Some("personal".to_string());
     flow.selected_model = Some("my-model".to_string());
     flow.step = ConnectStep::Apply;
     flow.apply_pending = true;
@@ -606,7 +605,6 @@ fn wizard_apply_keychain_mode_borrows_by_id() {
         models: vec![],
     });
     flow.key_mode = KeyMode::Keychain(key_id.clone());
-    flow.selected_category = Some("personal".to_string());
     flow.selected_model = Some("my-model".to_string());
     flow.step = ConnectStep::Apply;
 
@@ -945,15 +943,13 @@ fn keys_add_action_adds_entry_and_refreshes() {
     let mut app = test_app();
     app.keychain = Some(kc);
     let _ = dispatch_open_keys_manager(&mut app);
-    let effects = dispatch_keychain_add(
+    dispatch_keychain_add(
         &mut app,
-        "work".to_string(),
         "vllm".to_string(),
         Zeroizing::new("sk-work-1".to_string()),
         None,
         None,
     );
-    assert!(effects.is_empty());
     let state = keys_manager_state(&app);
     assert_eq!(state.mode, KeysManagerMode::Browse);
     assert_eq!(state.entries.len(), 2);
@@ -962,7 +958,8 @@ fn keys_add_action_adds_entry_and_refreshes() {
         .iter()
         .find(|e| e.provider_id == "vllm")
         .expect("vllm kaydı");
-    assert_eq!(vllm.category, "work");
+    // Kategori otomatik: sağlayıcı adı.
+    assert_eq!(vllm.category, "vllm");
     assert!(
         !vllm.masked.contains("sk-work-1"),
         "masked asla ham key içermez"
@@ -1032,17 +1029,30 @@ fn keys_remove_category_action_deletes_category() {
 }
 
 #[test]
-fn keys_set_default_category_action_updates_default() {
+fn keys_added_entry_uses_auto_category() {
     let (kc, _id, _dir) = open_keychain_with_entry("openai");
     let mut app = test_app();
     app.keychain = Some(kc);
     let _ = dispatch_open_keys_manager(&mut app);
-    let _ = dispatch_keychain_set_default_category(&mut app, "personal".to_string());
+    let _ = dispatch_keychain_add(
+        &mut app,
+        "deepseek".to_string(),
+        Zeroizing::new("sk-ds-1".to_string()),
+        None,
+        None,
+    );
     let state = keys_manager_state(&app);
-    assert_eq!(state.default_category, "personal");
+    let ds = state
+        .entries
+        .iter()
+        .find(|e| e.provider_id == "deepseek")
+        .expect("deepseek kaydı");
+    // Kategori kullanıcıdan alınmaz — sağlayıcıya göre otomatik yazılır.
+    assert_eq!(ds.category, "deepseek");
     assert_eq!(
-        app.keychain.as_ref().unwrap().default_category(),
-        "personal"
+        ds.key_type,
+        xai_omni_keychain::KeyType::DeepSeek,
+        "önekten otomatik tip tespiti"
     );
 }
 

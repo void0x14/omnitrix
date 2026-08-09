@@ -439,7 +439,6 @@ pub enum Action {
     },
     /// Keys manager: yeni kayıt (RAM `add_key` + küçük atomik `save()`).
     KeychainAdd {
-        category: String,
         provider_id: String,
         api_key: zeroize::Zeroizing<String>,
         model_id: Option<String>,
@@ -458,10 +457,6 @@ pub enum Action {
     },
     /// Keys manager: kategori (ve içindeki tüm key'leri) sil.
     KeychainRemoveCategory {
-        name: String,
-    },
-    /// Keys manager: varsayılan kategori.
-    KeychainSetDefaultCategory {
         name: String,
     },
     /// Keys manager: kapsamı `.omx` dosyasına export et (export şifresi
@@ -1681,6 +1676,13 @@ pub enum Effect {
         base_url: String,
         api_key: Option<zeroize::Zeroizing<String>>,
     },
+    /// Best-effort bakiye sorgusu (keychain açıkken keys manager'da).
+    /// Her kayıt: `(id, provider_id, base_url, api_key)` — ham key yalnızca
+    /// task içinde kullanılır, loglanmaz. Tamamlanınca
+    /// [`TaskResult::KeyBalancesProbed`] döner.
+    ProbeKeyBalances {
+        entries: Vec<(String, String, Option<String>, zeroize::Zeroizing<String>)>,
+    },
     /// Fetch changelog from CDN (both markdown + structured JSON).
     /// Runs off the render path via `spawn_blocking`. Result is cached
     /// on `AppView` so `/release-notes` and the welcome screen share it.
@@ -2506,6 +2508,11 @@ pub enum TaskResult {
         model_id: String,
         model_key: String,
         result: Result<(), String>,
+    },
+    /// Best-effort bakiye sorgusu sonucu ([`Effect::ProbeKeyBalances`]).
+    /// `results`: `(key_id, balance_usd)` — `None` = sorgulanamadı/uyç yok.
+    KeyBalancesProbed {
+        results: Vec<(String, Option<f64>)>,
     },
     /// models.dev provider catalog loaded for the `/connect` wizard
     /// ([`Effect::FetchModelsCatalog`]). The open `ProviderConnect` modal

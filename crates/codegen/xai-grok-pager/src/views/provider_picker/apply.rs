@@ -1,12 +1,13 @@
 //! Task 8: Apply + Done adımları.
 //!
-//! Apply: "bağlanıyor: <provider> / <model>" + Enter → `ConnectOutcome::Apply`
-//! (modals katmanı `Action::ConnectProvider` üretir; dispatch borrow/add/env
-//! çözer, config yazımı async efekte gider). Sonuç async `ProviderConnectPersisted`
-//! task sonucuna bağlı: başarı → `Done`, hata → `Error(msg)`.
-//! Done: "✓ bağlandı" + Enter/Esc → modal kapanır (`Cancel`).
+//! Apply: "bağlanıyor: <provider> / <model>" + Enter/fare tıklaması →
+//! `ConnectOutcome::Apply` (modals katmanı `Action::ConnectProvider` üretir;
+//! dispatch borrow/add key çözer, config yazımı async efekte gider). Sonuç
+//! async `ProviderConnectPersisted` task sonucuna bağlı: başarı → `Done`,
+//! hata → `Error(msg)`.
+//! Done: "✓ bağlandı" + Enter/Esc/fare tıklaması → modal kapanır (`Cancel`).
 
-use crossterm::event::{Event, KeyCode, KeyEventKind};
+use crossterm::event::{Event, KeyCode, KeyEventKind, MouseEventKind};
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::Style;
@@ -27,18 +28,25 @@ pub(super) fn handle_apply_input(flow: &mut ProviderConnectFlow, ev: &Event) -> 
             }
             _ => ConnectOutcome::Nothing,
         },
+        // Fare: içerik alanına tıklamak Enter ile aynıdır.
+        Event::Mouse(mouse) if matches!(mouse.kind, MouseEventKind::Down(crossterm::event::MouseButton::Left)) => {
+            ConnectOutcome::Apply
+        }
         _ => ConnectOutcome::Nothing,
     }
 }
 
 pub(super) fn handle_done_input(ev: &Event) -> ConnectOutcome {
-    if let Event::Key(key) = ev
-        && key.kind == KeyEventKind::Press
-        && (key.code == KeyCode::Enter || key.code == KeyCode::Esc)
-    {
-        ConnectOutcome::Cancel
-    } else {
-        ConnectOutcome::Nothing
+    match ev {
+        Event::Key(key) if key.kind == KeyEventKind::Press
+            && (key.code == KeyCode::Enter || key.code == KeyCode::Esc) =>
+        {
+            ConnectOutcome::Cancel
+        }
+        Event::Mouse(mouse) if matches!(mouse.kind, MouseEventKind::Down(crossterm::event::MouseButton::Left)) => {
+            ConnectOutcome::Cancel
+        }
+        _ => ConnectOutcome::Nothing,
     }
 }
 
@@ -142,7 +150,7 @@ mod tests {
             source: CacheSource::Offline,
         };
         let mut flow = ProviderConnectFlow::new(catalog, vec![]);
-        // custom-openai → BaseUrl → Key(yeni) → Category → Model → manuel ID → Apply.
+        // custom-openai → BaseUrl → Key(yeni) → Model → manuel ID → Apply.
         let _ = super::super::handle_connect_input(&mut flow, &press(KeyCode::Enter));
         let _ = super::super::key_input::handle_base_url_input(&mut flow, &press(KeyCode::Enter));
         let _ = super::super::key_input::handle_key_step_input(&mut flow, &press(KeyCode::Enter));
@@ -150,7 +158,6 @@ mod tests {
             let _ = super::super::key_input::handle_key_step_input(&mut flow, &press(KeyCode::Char(c)));
         }
         let _ = super::super::key_input::handle_key_step_input(&mut flow, &press(KeyCode::Enter));
-        let _ = super::super::key_input::handle_category_step_input(&mut flow, &press(KeyCode::Enter));
         // Model: boş liste → manuel ID moduna gir, ID yaz, onayla → Apply.
         let _ = super::super::model_select::handle_model_step_input(&mut flow, &press(KeyCode::Enter));
         for c in "my-model".chars() {

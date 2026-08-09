@@ -8,7 +8,7 @@ use super::connect::{
     dispatch_connect_provider, dispatch_fetch_provider_models, dispatch_keychain_add,
     dispatch_keychain_borrow, dispatch_keychain_export, dispatch_keychain_import,
     dispatch_keychain_remove, dispatch_keychain_remove_category, dispatch_keychain_reveal,
-    dispatch_keychain_set_default_category, dispatch_keychain_unlock, dispatch_keychain_update,
+    dispatch_keychain_unlock, dispatch_keychain_update,
     dispatch_open_connect_picker, dispatch_open_keys_manager,
 };
 use super::ctx::{
@@ -870,12 +870,11 @@ pub(crate) fn dispatch(action: Action, app: &mut AppView) -> Vec<Effect> {
         Action::KeychainUnlock { password } => dispatch_keychain_unlock(app, password),
         Action::KeychainReveal { id } => dispatch_keychain_reveal(app, id),
         Action::KeychainAdd {
-            category,
             provider_id,
             api_key,
             model_id,
             base_url,
-        } => dispatch_keychain_add(app, category, provider_id, api_key, model_id, base_url),
+        } => dispatch_keychain_add(app, provider_id, api_key, model_id, base_url),
         Action::KeychainUpdate {
             id,
             model_id,
@@ -884,9 +883,6 @@ pub(crate) fn dispatch(action: Action, app: &mut AppView) -> Vec<Effect> {
         } => dispatch_keychain_update(app, id, model_id, base_url, api_key),
         Action::KeychainRemove { id } => dispatch_keychain_remove(app, id),
         Action::KeychainRemoveCategory { name } => dispatch_keychain_remove_category(app, name),
-        Action::KeychainSetDefaultCategory { name } => {
-            dispatch_keychain_set_default_category(app, name)
-        }
         Action::KeychainExport { scope, password } => {
             dispatch_keychain_export(app, scope, password)
         }

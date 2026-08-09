@@ -803,7 +803,18 @@ impl AgentView {
                     }
                     self.handle_modal_key_with_registry(key, registry)
                 }
-                Event::Mouse(mouse) => self.handle_modal_mouse_with_registry(mouse, registry),
+                Event::Mouse(mouse) => {
+                    let outcome = self.handle_modal_mouse_with_registry(mouse, registry);
+                    // Modal bir şeyi tüketmediyse olayı scrollback'e düşür:
+                    // fareyle metin seçimi/kopyalama modallar açıkken de
+                    // çalışır (grok CLI davranışı — modal çerçevesi olayı
+                    // yutamaz).
+                    if matches!(outcome, InputOutcome::Unchanged) {
+                        self.handle_mouse(mouse)
+                    } else {
+                        outcome
+                    }
+                }
                 Event::Paste(text) => self.handle_modal_paste(text, registry),
                 _ => InputOutcome::Changed,
             };

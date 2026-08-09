@@ -27,14 +27,12 @@ pub async fn run(keys_args: KeysArgs, grok_home: PathBuf) -> anyhow::Result<()> 
         KeysCommand::List => cmd_list(&grok_home),
         KeysCommand::Show { id } => cmd_show(&grok_home, &id),
         KeysCommand::Add {
-            category,
             provider,
             api_key,
             model,
             base_url,
         } => cmd_add(
             &grok_home,
-            category.as_deref(),
             &provider,
             api_key.as_deref(),
             model.as_deref(),
@@ -45,14 +43,12 @@ pub async fn run(keys_args: KeysArgs, grok_home: PathBuf) -> anyhow::Result<()> 
             model,
             base_url,
             api_key,
-            category,
         } => cmd_edit(
             &grok_home,
             &id,
             model.as_deref(),
             base_url.as_deref(),
             api_key.as_deref(),
-            category.as_deref(),
         ),
         KeysCommand::Remove { id } => cmd_remove(&grok_home, &id),
         KeysCommand::Export { path, category } => cmd_export(&grok_home, path, &category),
@@ -87,6 +83,10 @@ fn cmd_show(grok_home: &Path, id: &str) -> anyhow::Result<()> {
     let secret = kc.reveal(id.to_string())?;
     println!("Provider: {}", entry.provider_id);
     println!("Category: {}", entry.category);
+    println!("Tip: {}", entry.key_type.label());
+    if let Some(b) = entry.balance {
+        println!("Bakiye: ${b:.2}");
+    }
     println!("API Key: {}", secret.as_str());
     println!(
         "Model: {}",
@@ -98,7 +98,6 @@ fn cmd_show(grok_home: &Path, id: &str) -> anyhow::Result<()> {
 
 fn cmd_add(
     grok_home: &Path,
-    category: Option<&str>,
     provider: &str,
     api_key: Option<&str>,
     model: Option<&str>,
@@ -113,17 +112,9 @@ fn cmd_add(
     if api_key.trim().is_empty() {
         anyhow::bail!("API key boş olamaz");
     }
-    let category = match category {
-        Some(c) if !c.is_empty() => c.to_string(),
-        _ => kc.default_category(),
-    };
-    let id = kc.add_key(
-        &category,
-        provider,
-        &api_key,
-        model.map(str::to_string),
-        base_url.map(str::to_string),
-    )?;
+    // Kategori otomatik: sağlayıcıya göre sistem belirler (kullanıcı seçmez).
+    let category = xai_omni_keychain::auto_category(provider);
+    let id = kc.add_key_auto(provider, &api_key, model.map(str::to_string), base_url.map(str::to_string))?;
     kc.save()?;
     println!("keychain'e eklendi: {provider} ({category}) [{id}]");
     Ok(())
@@ -135,13 +126,7 @@ fn cmd_edit(
     model: Option<&str>,
     base_url: Option<&str>,
     api_key: Option<&str>,
-    category: Option<&str>,
 ) -> anyhow::Result<()> {
-    if category.is_some_and(|c| !c.is_empty()) {
-        eprintln!(
-            "uyarı: kategori taşıma desteklenmiyor (henüz); --category değişikliği atlandı ({id})"
-        );
-    }
     let mut kc = prompt_and_open_keychain(grok_home)?;
     kc.update_key(
         id.to_string(),

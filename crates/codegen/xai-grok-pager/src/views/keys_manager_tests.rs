@@ -48,6 +48,8 @@ fn sample_entry(provider: &str, masked: &str) -> KeyEntry {
         created_at: "2026-01-01T00:00:00Z".to_string(),
         last_used: Some("2026-08-09T10:00:00Z".to_string()),
         source: KeySource::Manual,
+        key_type: xai_omni_keychain::KeyType::Legacy,
+        balance: None,
     }
 }
 
@@ -289,13 +291,11 @@ fn add_form_produces_add_action() {
     let out = handle_keys_manager_event(&mut state, &Event::Key(key_enter()));
     match out {
         KeysManagerOutcome::Action(Action::KeychainAdd {
-            category,
             provider_id,
             api_key,
             model_id,
             base_url,
         }) => {
-            assert_eq!(category, "personal", "boş kategori → personal default");
             assert_eq!(provider_id, "deepseek");
             assert_eq!(api_key.as_str(), "sk-ds-xyz");
             assert_eq!(model_id, None);
@@ -424,36 +424,48 @@ fn remove_category_emits_action_for_selected_category() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn categories_nav_and_default_action() {
+fn categories_nav_filters_browse() {
     let mut state = browse_state(vec![
         sample_entry("openai", "sk-…a1b2"),
         sample_entry("anthropic", "sk-…c3d4"),
     ]);
     let _ = handle_keys_manager_event(&mut state, &Event::Key(key_char('c')));
     assert_eq!(state.mode, KeysManagerMode::Categories);
-    assert_eq!(state.categories, vec!["personal".to_string()]);
+    // Satırlar türetilmiş: tümü + key tipleri + sağlayıcı kategorileri.
+    assert_eq!(state.category_rows[0], CategoryFilter::All);
+    assert!(
+        state
+            .category_rows
+            .iter()
+            .any(|f| *f == CategoryFilter::Provider("openai".to_string()))
+    );
+    // Enter → Browse, filtre aktif; yalnızca o sağlayıcının keyleri görünür.
+    let openai_idx = state
+        .category_rows
+        .iter()
+        .position(|f| *f == CategoryFilter::Provider("openai".to_string()))
+        .unwrap();
+    state.category_cursor = openai_idx;
     let out = handle_keys_manager_event(&mut state, &Event::Key(key_enter()));
-    match out {
-        KeysManagerOutcome::Action(Action::KeychainSetDefaultCategory { name }) => {
-            assert_eq!(name, "personal");
-        }
-        other => panic!("KeychainSetDefaultCategory aksiyonu bekleniyor: {other:?}"),
-    }
+    assert!(matches!(out, KeysManagerOutcome::Changed));
+    assert_eq!(state.mode, KeysManagerMode::Browse);
+    assert_eq!(state.visible_entries().len(), 1);
+    assert_eq!(state.visible_entries()[0].provider_id, "openai");
+    // Kategori ekranına tekrar girip "tümü" seçilince filtre kalkar.
+    let _ = handle_keys_manager_event(&mut state, &Event::Key(key_char('c')));
+    state.category_cursor = 0;
+    let _ = handle_keys_manager_event(&mut state, &Event::Key(key_enter()));
+    assert_eq!(state.visible_entries().len(), 2);
 }
 
 #[test]
-fn categories_render_marks_default() {
-    let mut state = browse_state(vec![
-        sample_entry("openai", "sk-…a1b2"),
-        sample_entry("anthropic", "sk-…c3d4"),
-    ]);
-    state.default_category = "personal".to_string();
+fn categories_render_lists_derived_groups() {
+    let mut state = browse_state(vec![sample_entry("openai", "sk-…a1b2")]);
     let _ = handle_keys_manager_event(&mut state, &Event::Key(key_char('c')));
     let text = render_text(&mut state);
-    assert!(
-        text.contains("(varsayilan)"),
-        "varsayılan işareti görünmeli:\n{text}"
-    );
+    assert!(text.contains("otomatik"), "başlık türetilmiş kategorileri söyler");
+    assert!(text.contains("tümü"), "tümü satırı görünmeli");
+    assert!(text.contains("openai"), "sağlayıcı kategorisi görünmeli");
 }
 
 // ---------------------------------------------------------------------------

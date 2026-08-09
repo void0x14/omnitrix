@@ -608,7 +608,10 @@ impl AgentView {
                     return InputOutcome::Changed;
                 };
                 flow.apply_pending = true;
-                let category = flow.selected_category.clone();
+                // Kategori kullanıcıya sorulmaz — dispatch otomatik olarak
+                // default kategoriyi (personal) uygular; kategoriler yalnızca
+                // import/export dosyasında görünen metadata'dır.
+                let category = None;
                 // Builtin provider'larda base_url `None` → config katmanı
                 // katalogdan (URL + backend) çözer; custom'da draft kullanılır.
                 let base_url = if sel.is_custom {

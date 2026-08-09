@@ -54,11 +54,132 @@ pub enum KeySource {
     Imported,
 }
 
+/// Key'in tipi — anahtar dizesinin önekinden otomatik tespit edilir.
+/// "Kategori" sağlayıcı bazlı otomatik olduğu için bu, key'in doğasına dair
+/// ikinci boyutu taşır (proje/servis/legacy…).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum KeyType {
+    /// Tespit edilemedi (custom/özel format).
+    #[default]
+    Unknown,
+    /// OpenAI proje anahtarı (`sk-proj-`).
+    Project,
+    /// OpenAI servis hesabı (`sk-svcacct-`).
+    Service,
+    /// OpenAI legacy kullanıcı anahtarı (`sk-`).
+    Legacy,
+    /// Anthropic (`sk-ant-api03-` / `sk-ant-`).
+    Anthropic,
+    /// Google API anahtarı (`AIza…`).
+    Google,
+    /// DeepSeek (`sk-`).
+    DeepSeek,
+    /// Groq (`gsk_…`).
+    Groq,
+    /// xAI (`xai-…`).
+    Xai,
+}
+
+impl KeyType {
+    /// İnsan okur kısa etiket.
+    pub fn label(&self) -> &'static str {
+        match self {
+            Self::Unknown => "bilinmiyor",
+            Self::Project => "proje",
+            Self::Service => "servis hesabı",
+            Self::Legacy => "legacy",
+            Self::Anthropic => "anthropic",
+            Self::Google => "google",
+            Self::DeepSeek => "deepseek",
+            Self::Groq => "groq",
+            Self::Xai => "xai",
+        }
+    }
+}
+
+/// Key türünü provider + anahtar önekinden tespit eder (saf, ağ yok).
+pub fn detect_key_type(provider_id: &str, api_key: &str) -> KeyType {
+    match provider_id {
+        "openai" | "custom-openai" => {
+            if api_key.starts_with("sk-proj-") {
+                KeyType::Project
+            } else if api_key.starts_with("sk-svcacct-") {
+                KeyType::Service
+            } else if api_key.starts_with("sk-") {
+                KeyType::Legacy
+            } else {
+                KeyType::Unknown
+            }
+        }
+        "anthropic" | "custom-anthropic" => {
+            if api_key.starts_with("sk-ant-") {
+                KeyType::Anthropic
+            } else {
+                KeyType::Unknown
+            }
+        }
+        "google" | "google-genai" | "gemini" => {
+            if api_key.starts_with("AIza") {
+                KeyType::Google
+            } else {
+                KeyType::Unknown
+            }
+        }
+        "deepseek" => {
+            if api_key.starts_with("sk-") {
+                KeyType::DeepSeek
+            } else {
+                KeyType::Unknown
+            }
+        }
+        "groq" => {
+            if api_key.starts_with("gsk_") {
+                KeyType::Groq
+            } else {
+                KeyType::Unknown
+            }
+        }
+        "xai" | "grok" => {
+            if api_key.starts_with("xai-") {
+                KeyType::Xai
+            } else {
+                KeyType::Unknown
+            }
+        }
+        // Custom/özel provider: önekten genel tahmin.
+        _ => {
+            if api_key.starts_with("sk-proj-") {
+                KeyType::Project
+            } else if api_key.starts_with("sk-svcacct-") {
+                KeyType::Service
+            } else if api_key.starts_with("sk-ant-") {
+                KeyType::Anthropic
+            } else if api_key.starts_with("gsk_") {
+                KeyType::Groq
+            } else if api_key.starts_with("xai-") {
+                KeyType::Xai
+            } else if api_key.starts_with("AIza") {
+                KeyType::Google
+            } else {
+                KeyType::Unknown
+            }
+        }
+    }
+}
+
+/// Otomatik kategori: her key kendi sağlayıcısının kategorisine yazılır.
+/// Kullanıcı kategori seçmez; sistem tespit eder (wizard/CLI ortak).
+pub fn auto_category(provider_id: &str) -> String {
+    provider_id.to_string()
+}
+
 /// Şifreli payload içindeki bir API key kaydı. Ham key burada DURMAZ;
 /// `Payload.secrets` içinde ayrı `Secret` olarak tutulur.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct KeyEntry {
     pub id: KeyId,
+    /// Otomatik tespit edilen kategori (sağlayıcı bazlı; import/export
+    /// dosyasında metadata olarak görünür).
     pub category: String,
     pub provider_id: String,
     /// models.dev adı veya config'teki ad (Task 3 zenginleştirir).
@@ -71,6 +192,13 @@ pub struct KeyEntry {
     pub created_at: String,
     pub last_used: Option<String>,
     pub source: KeySource,
+    /// Anahtar tipi (önekten tespit). Eski dosyalar için `Unknown` default.
+    #[serde(default)]
+    pub key_type: KeyType,
+    /// Arka plan bakiye sorgusundan gelen USD bakiye (`None` = sorgulanmadı /
+    /// provider'da bakiye ucu yok). Eski dosyalar için `None` default.
+    #[serde(default)]
+    pub balance: Option<f64>,
 }
 
 /// Export/import akışları için ham key değeriyle düz kayıt görünümü.
@@ -453,6 +581,20 @@ impl Keychain {
         self.add_key_with_source(category, provider_id, api_key, model_id, base_url, KeySource::Manual)
     }
 
+    /// Otomatik kategori + otomatik key tipi tespiti ile ekler. Kullanıcıdan
+    /// kategori istenmez; sistem sağlayıcıya göre kategoriler ve öneke göre
+    /// tipi belirler, veriye o şekilde yazar.
+    pub fn add_key_auto(
+        &mut self,
+        provider_id: &str,
+        api_key: &str,
+        model_id: Option<String>,
+        base_url: Option<String>,
+    ) -> Result<KeyId> {
+        let category = auto_category(provider_id);
+        self.add_key_with_source(&category, provider_id, api_key, model_id, base_url, KeySource::Manual)
+    }
+
     /// `add_key`'in source'a duyarlı hali; Env/Imported kaynaklar içindir
     /// (henüz dış API'de açılmadı — Task 3+).
     pub(crate) fn add_key_with_source(
@@ -478,6 +620,8 @@ impl Keychain {
             created_at: existing.map(|e| e.created_at.clone()).unwrap_or_else(|| now.clone()),
             last_used: existing.and_then(|e| e.last_used.clone()),
             source,
+            key_type: detect_key_type(provider_id, api_key),
+            balance: None,
         };
         self.payload
             .secrets
@@ -523,6 +667,8 @@ impl Keychain {
             created_at,
             last_used: None,
             source: KeySource::Imported,
+            key_type: detect_key_type(provider_id, api_key),
+            balance: None,
         };
         self.payload
             .secrets
@@ -560,6 +706,15 @@ impl Keychain {
             self.payload.secrets.insert(id, Secret::new(k));
         }
         Ok(())
+    }
+
+    /// Bakiye sorgusu sonucunu yazar (`None` = sorgulanamadı/bakiye ucu yok).
+    /// Kayıt bulunamazsa sessizce geçer (silinmiş olabilir).
+    pub fn set_key_balance(&mut self, id: &str, balance: Option<f64>) {
+        let Some(entry) = self.payload.entry_mut_by_id(id) else {
+            return;
+        };
+        entry.balance = balance;
     }
 
     pub fn remove_key(&mut self, id: KeyId) -> Result<()> {

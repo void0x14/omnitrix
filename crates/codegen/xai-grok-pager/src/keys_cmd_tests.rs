@@ -18,6 +18,8 @@ fn sample_entry(id: &str, category: &str, provider: &str) -> KeyEntry {
         created_at: "2026-08-01T10:00:00Z".to_string(),
         last_used: Some("2026-08-09T12:34:56Z".to_string()),
         source: KeySource::Manual,
+        key_type: xai_omni_keychain::KeyType::Legacy,
+        balance: None,
     }
 }
 
