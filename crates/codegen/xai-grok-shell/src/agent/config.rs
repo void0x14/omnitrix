@@ -6918,20 +6918,30 @@ reasoning_effort = "low"
         assert_eq!(creds.api_key.as_deref(), Some("cfg-key"));
         crate::auth::runtime_key::clear_runtime_keys();
     }
-    /// Session token still outranks the runtime key (xAI-native first-party
-    /// path unchanged; BYOK users pick `preferred_method = api_key`, mirroring
-    /// the existing env-key precedence semantics).
+    /// Regression: BYOK runtime key must stay ApiKey even when signed in,
+    /// otherwise the bearer resolver overwrites the runtime key with a
+    /// session JWT. Mirrors the env-key precedence semantics in
+    /// `resolve_credentials_env_key_byok_keeps_api_key_auth_with_session`.
     #[test]
     #[serial]
-    fn resolve_credentials_session_beats_runtime_key() {
+    fn resolve_credentials_runtime_key_beats_session() {
         use xai_chat_state::AuthType;
         let model_id = "runtime-key-model-3";
         crate::auth::runtime_key::clear_runtime_keys();
         crate::auth::runtime_key::set_runtime_model_key(model_id, Some("kc-key".to_string()));
         let model = test_model_entry(model_id, "https://example.com/v1", None, None, None);
+        assert!(model.has_own_credentials());
         let creds = resolve_credentials(&model, Some("session-jwt"));
-        assert_eq!(creds.auth_type, AuthType::SessionToken);
-        assert_eq!(creds.api_key.as_deref(), Some("session-jwt"));
+        assert_eq!(
+            creds.auth_type,
+            AuthType::ApiKey,
+            "BYOK runtime key model must resolve to ApiKey even when a session token is available",
+        );
+        assert_eq!(
+            creds.api_key.as_deref(),
+            Some("kc-key"),
+            "api_key must be the runtime key, not the session JWT",
+        );
         crate::auth::runtime_key::clear_runtime_keys();
     }
     /// Regression: BYOK env-var auth must stay ApiKey even when signed in,
