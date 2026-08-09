@@ -1990,6 +1990,17 @@ impl SessionActor {
     /// directive) or end the turn. The premature-stop signal, if any, is
     /// emitted here — once per continued round.
     pub(super) async fn run_goal_round_end_legacy(&self) -> GoalRoundDecision {
+        // Flow Governor (S5-legacy): akış aktifken AI-güdümlü goal döngüsü
+        // devre dışı; devam kararını akış durum makinesi verir (deterministik).
+        {
+            use crate::session::flow::governor::RoundVerdict;
+            match self.flow_governor.lock().round_decision() {
+                RoundVerdict::EndTurn => return GoalRoundDecision::EndTurn,
+                RoundVerdict::Continue(directive) => {
+                    return GoalRoundDecision::Continue(directive);
+                }
+            }
+        }
         let current_tokens = self.chat_state_handle.get_total_tokens().await as i64;
         let Some(plan) = self.prepare_goal_continuation(current_tokens).await else {
             return GoalRoundDecision::EndTurn;

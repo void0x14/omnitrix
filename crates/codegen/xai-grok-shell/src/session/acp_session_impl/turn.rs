@@ -841,16 +841,17 @@ impl SessionActor {
         let doom_event_model = turn_model_id.clone();
         let turn_timer = std::time::Instant::now();
         // Flow Governor (S2): sentetik olmayan kullanıcı promptlarında akışı
-        // başlat; dönen direktifi bu turun promptuna sistem metni olarak ekle.
+        // başlat; dönen direktifi <system-reminder> ile chat state'e enjekte et
+        // (mevcut nudge altyapısı — model bunlara uymaya eğitimli). prompt_blocks
+        // bu noktadan önce tüketildiği için push oraya YAPILMAZ.
         // Akış zaten aktifse activate() None döner — mevcut akış korunur.
-        let mut prompt_blocks = prompt_blocks;
         if !origin.is_synthetic() {
             let directive = self.flow_governor.lock().activate(
                 &original_prompt_text,
                 crate::session::flow::classifier::UserMode::UserOriented,
             );
             if let Some(directive) = directive {
-                prompt_blocks.push(acp::ContentBlock::Text(acp::TextContent::new(directive)));
+                self.push_system_reminder(&directive);
             }
         }
         let result = {
