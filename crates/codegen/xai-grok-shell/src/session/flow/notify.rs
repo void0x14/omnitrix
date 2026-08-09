@@ -100,7 +100,7 @@ async fn send_telegram(channel: &NotifyChannel, _title: &str, body: &str) -> Res
 async fn send_webhook(channel: &NotifyChannel, title: &str, body: &str) -> Result<(), String> {
     let url = param(channel, "url")?;
     let client = reqwest::Client::new();
-    let mut req = client.post(&url).json(&serde_json::json!({
+    let mut req = client.post(url).json(&serde_json::json!({
         "title": title,
         "body": body,
         "source": "omnitrix-flow",
@@ -127,7 +127,7 @@ async fn send_sms(channel: &NotifyChannel, _title: &str, body: &str) -> Result<(
     let url = param(channel, "url")?;
     let client = reqwest::Client::new();
     let resp = client
-        .post(&url)
+        .post(url)
         .form(&[
             ("usercode", param(channel, "username")?.to_string()),
             ("password", param(channel, "password")?.to_string()),
@@ -150,7 +150,7 @@ async fn send_call(channel: &NotifyChannel, title: &str) -> Result<(), String> {
     let url = param(channel, "url")?;
     let client = reqwest::Client::new();
     let resp = client
-        .post(&url)
+        .post(url)
         .form(&[
             ("usercode", param(channel, "username")?.to_string()),
             ("password", param(channel, "password")?.to_string()),
