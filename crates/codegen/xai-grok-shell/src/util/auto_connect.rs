@@ -62,9 +62,9 @@ pub async fn auto_connect_from_key(
 /// Detect adaylarını ve probe uygulamasını enjekte eden orkestrasyon çekirdeği.
 ///
 /// `probe` ağ/HTTP ayrıntısı uygular; testler aynı production akışını
-/// gerçek internet olmadan koşmak için mock probe enjekte eder.
-#[doc(hidden)]
-pub async fn auto_connect_with<F, Fut>(
+/// gerçek internet olmadan koşmak için mock probe enjekte eder. In-crate
+/// child test modülü (`mod tests`) erişebilir; public API yüzeyine girmez.
+pub(crate) async fn auto_connect_with<F, Fut>(
     api_key: &str,
     candidates: Vec<xai_omni_keychain::DetectCandidate>,
     catalog: &CatalogCache,
@@ -135,6 +135,9 @@ where
         .filter(|r| rank_key(r) == winner_key && r.provider_id != winner.provider_id)
         .map(|r| r.provider_id.clone())
         .collect();
+    // Sıralı unique: ambiguity mesajındaki provider listesi deterministik ve
+    // tekrarsız kalır (aynı provider bitişik olmayan result'larda da çıksa).
+    tied.sort();
     tied.dedup();
     if !tied.is_empty() {
         return Err(AutoConnectError::Ambiguous { providers: tied });

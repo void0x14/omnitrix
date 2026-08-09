@@ -3,6 +3,8 @@
 //! probe-injectable helper'ına enjekte edilen mock closure ile çalışır.
 
 use super::*;
+use super::super::models_dev::{CacheSource, CatalogCache, ModelInfo, ProviderCatalog};
+use super::super::provider_probe::{DEFAULT_TIMEOUT, ProbeRequest, ProbeResult};
 use indexmap::IndexMap;
 use std::time::Duration;
 use xai_omni_keychain::DetectCandidate;
@@ -107,7 +109,16 @@ async fn auto_connect_success_outcome_models_order_and_candidates() {
     providers.insert("openai".to_string(), openai_catalog(models));
     let catalog = catalog_with(providers);
 
-    let outcome = auto_connect_from_key(TEST_KEY, &catalog).await.expect("success");
+    // Gerçek reqwest yok: detect adayları production detect'i ile, probe ise
+    // mock closure ile (auto_connect_with production akışının ta kendisi).
+    let outcome = auto_connect_with(
+        TEST_KEY,
+        xai_omni_keychain::detect_providers_from_key(TEST_KEY),
+        &catalog,
+        mock_probe_tie(),
+    )
+    .await
+    .expect("success");
 
     assert_eq!(outcome.provider_id, "openai");
     // base_url katalogdan çözülür (npm @ai-sdk/openai → sabit URL).
@@ -263,9 +274,14 @@ async fn auto_connect_empty_models_errors() {
     providers.insert("openai".to_string(), openai_catalog(IndexMap::new()));
     let catalog = catalog_with(providers);
 
-    let err = auto_connect_from_key(TEST_KEY, &catalog)
-        .await
-        .expect_err("empty models must error");
+    let err = auto_connect_with(
+        TEST_KEY,
+        xai_omni_keychain::detect_providers_from_key(TEST_KEY),
+        &catalog,
+        mock_probe_tie(),
+    )
+    .await
+    .expect_err("empty models must error");
     assert!(matches!(err, AutoConnectError::EmptyModels { .. }));
     let AutoConnectError::EmptyModels { provider_id } = &err else {
         unreachable!();
