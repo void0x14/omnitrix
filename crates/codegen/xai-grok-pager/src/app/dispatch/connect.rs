@@ -135,15 +135,21 @@ pub(super) fn dispatch_open_keys_manager(app: &mut AppView) -> Vec<Effect> {
         }
     };
 
-    let keychain_open = app.keychain.is_some();
-    let entries = match app.keychain.as_mut() {
-        Some(kc) => kc.list_keys().unwrap_or_default(),
-        None => vec![],
+    // Kilit durumu: handle yok → Unlock. Handle var ama TTL ile kilitliyse
+    // (`list_keys` → `Locked`) da Unlock — aksi halde boş Browse'ta açılır
+    // ve açma olanağı kalmaz.
+    let (entries, locked) = match app.keychain.as_mut() {
+        Some(kc) => match kc.list_keys() {
+            Ok(entries) => (entries, false),
+            Err(KeychainError::Locked) => (vec![], true),
+            Err(_) => (vec![], false),
+        },
+        None => (vec![], true),
     };
 
     if let Some(agent) = app.agents.get_mut(&id) {
         agent.active_modal = Some(ActiveModal::KeysManager {
-            state: Box::new(KeysManagerState::new(entries, !keychain_open)),
+            state: Box::new(KeysManagerState::new(entries, locked)),
         });
     }
     effects
@@ -308,7 +314,7 @@ pub(super) fn dispatch_keychain_update(
     api_key: Option<Zeroizing<String>>,
 ) -> Vec<Effect> {
     match app.keychain.as_mut() {
-        Some(kc) => match kc.update_key(id, model_id, base_url, api_key) {
+        Some(kc) => match kc.update_key(id, model_id, base_url, api_key.map(|k| k.to_string())) {
             Ok(()) => {
                 if let Err(e) = kc.save() {
                     tracing::warn!(target: "keys", error = %e, "keychain save failed after update");

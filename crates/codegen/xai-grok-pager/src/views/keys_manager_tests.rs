@@ -142,7 +142,7 @@ fn unlock_empty_password_rejected() {
 fn unlock_esc_closes_modal() {
     let mut state = unlock_state();
     let out = handle_keys_manager_event(&mut state, &Event::Key(key_esc()));
-    assert_eq!(out, KeysManagerOutcome::Close);
+    assert!(matches!(out, KeysManagerOutcome::Close));
 }
 
 #[test]
@@ -213,7 +213,7 @@ fn browse_esc_closes_modal() {
     // KeysManager tüm tuşları sahiplenir: Browse'ta Esc → Close.
     let mut state = browse_state(vec![sample_entry("openai", "sk-…a1b2")]);
     let out = handle_keys_manager_event(&mut state, &Event::Key(key_esc()));
-    assert_eq!(out, KeysManagerOutcome::Close);
+    assert!(matches!(out, KeysManagerOutcome::Close));
 }
 
 // ---------------------------------------------------------------------------
@@ -236,7 +236,7 @@ fn reveal_request_produces_reveal_action() {
 fn reveal_request_without_entries_is_ignored() {
     let mut state = browse_state(vec![]);
     let out = handle_keys_manager_event(&mut state, &Event::Key(key_char('r')));
-    assert_eq!(out, KeysManagerOutcome::Unchanged);
+    assert!(matches!(out, KeysManagerOutcome::Unchanged));
 }
 
 #[test]
@@ -254,7 +254,7 @@ fn reveal_shows_full_key_only_while_open() {
     );
     // Esc → Browse; tam key state'ten düşer.
     let out = handle_keys_manager_event(&mut state, &Event::Key(key_esc()));
-    assert_eq!(out, KeysManagerOutcome::Changed);
+    assert!(matches!(out, KeysManagerOutcome::Changed));
     assert_eq!(state.mode, KeysManagerMode::Browse);
     let text = render_text(&mut state);
     assert!(
@@ -268,7 +268,7 @@ fn reveal_other_keys_ignored() {
     let mut state = browse_state(vec![sample_entry("openai", "sk-…a1b2")]);
     state.apply_reveal("k_openai".to_string(), Zeroizing::new("sk-x".to_string()));
     let out = handle_keys_manager_event(&mut state, &Event::Key(key_char('q')));
-    assert_eq!(out, KeysManagerOutcome::Unchanged);
+    assert!(matches!(out, KeysManagerOutcome::Unchanged));
     assert!(matches!(state.mode, KeysManagerMode::Reveal { .. }));
 }
 
@@ -311,7 +311,7 @@ fn add_form_empty_key_rejected() {
     let _ = handle_keys_manager_event(&mut state, &Event::Key(key_char('a')));
     type_text(&mut state, "deepseek");
     let out = handle_keys_manager_event(&mut state, &Event::Key(key_enter()));
-    assert_eq!(out, KeysManagerOutcome::Changed);
+    assert!(matches!(out, KeysManagerOutcome::Changed));
     assert_eq!(state.mode, KeysManagerMode::Add, "key boşken formda kalır");
     assert!(state.error.is_some());
 }
@@ -321,7 +321,7 @@ fn add_form_esc_discards() {
     let mut state = browse_state(vec![sample_entry("openai", "sk-…a1b2")]);
     let _ = handle_keys_manager_event(&mut state, &Event::Key(key_char('a')));
     let out = handle_keys_manager_event(&mut state, &Event::Key(key_esc()));
-    assert_eq!(out, KeysManagerOutcome::Changed);
+    assert!(matches!(out, KeysManagerOutcome::Changed));
     assert_eq!(state.mode, KeysManagerMode::Browse);
 }
 
@@ -375,7 +375,7 @@ fn edit_esc_keeps_browse() {
     let mut state = browse_state(vec![sample_entry("openai", "sk-…a1b2")]);
     let _ = handle_keys_manager_event(&mut state, &Event::Key(key_char('e')));
     let out = handle_keys_manager_event(&mut state, &Event::Key(key_esc()));
-    assert_eq!(out, KeysManagerOutcome::Changed);
+    assert!(matches!(out, KeysManagerOutcome::Changed));
     assert_eq!(state.mode, KeysManagerMode::Browse);
 }
 
@@ -390,7 +390,7 @@ fn remove_requires_confirmation_then_emits_action() {
     assert!(matches!(state.mode, KeysManagerMode::ConfirmRemove { .. }));
     // Yanlış tuş → iptal.
     let out = handle_keys_manager_event(&mut state, &Event::Key(key_char('n')));
-    assert_eq!(out, KeysManagerOutcome::Changed);
+    assert!(matches!(out, KeysManagerOutcome::Changed));
     assert_eq!(state.mode, KeysManagerMode::Browse);
     // y → remove aksiyonu.
     let _ = handle_keys_manager_event(&mut state, &Event::Key(key_char('x')));
@@ -504,7 +504,7 @@ fn export_empty_password_rejected() {
     let _ = handle_keys_manager_event(&mut state, &Event::Key(key_char('E')));
     let _ = handle_keys_manager_event(&mut state, &Event::Key(key_enter()));
     let out = handle_keys_manager_event(&mut state, &Event::Key(key_enter()));
-    assert_eq!(out, KeysManagerOutcome::Changed);
+    assert!(matches!(out, KeysManagerOutcome::Changed));
     assert!(
         matches!(state.mode, KeysManagerMode::ExportPassword { .. }),
         "boş şifreyle export başlamamalı"
@@ -536,7 +536,7 @@ fn import_empty_path_rejected() {
     let mut state = browse_state(vec![sample_entry("openai", "sk-…a1b2")]);
     let _ = handle_keys_manager_event(&mut state, &Event::Key(key_char('I')));
     let out = handle_keys_manager_event(&mut state, &Event::Key(key_enter()));
-    assert_eq!(out, KeysManagerOutcome::Changed);
+    assert!(matches!(out, KeysManagerOutcome::Changed));
     assert_eq!(state.mode, KeysManagerMode::ImportPath);
     assert!(state.error.is_some());
 }
@@ -553,7 +553,7 @@ fn export_done_enter_returns_to_browse() {
         count: 1,
     };
     let out = handle_keys_manager_event(&mut state, &Event::Key(key_enter()));
-    assert_eq!(out, KeysManagerOutcome::Changed);
+    assert!(matches!(out, KeysManagerOutcome::Changed));
     assert_eq!(state.mode, KeysManagerMode::Browse);
 }
 

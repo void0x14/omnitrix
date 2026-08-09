@@ -760,7 +760,7 @@ fn handle_import_password(
         KeyCode::Enter => {
             let password = state.master_editor.text().to_string();
             if password.is_empty() {
-                state.error = Some("export şifresi boş olamaz".to_string());
+                state.error = Some("import şifresi boş olamaz".to_string());
                 return KeysManagerOutcome::Changed;
             }
             KeysManagerOutcome::Action(Action::KeychainImport {
@@ -800,7 +800,9 @@ pub fn handle_keys_manager_mouse(
             && row >= rect.y
             && row < rect.y + rect.height
         {
-            state.selected = i;
+            // `row_rects` yalnızca scroll_offset'ten sonraki satırları içerir;
+            // tıklanan görsel satırın gerçek girdi indeksi offset kaydırılır.
+            state.selected = state.scroll_offset + i;
             state.error = None;
             return KeysManagerOutcome::Changed;
         }
@@ -1570,7 +1572,7 @@ fn render_add_form(
         }
         let focused = i == state.form_field;
         let prefix = if focused { "\u{25b8} " } else { "  " };
-        let reveal = i == 1 && state.show_master;
+        let reveal = i != 1 || state.show_master;
         render_masked_input(
             buf,
             inner_x,
@@ -1635,7 +1637,7 @@ fn render_edit_form(
         }
         let focused = i == state.form_field;
         let prefix = if focused { "\u{25b8} " } else { "  " };
-        let reveal = i == 2 && state.show_master;
+        let reveal = i != 2 || state.show_master;
         render_masked_input(
             buf,
             inner_x,
@@ -1778,7 +1780,7 @@ fn render_password_input(
         KeysManagerMode::ExportPassword { .. } => {
             "Export şifresi (bu dosyayı açmak için kullanılır)"
         }
-        _ => "Export şifresi",
+        _ => "Import şifresi",
     };
     let mut y = content.y;
     render_line(
