@@ -61,6 +61,7 @@ members = [
     "crates/codegen/xai-hooks-plugins-types",
     "crates/codegen/xai-hunk-tracker",
     "crates/codegen/xai-mixpanel",
+    "crates/codegen/xai-omni-keychain",
     "crates/codegen/xai-prompt-queue",
     "crates/codegen/xai-ratatui-inline",
     "crates/codegen/xai-ratatui-textarea",
@@ -93,6 +94,7 @@ edition = "2024"
 license = "Apache-2.0"
 
 [workspace.dependencies]
+aes-gcm = { version = "0.10", features = ["aes", "std"] }
 agent-client-protocol = { version = "0.10.4", features = ["unstable"] }
 alacritty_terminal = "0.26.0"
 ansi-to-tui = "7.0.0"
