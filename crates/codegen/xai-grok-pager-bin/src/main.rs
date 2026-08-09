@@ -2049,7 +2049,7 @@ async fn async_main(args: PagerArgs) -> Result<()> {
                 trust: args.trust,
                 output_format: args.output_format,
                 json_schema,
-                model: args.model,
+                model: args.model.clone(),
                 rules: args.rules,
                 system_prompt_override: args.system_prompt_override.clone(),
                 continue_last_session: args.continue_last_session,
@@ -2071,6 +2071,7 @@ async fn async_main(args: PagerArgs) -> Result<()> {
                     args.background_wait_timeout_secs,
                 ),
                 auth_flags: xai_grok_pager::headless::HeadlessAuthFlags {
+                    model: args.model.clone(),
                     provider: args.provider.clone(),
                     api_key: args.api_key.clone(),
                     base_url: args.base_url.clone(),

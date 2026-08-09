@@ -614,6 +614,10 @@ fn wizard_apply_keychain_locked_reports_error_step() {
     };
     flow.key_mode = KeyMode::Keychain("k_bulunamayan".to_string());
     flow.step = ConnectStep::Apply;
+    // Gerçek Apply yolu: guard'ı geçen action `apply_pending = true` yapar;
+    // dispatch hata döndüğünde kilit temizlenmezse wizard sonraki Apply'de
+    // sessizce yutulurdu (regresyon testi — Error geçişi kilidi sıfırlamalı).
+    flow.apply_pending = true;
     let effects = dispatch_connect_provider(
         &mut app,
         "custom-openai".to_string(),

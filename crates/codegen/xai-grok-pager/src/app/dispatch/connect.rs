@@ -619,6 +619,10 @@ pub(super) fn dispatch_connect_provider(
                 app.show_toast(&format!("\u{2717} {msg}"));
                 with_connect_flow(app, |flow| {
                     flow.step = ConnectStep::Error(msg);
+                    // Uygula kilidini temizle: aksi halde Error → Provider
+                    // → tekrar Apply yolunda guard action'ı sessizce yutar
+                    // (modal kapanana kadar wizard kilitli kalır).
+                    flow.apply_pending = false;
                 });
                 return vec![];
             }

@@ -158,9 +158,13 @@ fn parse_prompt_json(json_str: &str) -> anyhow::Result<Vec<acp::ContentBlock>> {
 }
 
 /// `grok -p` tek tur akışında Omnitrix provider/keychain flag'leri
-/// (`--provider`, `--api-key`, `--base-url`, `--keychain-id`, `--category`).
+/// (`--model`, `--provider`, `--api-key`, `--base-url`, `--keychain-id`,
+/// `--category`).
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct HeadlessAuthFlags {
+    /// Model override; auth akışı çalıştığında keychain kaydı/katalog
+    /// çözümünden önce değerlendirilir (flag > kayıt > katalog).
+    pub model: Option<String>,
     /// Provider id (models.dev); `custom` + `--base-url` katalog aramaz.
     pub provider: Option<String>,
     /// Provider API key (keychain'e şifreli kaydedilir; TTY yoksa oturum-scoped).
