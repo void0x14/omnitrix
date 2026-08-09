@@ -279,7 +279,6 @@ impl FlowGovernor {
             let stage = self.machine.current_stage().unwrap_or(StageId::Do);
             let directive = self.stage_directive_effective(stage).to_string();
             let detail = format!("aşama {} tamamlanmadı; stop reddedildi", stage.as_str());
-            self.store.record(ArtifactId::DurationDecision, false, detail.clone());
             self.events.violation("stop", &detail);
             Some(directive)
         } else {
@@ -359,17 +358,10 @@ impl FlowGovernor {
                 let detail = match blocks_path {
                     Some(path) if Path::new(&path).is_file() => {
                         let graph = analyze(Path::new(&path));
-                        let summary = graph_summary(&graph);
-                        // execute_full için grafiğin kendisi de depolanır (JSON).
-                        let detail = serde_json::to_string(&graph).unwrap_or_else(|_| summary.clone());
-                        self.store.record(ArtifactId::ExecutionGraph, true, detail.clone());
-                        detail
+                        // execute_full için grafiğin kendisi depolanır (JSON).
+                        serde_json::to_string(&graph).unwrap_or_else(|_| graph_summary(&graph))
                     }
-                    _ => {
-                        let msg = "yapı taşı dosyası bulunamadı; sıralı yürütme (fail-safe)".to_string();
-                        self.store.record(ArtifactId::ExecutionGraph, true, msg.clone());
-                        msg
-                    }
+                    _ => "yapı taşı dosyası bulunamadı; sıralı yürütme (fail-safe)".to_string(),
                 };
                 return self.advance_after_artifact(current, ArtifactId::ExecutionGraph, detail);
             }
@@ -521,7 +513,31 @@ impl FlowGovernor {
         self.finish_stage_transition(stage, advanced)
     }
 
-    /// Notify aşaması: kanal raporu kaydedilir ve aşama ilerler (fail-soft).
+    /// Execute (duration=Full) sistemsel reddi: tüm blok görevlendirmeleri
+    /// başarısız olduğunda model uygulamalıdır. finalize_verify deseninde
+    /// bütçeyle sınırlıdır — limit aşılınca deterministik kilit açma (livelock
+    /// yok; aynı bloklar asla sınırsızca yeniden çalıştırılmaz).
+    pub fn reject_execute(&mut self, detail: &str) -> CheckpointResult {
+        let stage = self.machine.current_stage().unwrap_or(StageId::Execute);
+        if self.machine.bump_redirect(self.rules.max_redirects_per_stage) {
+            self.store.record(ArtifactId::WorkDone, false, detail.to_string());
+            let directive = format!(
+                "Sistem çoklu ajan yürütmesi başarısız: {detail}\n\
+                 Yapı taşlarını kendin uygula ve flow_checkpoint ile tekrar dene.\n\n{}",
+                self.stage_directive_effective(stage)
+            );
+            CheckpointResult::done(false, &stage, &directive, "sistem yürütmesi başarısız".to_string())
+        } else {
+            // Deterministik kilit açma: ret turları limiti doldu → kabul.
+            self.store.record(ArtifactId::WorkDone, true, "sistem yürütmesi ret limiti; model uyguladı (kilit açma)".to_string());
+            let advanced = self.machine.record_artifact(ArtifactId::WorkDone, true);
+            self.finish_stage_transition(stage, advanced)
+        }
+    }
+
+    /// Notify aşaması: kanal raporu kaydedilir ve aşama HER DURUMDA ilerler
+    /// (fail-soft — kanal hatası akışı asla kilitlemez; başarısızlık yalnızca
+    /// kanıt kaydına `ok=false` olarak düşer).
     pub fn finalize_notify(&mut self, report: &NotifyReport) -> CheckpointResult {
         let stage = self.machine.current_stage().unwrap_or(StageId::Notify);
         let ok = report.failed == 0;
@@ -537,7 +553,7 @@ impl FlowGovernor {
                 .join(", ")
         );
         self.store.record(ArtifactId::Notified, ok, detail.clone());
-        let advanced = self.machine.record_artifact(ArtifactId::Notified, ok);
+        let advanced = self.machine.record_artifact(ArtifactId::Notified, true);
         self.finish_stage_transition(stage, advanced)
     }
 }

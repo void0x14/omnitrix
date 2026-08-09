@@ -4216,7 +4216,10 @@ impl AgentView {
                 .session_id
                 .as_ref()
                 .and_then(|id| {
-                    crate::views::flow_detail::flow_events_path(&self.session.cwd, &id.0)
+                    crate::views::flow_detail::flow_events_path(
+                        self.session.cwd.to_str().unwrap_or(""),
+                        &id.0,
+                    )
                 });
             let events = match path {
                 Some(p) => {

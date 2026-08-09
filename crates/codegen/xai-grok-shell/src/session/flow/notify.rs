@@ -128,10 +128,10 @@ async fn send_sms(channel: &NotifyChannel, _title: &str, body: &str) -> Result<(
     let resp = client
         .post(&url)
         .form(&[
-            ("usercode", param(channel, "username")?),
-            ("password", param(channel, "password")?),
+            ("usercode", param(channel, "username")?.to_string()),
+            ("password", param(channel, "password")?.to_string()),
             ("msgheader", channel.params.get("msgheader").cloned().unwrap_or_else(|| "OMNITRIX".to_string())),
-            ("gsmno", param(channel, "gsmno")?),
+            ("gsmno", param(channel, "gsmno")?.to_string()),
             ("message", body.to_string()),
         ])
         .send()
@@ -151,9 +151,9 @@ async fn send_call(channel: &NotifyChannel, title: &str) -> Result<(), String> {
     let resp = client
         .post(&url)
         .form(&[
-            ("usercode", param(channel, "username")?),
-            ("password", param(channel, "password")?),
-            ("gsmno", param(channel, "gsmno")?),
+            ("usercode", param(channel, "username")?.to_string()),
+            ("password", param(channel, "password")?.to_string()),
+            ("gsmno", param(channel, "gsmno")?.to_string()),
             ("message", title.to_string()),
         ])
         .send()

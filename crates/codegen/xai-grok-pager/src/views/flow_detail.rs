@@ -13,7 +13,6 @@ use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph, Wrap};
 
-use crate::render::SafeBuf;
 use crate::theme::Theme;
 
 /// Son gösterilecek olay sayısı.
@@ -44,9 +43,13 @@ pub fn read_flow_events(path: &Path) -> Vec<FlowEventLine> {
         .lines()
         .filter_map(|l| {
             let v: serde_json::Value = serde_json::from_str(l).ok()?;
+            // Kanıt kayıtları (FlowStore) {seq,artifact,ok,detail} biçimindedir;
+            // olay kayıtları (FlowEvents) {event,detail} biçiminde. İkisini de
+            // anlamlı etiketle göster.
             let event = v
                 .get("event")
                 .and_then(|e| e.as_str())
+                .or_else(|| v.get("artifact").and_then(|a| a.as_str()))
                 .unwrap_or("flow.event")
                 .to_string();
             let detail = v
@@ -115,7 +118,7 @@ pub fn render_flow_detail(
     let paragraph = Paragraph::new(lines)
         .wrap(Wrap { trim: true })
         .alignment(Alignment::Left);
-    SafeBuf::new(&mut buf.as_mut_slice(), inner).render(paragraph);
+    paragraph.render(inner, buf);
     area
 }
 

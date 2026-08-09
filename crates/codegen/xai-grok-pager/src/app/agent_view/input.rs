@@ -1221,11 +1221,13 @@ impl AgentView {
                 Action::ToggleWorkflows
             });
         }
-        // Flow Governor paneli: Shift+F.
+        // Flow Governor paneli: F (bazı terminaller Shift+F'yi SHIFT modifier'ı
+        // ile iletir — ikisi de kabul edilir).
         if let Event::Key(key) = ev
             && key.kind != KeyEventKind::Release
             && key.code == KeyCode::Char('F')
-            && key.modifiers.is_empty()
+            && (key.modifiers.is_empty()
+                || key.modifiers == crossterm::event::KeyModifiers::SHIFT)
         {
             return InputOutcome::Action(Action::ToggleFlowDetail);
         }

@@ -2524,6 +2524,7 @@ impl SessionActor {
             for block_id in group.parallel {
                 let bridge = bridge.clone();
                 let problem = problem.clone();
+                let block_id_for_out = block_id.clone();
                 total += 1;
                 handles.push(tokio::spawn(async move {
                     let args = serde_json::json!({
@@ -2537,33 +2538,27 @@ impl SessionActor {
                         "subagent_type": "executor",
                         "run_in_background": false,
                     });
-                    match bridge.call("task", args, &format!("flow_block_{block_id}")).await {
-                        Ok(run) => format!("[{block_id}]\n{}", run.prompt_text),
-                        Err(err) => format!("[{block_id}] HATA: {err}"),
-                    }
+                    let out = match bridge.call("task", args, &format!("flow_block_{block_id}")).await {
+                        Ok(run) => run.prompt_text,
+                        Err(err) => format!("HATA: {err}"),
+                    };
+                    (block_id_for_out, out)
                 }));
             }
             for h in handles {
-                if let Ok(out) = h.await {
-                    if out.contains("HATA:") {
+                if let Ok((block_id, out)) = h.await {
+                    if out.starts_with("HATA:") {
                         failures += 1;
                     }
-                    outputs.push(out);
+                    outputs.push(format!("[{block_id}]\n{out}"));
                 }
             }
         }
         if failures == total && total > 0 {
-            // Tüm sistem görevlendirmeleri başarısız → model uygulamalı.
-            let result = crate::session::flow::governor::CheckpointResult {
-                accepted: false,
-                pending: false,
-                stage: "execute".to_string(),
-                directive: format!(
-                    "Sistem çoklu ajan yürütmesi başarısız ({failures}/{total}); yapı taşlarını \
-                     kendin uygula ve flow_checkpoint ile tekrar dene."
-                ),
-                detail: "sistem yürütmesi başarısız".to_string(),
-            };
+            // Tüm sistem görevlendirmeleri başarısız → model uygulamalı;
+            // bütçeyle sınırlı (reject_execute) — sınırsız yeniden çalıştırma YOK.
+            let detail = format!("{failures}/{total} blok görevlendirmesi başarısız");
+            let result = self.flow_governor.lock().reject_execute(&detail);
             return serde_json::to_string(&result).unwrap_or_else(|_| result.directive);
         }
         let combined = outputs.join("\n\n");

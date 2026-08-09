@@ -49,12 +49,17 @@ pub fn parse_verdict(raw_output: &str) -> JudgeVerdict {
     let reason = if accepted {
         "Yargıç onayladı (kanıt zorunluluğu karşılandı).".to_string()
     } else {
-        // Red gerekçesini çıkar: "RED" sonrası metin.
+        // Red gerekçesini çıkar: "RED" sonrası metin. Byte indeksi char
+        // sınırına taşabilir (Türkçe çok baytlı karakterler) — bu yüzden
+        // char-tabanlı dilimleme kullanılır; asla panic etmez (I6).
         let after = upper
             .find("RED")
-            .map(|i| raw_output[i..].trim())
-            .filter(|s| !s.is_empty())
-            .unwrap_or("yargıç reddetti; gerekçe çıktıda yok");
+            .map(|i| {
+                let n = upper[..i].chars().count();
+                raw_output.chars().skip(n).collect::<String>()
+            })
+            .filter(|s| !s.trim().is_empty())
+            .unwrap_or_else(|| "yargıç reddetti; gerekçe çıktıda yok".to_string());
         after.chars().take(400).collect()
     };
     JudgeVerdict { raw_output: raw_output.to_string(), accepted, reason }
@@ -64,9 +69,9 @@ pub fn parse_verdict(raw_output: &str) -> JudgeVerdict {
 /// metnini çıkarır. TaskOutput değilse `prompt_text` döner (modelin
 /// göreceği metin — yargıç için yeterli).
 pub fn extract_task_output_text(
-    run: &xai_grok_tools::registry::types::ToolRunResult,
+    run: &xai_grok_tools::types::output::ToolRunResult,
 ) -> String {
-    use xai_grok_tools::registry::types::ToolOutput;
+    use xai_grok_tools::types::output::ToolOutput;
     use xai_tool_types::TaskOutputOutput;
     match &run.output {
         ToolOutput::TaskOutput(TaskOutputOutput::Result(r)) => r.output.clone(),
