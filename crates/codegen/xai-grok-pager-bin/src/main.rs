@@ -1972,9 +1972,24 @@ async fn async_main(args: PagerArgs) -> Result<()> {
                 xai_grok_shell::instrumentation::finalize_and_exit(0);
             }
             Command::Connect(connect_args) => {
-                init_tracing_simple("cli");
-                let _otel_guard = xai_grok_telemetry::otel_layer::otel_guard();
-                return xai_grok_pager::connect_cmd::run(connect_args).await;
+                // Task 6: TTY + `--no-session` yoksa `grok connect` config +
+                // keychain yazımından sonra normal TUI başlatma akışına
+                // devam eder (oturum bağlanan modelle, key oturum süresince
+                // RAM'de açılır). Bu durumda CLI tracing/otel init'i atlanır
+                // — aşağıdaki TUI yolu kendi init'ini kurar.
+                let launch_session =
+                    xai_grok_pager::connect_cmd::session_will_launch(connect_args.no_session);
+                if !launch_session {
+                    init_tracing_simple("cli");
+                    let _otel_guard = xai_grok_telemetry::otel_layer::otel_guard();
+                    xai_grok_pager::connect_cmd::run(connect_args).await?;
+                    return Ok(());
+                }
+                if !xai_grok_pager::connect_cmd::run(connect_args).await? {
+                    return Ok(());
+                }
+                // Fall through to the interactive TUI startup path below
+                // (the connected model is already `[models] default`).
             }
             Command::Keys(keys_args) => {
                 init_tracing_simple("cli");

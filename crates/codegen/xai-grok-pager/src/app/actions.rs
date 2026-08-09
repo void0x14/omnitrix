@@ -400,6 +400,29 @@ pub enum Action {
         model_id: acp::ModelId,
         effort: Option<ReasoningEffort>,
     },
+    /// Open the provider connect wizard (modal). The full TUI wizard arrives
+    /// with Task 7-8; for now this sets the `connect_flow_open` placeholder
+    /// flag on [`AppView`](crate::app::app_view::AppView).
+    OpenConnectPicker,
+    /// Open the keys/keychain manager (TUI in Task 9; placeholder flag for
+    /// now).
+    OpenKeysManager,
+    /// Apply a provider connection: borrow the keychain key for this session
+    /// (in-memory only — config.toml never holds the plaintext key), persist
+    /// the `[model_providers.<id>]` + `[model.<id>]` config, and switch the
+    /// active session to `model_id`.
+    ConnectProvider {
+        provider_id: String,
+        /// Keychain category to look the entry up under; `None` = any.
+        category: Option<String>,
+        /// Model API id (routing slug), e.g. `gpt-4o`.
+        model_id: String,
+        /// Base URL override; `None` = resolve from the models.dev catalog.
+        base_url: Option<String>,
+    },
+    /// Borrow a keychain key for this session (agent access) and keep it
+    /// RAM-held on the app state for the session lifetime.
+    KeychainBorrow { key_id: String },
     /// Cancel the currently running turn.
     CancelTurn,
     /// User confirmed a cancel-turn choice from the panel.
@@ -1564,6 +1587,22 @@ pub enum Effect {
         /// `SwitchModelComplete` so `IncompatibleAgent` can roll back.
         prev_model_id: Option<acp::ModelId>,
     },
+    /// Persist a provider connection to config.toml (async IO): writes
+    /// `[model_providers.<id>]` (base_url + api_backend only — never a
+    /// plaintext key) + `[model.<id>]` and sets `[models] default`.
+    /// Completes with [`TaskResult::ProviderConnectPersisted`].
+    ConnectProviderWrite {
+        provider_id: String,
+        /// Model API id (routing slug).
+        model_id: String,
+        /// `[model.<key>]` config key (catalog key).
+        model_key: String,
+        /// Base URL override; `None` → resolved from the models.dev catalog.
+        base_url: Option<String>,
+        /// `None` → resolved from the catalog; falls back to
+        /// `ChatCompletions` for unknown/custom providers.
+        api_backend: Option<xai_grok_shell::sampling::ApiBackend>,
+    },
     /// Fetch changelog from CDN (both markdown + structured JSON).
     /// Runs off the render path via `spawn_blocking`. Result is cached
     /// on `AppView` so `/release-notes` and the welcome screen share it.
@@ -2380,6 +2419,15 @@ pub enum TaskResult {
         /// Forwarded from `Effect::SwitchModel.prev_model_id` for
         /// rollback on `IncompatibleAgent`.
         prev_model_id: Option<acp::ModelId>,
+    },
+    /// Provider connection persisted to config.toml
+    /// ([`Effect::ConnectProviderWrite`]). `result` carries the write outcome;
+    /// the runtime (borrowed) key is already live for this session either way.
+    ProviderConnectPersisted {
+        provider_id: String,
+        model_id: String,
+        model_key: String,
+        result: Result<(), String>,
     },
     /// Changelog fetched from CDN (both formats).
     ChangelogFetched {

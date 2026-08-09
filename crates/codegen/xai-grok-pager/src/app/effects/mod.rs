@@ -14,7 +14,7 @@ pub use helpers::ConversationsPartial;
 pub(super) use helpers::parse_session_load_running_prompt_id;
 pub(crate) use helpers::{
     EffectMeta, RestoreProgressMsg, SessionFlags, persist_permission_mode_and_notify,
-    persist_setting, sanitize_user_error,
+    persist_provider_connect, persist_setting, sanitize_user_error,
 };
 use helpers::*;
 use std::path::{Path, PathBuf};
@@ -2012,6 +2012,31 @@ pub(crate) fn execute(
                                 error,
                             }
                         }
+                    }
+                });
+        }
+        Effect::ConnectProviderWrite {
+            provider_id,
+            model_id,
+            model_key,
+            base_url,
+            api_backend,
+        } => {
+            tasks
+                .spawn(async move {
+                    let result = persist_provider_connect(
+                        &provider_id,
+                        &model_id,
+                        &model_key,
+                        base_url,
+                        api_backend,
+                    )
+                    .await;
+                    TaskResult::ProviderConnectPersisted {
+                        provider_id,
+                        model_id,
+                        model_key,
+                        result,
                     }
                 });
         }

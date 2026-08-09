@@ -18,15 +18,22 @@ use xai_grok_shell::util::models_dev::{
     ModelInfo, ProviderCatalog, api_backend_for_provider, base_url_for_provider, fetch_catalog,
     provider_models,
 };
+use xai_omni_keychain::Keychain;
 
 use crate::app::cli::ConnectArgs;
 
 /// `grok connect` giriş noktası.
 ///
 /// Flag verilmemişse (TTY'de) interaktif wizard'ın yerine geçici bir mesaj
-/// basılır ve `Ok(())` dönülür — wizard UI'ı TUI göreviyle (Task 7/8)
-/// birlikte gelecek; bu task'ta bozuk bir TUI stub'ı kurulmadı.
-pub async fn run(connect_args: ConnectArgs) -> anyhow::Result<()> {
+/// basılır — wizard UI'ı TUI göreviyle (Task 7/8) birlikte gelecek; bu
+/// task'ta bozuk bir TUI stub'ı kurulmadı.
+///
+/// Dönüş: `true` = oturum başlatma koşulları sağlandı (TTY + `--no-session`
+/// yok) ve config/keychain yazımı tamamlandı — çağıran normal TUI
+/// başlatma akışına devam etmeli (model `[models] default` olarak zaten
+/// yazıldı; borrow edilen key process runtime store'da). `false` = işlem
+/// burada bitti (wizard mesajı / `--no-session` / TTY değil).
+pub async fn run(connect_args: ConnectArgs) -> anyhow::Result<bool> {
     if !has_flags(&connect_args) {
         if std::io::stdin().is_terminal() {
             println!("interaktif connect wizard, TUI göreviyle (Task 7/8) birlikte geliyor.");
@@ -37,10 +44,16 @@ pub async fn run(connect_args: ConnectArgs) -> anyhow::Result<()> {
                 "hiçbir flag verilmedi; en azından --provider + --api-key (veya --keychain-id) gerekli"
             );
         }
-        return Ok(());
+        return Ok(false);
     }
     let grok_home = xai_grok_shell::util::grok_home::grok_home();
     programmatic_connect(&grok_home, &connect_args).await
+}
+
+/// Oturum başlatma koşulları: `--no-session` yok VE stdin bir TTY.
+/// Hem `connect_cmd` hem bin/main.rs aynı kararı tek yerden alır.
+pub fn session_will_launch(no_session: bool) -> bool {
+    !no_session && std::io::stdin().is_terminal()
 }
 
 /// Flag'lerden en az biri verilmiş mi? (wizard-dan mı programatik mi?)
@@ -53,8 +66,9 @@ fn has_flags(args: &ConnectArgs) -> bool {
         || args.category.is_some()
 }
 
-/// Programatik akış: key → provider/model çözümleme → config yazımı.
-async fn programmatic_connect(grok_home: &Path, args: &ConnectArgs) -> anyhow::Result<()> {
+/// Programatik akış: key → provider/model çözümleme → config yazımı →
+/// (TTY + `--no-session` yoksa) oturum key'ini runtime store'a itme.
+async fn programmatic_connect(grok_home: &Path, args: &ConnectArgs) -> anyhow::Result<bool> {
     // 1) Keychain'i aç (key ekleme veya keychain_id okuma için şart).
     let mut kc = crate::keys_cmd::prompt_and_open_keychain(grok_home)?;
 
@@ -157,11 +171,38 @@ async fn programmatic_connect(grok_home: &Path, args: &ConnectArgs) -> anyhow::R
     println!("bağlandı: {provider_id} ({base_url})");
     println!("model: {model} → [{model_key}] (varsayılan)");
     println!("keychain kaydı: {key_id} (kategori: {category})");
-    if !args.no_session && std::io::stdin().is_terminal() {
-        println!(
-            "Ajan oturumu şöyle başlatılır: grok --model {model_key} (tam oturum entegrasyonu TUI göreviyle geliyor)"
-        );
+
+    // 10) Oturum başlatma (Task 6 ratified gap closure): TTY + `--no-session`
+    //     yoksa borrow edilen key'i process runtime store'a it (config'e düz
+    //     metin yazılmaz) ve normal TUI akışına devam et — shell açılışta
+    //     `[models] default`'u çözer, `resolve_credentials` runtime key'i
+    //     görür (config.toml'da api_key YOK).
+    //
+    //     NOT: client tipi Generic kalır (main.rs zaten `set_client_name`
+    //     çağırdı — OnceLock ikinci set'te panic eder); yalnızca User-Agent
+    //     origin'ini etkiler, oturum akışını bozmaz.
+    if session_will_launch(args.no_session) {
+        push_runtime_key(&mut kc, &key_id, &model)?;
+        return Ok(true);
     }
+    println!(
+        "Ajan oturumu şöyle başlatılır: grok --model {model_key} (tam oturum entegrasyonu TUI göreviyle geliyor)"
+    );
+    Ok(false)
+}
+
+/// Keychain'den borrow edilen key'i process runtime store'a iter. Key RAM'de
+/// TTL'li yaşar (`BorrowedKey` drop'ta sıfırlanır; store kopyası tıpkı
+/// `set_process_static_api_key` gibi `String`'dir); config.toml'a asla
+/// yazılmaz. Chat seam: `resolve_credentials` → `own_credential` fallback;
+/// tools/voice seam: shell `sync_process_static_api_key` aynı fallback'ten
+/// beslenir.
+fn push_runtime_key(kc: &mut Keychain, key_id: &str, model: &str) -> anyhow::Result<()> {
+    let borrowed = kc.borrow(key_id.to_string())?;
+    xai_grok_shell::auth::runtime_key::set_runtime_model_key(
+        model,
+        Some(borrowed.get().to_string()),
+    );
     Ok(())
 }
 
@@ -189,6 +230,28 @@ async fn resolve_catalog(
         (None, false) => anyhow::bail!(
             "'{provider_id}' models.dev kataloğunda yok; --base-url ile custom endpoint kullanın"
         ),
+    }
+}
+
+/// `resolve_catalog`'un `ConnectArgs`-bağımsız çekirdeği — TUI
+/// `Effect::ConnectProviderWrite` akışı (`persist_provider_connect`) aynı
+/// katalog çözümlemesini `--base-url` bayrağı olmadan kullanır.
+pub(crate) async fn catalog_for_provider(
+    grok_home: &Path,
+    provider_id: &str,
+) -> anyhow::Result<(Option<ProviderCatalog>, IndexMap<String, ModelInfo>)> {
+    if provider_id == "custom" {
+        return Ok((None, IndexMap::new()));
+    }
+    let cache = fetch_catalog(&reqwest::Client::new(), grok_home, false)
+        .await
+        .context("models.dev kataloğu çözümlenemedi")?;
+    match cache.providers.get(provider_id) {
+        Some(entry) => Ok((
+            Some(entry.clone()),
+            provider_models(&cache, provider_id).cloned().unwrap_or_default(),
+        )),
+        None => Ok((None, IndexMap::new())),
     }
 }
 
@@ -272,7 +335,8 @@ pub fn apply_provider_config(
 /// Bölümleri `~/.grok/config.toml`'a atomik yazar (temp + rename; unix'te
 /// mevcut dosya modunu korur). Bozuk TOML üzerine asla yazmaz.
 /// `models.default` ayrıca [`set_default_model`] ile yazılır (campaign kanalı).
-async fn write_provider_config(
+/// TUI `Effect::ConnectProviderWrite` akışı da aynı helper'ı kullanır.
+pub(crate) async fn write_provider_config(
     grok_home: &Path,
     provider_id: &str,
     base_url: &str,

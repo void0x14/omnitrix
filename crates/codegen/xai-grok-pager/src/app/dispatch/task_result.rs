@@ -1219,5 +1219,39 @@ pub(super) fn dispatch_task_result(result: TaskResult, app: &mut AppView) -> Vec
             app.show_toast(&format!("\u{2717} Could not save {key}: {scrubbed}"));
             vec![]
         }
+        TaskResult::ProviderConnectPersisted {
+            provider_id,
+            model_id,
+            model_key,
+            result,
+        } => {
+            match result {
+                Ok(()) => {
+                    tracing::info!(
+                        target: "connect",
+                        provider = %provider_id,
+                        model = %model_id,
+                        model_key = %model_key,
+                        "provider connection persisted",
+                    );
+                    // Başarı toast'ı dispatch_connect_provider'da gösterildi;
+                    // wizard placeholder'ı kapanır (Task 7-8 gerçek wizard).
+                    app.connect_flow_open = false;
+                }
+                Err(error) => {
+                    tracing::warn!(
+                        target: "connect",
+                        provider = %provider_id,
+                        model = %model_id,
+                        %error,
+                        "provider connection persist failed; runtime key stays live for this session",
+                    );
+                    app.show_toast(&format!(
+                        "\u{2717} bağlantı config'e yazılamadı: {error} (key bu oturumda yine de aktif)"
+                    ));
+                }
+            }
+            vec![]
+        }
     }
 }

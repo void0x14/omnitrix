@@ -744,6 +744,7 @@ pub(crate) async fn run(
         connection.models,
         connection.available_commands,
     );
+    app.auth_manager = Some(connection.auth_manager.clone());
     app.tracing_rx = Some(tracing_handle.rx);
     // Startup terminal height for the auto-compact derivation; kept fresh by
     // `Event::Resize` from here on. 0 (probe failure) never forces compact.

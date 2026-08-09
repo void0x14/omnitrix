@@ -1,6 +1,7 @@
 //! Tests for the dispatch module tree: shared fixtures and per-domain test modules.
 mod auth;
 mod billing;
+mod connect;
 mod cta_e2e;
 mod dashboard;
 mod jump;
@@ -274,6 +275,11 @@ fn test_app() -> AppView {
         voice_auth: None,
         voice_cmd_tx: None,
         voice_state: VoiceState::Idle,
+        auth_manager: None,
+        connect_flow_open: false,
+        keys_manager_open: false,
+        keychain: None,
+        keychain_borrow: None,
     }
 }
 /// Build a default `AgentSession` for

@@ -4345,11 +4345,13 @@ impl ModelEntry {
             api_base_url: entry.api_base_url.clone(),
         }
     }
-    /// Non-empty `api_key`, else first non-empty resolved `env_key`.
-    /// `None` → fall through to session / global key. Static only: never
-    /// consults auth-provider tokens.
+    /// Non-empty `api_key`, else first non-empty resolved `env_key`, else
+    /// the process-scoped runtime key (`auth::runtime_key` — keychain-borrowed
+    /// oturum key'i; config'e düz metin yazılmaz). `None` → fall through to
+    /// session / global key. Static only: never consults auth-provider tokens.
     pub(crate) fn own_credential(&self) -> Option<String> {
         first_own_credential(self.api_key.as_deref(), self.env_key.as_ref())
+            .or_else(|| crate::auth::runtime_key::runtime_model_key(&self.info.model))
     }
     /// The provider governing this model's bearer: `None` when a static
     /// `api_key`/`env_key` resolves. The turn paths consult this, so a
@@ -4747,8 +4749,9 @@ pub(crate) fn first_own_credential(
         .map(str::to_owned)
         .or_else(|| env_key.and_then(EnvKeys::resolve_value))
 }
-/// Priority: model api_key/env_key > cached auth-provider token > session
-/// token > XAI_API_KEY > live key pool (`key_ingestion`).
+/// Priority: model api_key/env_key > runtime key (keychain-borrowed, in-memory)
+/// > cached auth-provider token > session token > XAI_API_KEY > live key pool
+/// (`key_ingestion`).
 pub fn resolve_credentials(model: &ModelEntry, session_key: Option<&str>) -> ResolvedCredentials {
     let info = model.info();
     let (api_key, base_url, auth_type) = if let Some(key) = model.own_credential() {
@@ -6884,6 +6887,52 @@ reasoning_effort = "low"
         let byok = test_model_entry("m", "https://example.com/v1", Some("key"), None, None);
         let creds = resolve_credentials(&byok, Some("tok"));
         assert_eq!(creds.auth_type, AuthType::ApiKey);
+    }
+    /// Keychain-borrowed runtime key feeds the chat credential seam without
+    /// any config.toml plaintext: a model with no api_key/env_key resolves
+    /// the runtime key (ApiKey auth against its base_url).
+    #[test]
+    #[serial]
+    fn resolve_credentials_uses_runtime_key_fallback() {
+        use xai_chat_state::AuthType;
+        let model_id = "runtime-key-model";
+        crate::auth::runtime_key::clear_runtime_keys();
+        let model = test_model_entry(model_id, "https://example.com/v1", None, None, None);
+        assert!(!model.has_own_credentials());
+        crate::auth::runtime_key::set_runtime_model_key(model_id, Some("kc-key".to_string()));
+        assert!(model.has_own_credentials());
+        let creds = resolve_credentials(&model, None);
+        assert_eq!(creds.auth_type, AuthType::ApiKey);
+        assert_eq!(creds.api_key.as_deref(), Some("kc-key"));
+        crate::auth::runtime_key::clear_runtime_keys();
+    }
+    /// A configured `api_key` (config.toml static) outranks the runtime key.
+    #[test]
+    #[serial]
+    fn resolve_credentials_config_api_key_beats_runtime_key() {
+        let model_id = "runtime-key-model-2";
+        crate::auth::runtime_key::clear_runtime_keys();
+        crate::auth::runtime_key::set_runtime_model_key(model_id, Some("kc-key".to_string()));
+        let model = test_model_entry(model_id, "https://example.com/v1", Some("cfg-key"), None, None);
+        let creds = resolve_credentials(&model, None);
+        assert_eq!(creds.api_key.as_deref(), Some("cfg-key"));
+        crate::auth::runtime_key::clear_runtime_keys();
+    }
+    /// Session token still outranks the runtime key (xAI-native first-party
+    /// path unchanged; BYOK users pick `preferred_method = api_key`, mirroring
+    /// the existing env-key precedence semantics).
+    #[test]
+    #[serial]
+    fn resolve_credentials_session_beats_runtime_key() {
+        use xai_chat_state::AuthType;
+        let model_id = "runtime-key-model-3";
+        crate::auth::runtime_key::clear_runtime_keys();
+        crate::auth::runtime_key::set_runtime_model_key(model_id, Some("kc-key".to_string()));
+        let model = test_model_entry(model_id, "https://example.com/v1", None, None, None);
+        let creds = resolve_credentials(&model, Some("session-jwt"));
+        assert_eq!(creds.auth_type, AuthType::SessionToken);
+        assert_eq!(creds.api_key.as_deref(), Some("session-jwt"));
+        crate::auth::runtime_key::clear_runtime_keys();
     }
     /// Regression: BYOK env-var auth must stay ApiKey even when signed in,
     /// otherwise the bearer resolver overwrites the BYOK key with a session JWT.

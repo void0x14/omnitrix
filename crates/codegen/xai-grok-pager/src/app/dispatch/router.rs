@@ -4,6 +4,10 @@ use super::auth::{
     dispatch_switch_account,
 };
 use super::billing::dispatch_open_supergrok_url;
+use super::connect::{
+    dispatch_connect_provider, dispatch_keychain_borrow, dispatch_open_connect_picker,
+    dispatch_open_keys_manager,
+};
 use super::ctx::{
     active_agent_session_id, get_active_agent_mut, navigate_clearing_selection, open_url_or_show,
     sync_sleep_inhibitor, with_active_agent, with_scrollback,
@@ -850,6 +854,15 @@ pub(crate) fn dispatch(action: Action, app: &mut AppView) -> Vec<Effect> {
             }]
         }
         Action::NextModel => vec![],
+        Action::OpenConnectPicker => dispatch_open_connect_picker(app),
+        Action::OpenKeysManager => dispatch_open_keys_manager(app),
+        Action::ConnectProvider {
+            provider_id,
+            category,
+            model_id,
+            base_url,
+        } => dispatch_connect_provider(app, provider_id, category, model_id, base_url),
+        Action::KeychainBorrow { key_id } => dispatch_keychain_borrow(app, key_id),
         Action::SwitchModel { model_id, effort } => {
             let ActiveView::Agent(id) = app.active_view else {
                 return vec![];

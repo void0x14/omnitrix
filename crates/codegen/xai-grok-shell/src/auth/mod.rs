@@ -13,6 +13,7 @@ pub(crate) mod manager;
 mod model;
 pub mod oidc;
 pub(crate) mod recovery;
+pub mod runtime_key;
 pub(crate) mod refresh;
 pub(crate) mod single_flight;
 mod storage;

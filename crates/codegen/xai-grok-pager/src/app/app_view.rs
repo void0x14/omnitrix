@@ -592,6 +592,26 @@ pub struct AppView {
     /// (e.g. `Agent`) afterwards. `None` at startup so the normal
     /// login-then-load flow is preserved.
     pub auth_return_view: Option<ActiveView>,
+    /// The shell's `AuthManager`, shared so connect dispatch can push the
+    /// borrowed keychain key into the process static key (tools/voice bearer
+    /// fallthrough) without a new trait seam. Set by `event_loop::run` right
+    /// after [`Self::new`] (mirrors the voice channel's `auth_manager`
+    /// clone). `None` only before wiring / in tests.
+    pub(crate) auth_manager: Option<std::sync::Arc<xai_grok_shell::auth::AuthManager>>,
+    /// Provider-connect wizard placeholder. The full TUI wizard state machine
+    /// arrives with Task 7-8; this flag keeps the action dispatchable and
+    /// forward-compatible (the wizard will replace the flag).
+    pub(crate) connect_flow_open: bool,
+    /// Keys/keychain manager placeholder. The TUI keys manager arrives with
+    /// Task 9; this flag keeps `Action::OpenKeysManager` dispatchable.
+    pub(crate) keys_manager_open: bool,
+    /// Open keychain handle (RAM master key cached, TTL'd). `None` = absent
+    /// or locked — the unlock UI (Task 7-8) populates it; dispatch borrows
+    /// from it RAM-only (never touches the filesystem).
+    pub(crate) keychain: Option<xai_omni_keychain::Keychain>,
+    /// Session-lifetime keychain borrow stash (`Action::KeychainBorrow`).
+    /// The `BorrowedKey` zeroizes its RAM copy on drop.
+    pub(crate) keychain_borrow: Option<xai_omni_keychain::BorrowedKey>,
     /// Per-agent views (keyed by AgentId).
     pub agents: IndexMap<AgentId, AgentView>,
     /// Monotonically increasing counter for agent ID allocation.
@@ -1374,6 +1394,11 @@ impl AppView {
         Self {
             active_view: ActiveView::Welcome,
             auth_return_view: None,
+            auth_manager: None,
+            connect_flow_open: false,
+            keys_manager_open: false,
+            keychain: None,
+            keychain_borrow: None,
             agents: IndexMap::new(),
             next_agent_id: 0,
             models,

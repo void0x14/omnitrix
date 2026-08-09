@@ -1173,6 +1173,61 @@ pub(crate) async fn persist_setting(
         other => Err(format!("unknown setting key for persist: `{other}`")),
     }
 }
+/// Persist a provider connection to config.toml for
+/// [`Effect::ConnectProviderWrite`]: `[model_providers.<id>]` (base_url +
+/// api_backend — ASLA api_key) + `[model.<key>]` + `[models] default`.
+///
+/// `base_url` / `api_backend` `None` ise models.dev kataloğundan çözülür
+/// (bilinmeyen/custom provider → `ChatCompletions` varsayımı). İki yazımlı:
+/// önce provider bölümleri (atomik), sonra `set_default_model` — CLI
+/// `connect_cmd` akışıyla aynı helper'lar.
+pub(crate) async fn persist_provider_connect(
+    provider_id: &str,
+    model: &str,
+    model_key: &str,
+    base_url: Option<String>,
+    api_backend: Option<xai_grok_shell::sampling::ApiBackend>,
+) -> Result<(), String> {
+    use xai_grok_shell::sampling::ApiBackend;
+    use xai_grok_shell::util::models_dev::{api_backend_for_provider, base_url_for_provider};
+    let grok_home = xai_grok_shell::util::grok_home::grok_home();
+    let (base_url, api_backend) = match base_url {
+        Some(url) => (url, api_backend.unwrap_or(ApiBackend::ChatCompletions)),
+        None => {
+            let (entry, _) = crate::connect_cmd::catalog_for_provider(&grok_home, provider_id)
+                .await
+                .map_err(|e| e.to_string())?;
+            let url = entry
+                .as_ref()
+                .and_then(base_url_for_provider)
+                .ok_or_else(|| {
+                    format!(
+                        "'{provider_id}' için base URL çözülemedi; --base-url ile custom endpoint kullanın"
+                    )
+                })?
+                .to_owned();
+            let backend = entry
+                .as_ref()
+                .map(api_backend_for_provider)
+                .unwrap_or(ApiBackend::ChatCompletions);
+            (url, backend)
+        }
+    };
+    crate::connect_cmd::write_provider_config(
+        &grok_home,
+        provider_id,
+        &base_url,
+        &api_backend,
+        model_key,
+        model,
+    )
+    .await
+    .map_err(|e| e.to_string())?;
+    xai_grok_shell::util::config::set_default_model(model_key.to_owned())
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(())
+}
 /// Body for `Effect::PersistPermissionMode`. Factored out for testability.
 ///
 /// 1. Persist `ui.permission_mode` to disk.
