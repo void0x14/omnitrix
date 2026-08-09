@@ -423,6 +423,13 @@ pub enum Action {
     /// Borrow a keychain key for this session (agent access) and keep it
     /// RAM-held on the app state for the session lifetime.
     KeychainBorrow { key_id: String },
+    /// Fetch a custom provider's `/models` list for the connect wizard's
+    /// Model step (offline/custom fallback: Model adımına boş liste
+    /// girildiğinde bir kez tetiklenir). Dispatch resolves the optional key
+    /// from the wizard flow (keychain borrow / draft / env) and pushes
+    /// [`Effect::FetchProviderModels`]; completes with
+    /// [`TaskResult::ProviderModelsFetched`].
+    FetchProviderModels { base_url: String },
     /// Cancel the currently running turn.
     CancelTurn,
     /// User confirmed a cancel-turn choice from the panel.
@@ -1615,16 +1622,7 @@ pub enum Effect {
     /// logged or persisted.
     FetchProviderModels {
         base_url: String,
-        api_key: Option<String>,
-    },
-    /// Fetch a custom (openai-compatible) provider's `/models` list for the
-    /// `/connect` wizard's Model step (async). Dispatch resolves the key from
-    /// the wizard flow (keychain borrow / draft / env) and pushes
-    /// [`Effect::FetchProviderModels`]; completes with
-    /// [`TaskResult::ProviderModelsFetched`].
-    FetchProviderModels {
-        /// `GET {base_url}/models`; `data[].id` → wizard model listesi.
-        base_url: String,
+        api_key: Option<zeroize::Zeroizing<String>>,
     },
     /// Fetch changelog from CDN (both markdown + structured JSON).
     /// Runs off the render path via `spawn_blocking`. Result is cached

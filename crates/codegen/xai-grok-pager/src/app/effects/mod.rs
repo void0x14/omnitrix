@@ -1902,7 +1902,7 @@ pub(crate) fn execute(
                     let result = xai_grok_shell::util::models_dev::fetch_provider_models(
                             &reqwest::Client::new(),
                             &base_url,
-                            api_key.as_deref(),
+                            api_key.as_deref().map(String::as_str),
                         )
                         .await
                         .map_err(|e| e.to_string());

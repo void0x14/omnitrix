@@ -305,7 +305,7 @@ fn resolve_wizard_key(
                 Ok((
                     key.to_string(),
                     "draft".to_string(),
-                    category.unwrap_or_default().to_string(),
+                    category.unwrap_or("personal").to_string(),
                     true,
                 ))
             }
@@ -316,7 +316,7 @@ fn resolve_wizard_key(
             Ok((
                 value,
                 name.clone(),
-                category.unwrap_or_default().to_string(),
+                category.unwrap_or("personal").to_string(),
                 true,
             ))
         }
@@ -343,7 +343,10 @@ pub(super) fn dispatch_fetch_provider_models(app: &mut AppView, base_url: String
         KeyMode::Env(name) => Ok(std::env::var(name).ok()),
     };
     match api_key {
-        Ok(key) => vec![Effect::FetchProviderModels { base_url, api_key: key }],
+        Ok(key) => vec![Effect::FetchProviderModels {
+            base_url,
+            api_key: key.map(zeroize::Zeroizing::new),
+        }],
         Err(msg) => {
             with_connect_flow(app, |flow| {
                 flow.models_fetch_state = ModelFetchState::Failed(msg);
