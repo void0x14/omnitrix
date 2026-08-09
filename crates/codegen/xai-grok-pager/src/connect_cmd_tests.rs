@@ -5,6 +5,51 @@
 use super::*;
 use indexmap::IndexMap;
 use xai_grok_shell::sampling::ApiBackend;
+use xai_grok_shell::util::auto_connect::AutoConnectOutcome;
+use xai_grok_shell::util::models_dev::{CacheSource, CatalogCache, ProviderCatalog};
+
+/// Katalogda openai provider'ı (npm @ai-sdk/openai → responses backend).
+fn openai_catalog(models: IndexMap<String, ModelInfo>) -> CatalogCache {
+    CatalogCache {
+        providers: IndexMap::from([(
+            "openai".to_string(),
+            ProviderCatalog {
+                id: "openai".to_string(),
+                name: "OpenAI".to_string(),
+                env: vec!["OPENAI_API_KEY".to_string()],
+                npm: Some("@ai-sdk/openai".to_string()),
+                api: Some("https://api.openai.com".to_string()),
+                doc: None,
+                models,
+            },
+        )]),
+        fetched_at: None,
+        source: CacheSource::Offline,
+    }
+}
+
+/// Auto-connect outcome yardımcısı: winner openai, models `ids` sırasıyla.
+fn outcome_with(models: &[&str]) -> AutoConnectOutcome {
+    AutoConnectOutcome {
+        provider_id: "openai".to_string(),
+        base_url: "https://api.openai.com/v1".to_string(),
+        region: None,
+        models: models
+            .iter()
+            .map(|id| ModelInfo {
+                id: (*id).to_string(),
+                name: (*id).to_string(),
+                description: None,
+                reasoning: false,
+                tool_call: true,
+                temperature: true,
+                limit: None,
+                cost: None,
+            })
+            .collect(),
+        candidates_considered: 1,
+    }
+}
 
 fn models(ids: &[&str]) -> IndexMap<String, ModelInfo> {
     ids.iter()
@@ -139,6 +184,7 @@ fn api_backend_str_round_trips_snake_case() {
 #[test]
 fn has_flags_detects_programmatic_usage() {
     let empty = || ConnectArgs {
+        auto: false,
         provider: None,
         api_key: None,
         base_url: None,
@@ -149,6 +195,10 @@ fn has_flags_detects_programmatic_usage() {
     };
     assert!(!has_flags(&empty()));
     assert!(has_flags(&ConnectArgs {
+        auto: true,
+        ..empty()
+    }));
+    assert!(has_flags(&ConnectArgs {
         provider: Some("openai".to_string()),
         ..empty()
     }));
@@ -158,5 +208,77 @@ fn has_flags_detects_programmatic_usage() {
             ..empty()
         }),
         "--model alone counts as programmatic"
+    );
+}
+
+/// Winner outcome → config girdileri: provider/base URL/backend doğru,
+/// model `--model` ile seçilir.
+#[test]
+fn plan_from_auto_outcome_maps_winner_and_backend() {
+    let catalog = openai_catalog(models(&["gpt-4o", "gpt-4o-mini"]));
+    let outcome = outcome_with(&["gpt-4o", "gpt-4o-mini"]);
+    let plan = plan_from_auto_outcome(&outcome, &catalog, Some("gpt-4o-mini"))
+        .expect("explicit model must resolve");
+    assert_eq!(plan.provider_id, "openai");
+    assert_eq!(plan.base_url, "https://api.openai.com/v1");
+    assert_eq!(plan.api_backend, ApiBackend::Responses);
+    assert_eq!(plan.model, "gpt-4o-mini");
+    assert_eq!(plan.model_key, "omni-openai-gpt-4o-mini");
+}
+
+/// `--model` winner model listesinde yoksa hata; katalogda olsa bile
+/// (başka provider) winner listesiyle doğrulanır.
+#[test]
+fn plan_from_auto_outcome_validates_explicit_model_against_winner() {
+    let catalog = openai_catalog(models(&["gpt-4o"]));
+    let outcome = outcome_with(&["gpt-4o"]);
+    let err = plan_from_auto_outcome(&outcome, &catalog, Some("deepseek-chat"))
+        .expect_err("model outside winner list must fail");
+    assert!(err.to_string().contains("deepseek-chat"));
+    assert!(!err.to_string().contains("sk-"), "key must not leak: {err}");
+}
+
+/// `--model` verilmezse tek model seçilir; çokluysa ilk model seçilir
+/// (manuel akıştaki `resolve_model_id` davranışı).
+#[test]
+fn plan_from_auto_outcome_picks_single_or_first_model_when_unset() {
+    let catalog = openai_catalog(models(&["only-model"]));
+    let single = plan_from_auto_outcome(&outcome_with(&["only-model"]), &catalog, None)
+        .expect("single model auto-picks");
+    assert_eq!(single.model, "only-model");
+    let multi = plan_from_auto_outcome(&outcome_with(&["first", "second"]), &catalog, None)
+        .expect("first model auto-picks");
+    assert_eq!(multi.model, "first");
+    assert_eq!(multi.model_key, "omni-openai-first");
+}
+
+/// Auto plan girdileriyle yazılan config bölümleri winner provider'ı taşır
+/// ve API key içermez (güvenlik sözleşmesi).
+#[test]
+fn plan_from_auto_outcome_config_write_never_contains_api_key() {
+    let catalog = openai_catalog(models(&["gpt-4o"]));
+    let plan = plan_from_auto_outcome(&outcome_with(&["gpt-4o"]), &catalog, None)
+        .expect("plan resolves");
+    let mut doc = DocumentMut::new();
+    apply_provider_config(
+        &mut doc,
+        &plan.provider_id,
+        &plan.base_url,
+        &plan.api_backend,
+        &plan.model_key,
+        &plan.model,
+    );
+    assert_eq!(
+        doc["model_providers"]["openai"]["base_url"].as_str(),
+        Some("https://api.openai.com/v1")
+    );
+    assert_eq!(
+        doc["model"]["omni-openai-gpt-4o"]["model_provider"].as_str(),
+        Some("openai")
+    );
+    let serialized = doc.to_string();
+    assert!(
+        !serialized.contains("api_key") && !serialized.contains("sk-"),
+        "config.toml must never carry the API key:\n{serialized}"
     );
 }

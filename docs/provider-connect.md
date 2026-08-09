@@ -82,6 +82,7 @@ grok connect --provider openai --api-key sk-... --model gpt-4o
 
 | Flag | Etki |
 |---|---|
+| `--auto` | API key'i canlı probe ile otomatik provider tespiti (aşağıda §3.1). `--api-key` zorunlu; `--provider`/`--base-url`/`--keychain-id` ile çakışır |
 | `--provider <id>` | models.dev provider id (`openai`, `anthropic`, `deepseek`, ...) |
 | `--api-key <key>` | Keychain'e şifreli kaydedilir |
 | `--base-url <url>` | Custom endpoint. Katalogda olmayan id için **zorunlu** |
@@ -118,6 +119,48 @@ bağlandı: openai (https://api.openai.com/v1)
 model: gpt-4o → [omni-openai-gpt-4o] (varsayılan)
 keychain kaydı: k_1 (kategori: personal)
 Ajan oturumu şöyle başlatılır: grok --model omni-openai-gpt-4o
+```
+
+## 3.1 `grok connect --auto` — otomatik provider tespiti
+
+`--provider` bilmeden, yalnızca API key ile bağlanır. Key önce keychain
+detect'inden geçer (prefix tabanlı adaylar), adaylar models.dev katalogundan
+çözülür, her adaya **canlı probe** atılır (kısa timeout) ve kazanan provider
++ base URL seçilir:
+
+```sh
+grok connect --auto --api-key sk-...
+grok connect --auto --api-key sk-... --model gpt-5
+grok connect --auto --api-key sk-... --no-session
+```
+
+| Kural | Davranış |
+|---|---|
+| `--api-key` | **Zorunlu** — `--auto` tek başına parse-time hatası verir |
+| `--provider` / `--base-url` / `--keychain-id` | `--auto` ile **çakışır**: her iki kaynak birlikte verilirse hiçbir yan etki olmadan (config/keychain yazılmadan) deterministik hata |
+| `--model` | Opsiyonel; winner'ın model listesine karşı doğrulanır. Verilmezse tek model, çokluysa ilki seçilir |
+| `--category` / `--no-session` | Manuel akışla aynı anlamda |
+
+Seçim davranışı:
+
+- Key'den birden fazla provider tespit edilir ve probe'lar **eşit** skor
+  üretirse sonuç **ambiguous** hatasıdır (hangi provider listesi hataya
+  yazılır; key hiçbir hata mesajına girmez).
+- Tüm aday probe'ları bağlantı/timeout ile başarısız olursa canlı winner
+  yoktur → hata.
+- Winner kazanır: config'e `[model_providers.<id>]` + `[model.omni-<id>-<model>]`
+  + `[models] default` yazılır; key keychain'de şifreli kalır, `config.toml`'a
+  asla düz metin yazılmaz. TTY + `--no-session` yoksa bağlama sonrası normal
+  TUI oturumu başlar (manuel akışla aynı).
+
+Örnek çıktı (`--no-session` ile):
+
+```sh
+keychain'e eklendi: openai (personal) [k_2]
+bağlandı: openai (https://api.openai.com/v1)
+model: gpt-5 → [omni-openai-gpt-5] (varsayılan)
+keychain kaydı: k_2 (kategori: personal)
+Ajan oturumu şöyle başlatılır: grok --model omni-openai-gpt-5
 ```
 
 ## 4. `grok keys` — keychain komutları

@@ -14,11 +14,14 @@ use anyhow::Context as _;
 use indexmap::IndexMap;
 use toml_edit::DocumentMut;
 use xai_grok_shell::sampling::ApiBackend;
-use xai_grok_shell::util::models_dev::{
-    ModelInfo, ProviderCatalog, api_backend_for_provider, base_url_for_provider, fetch_catalog,
-    provider_models,
+use xai_grok_shell::util::auto_connect::{
+    AutoConnectError, AutoConnectOutcome, auto_connect_from_key,
 };
-use xai_omni_keychain::Keychain;
+use xai_grok_shell::util::models_dev::{
+    CatalogCache, ModelInfo, ProviderCatalog, api_backend_for_provider, base_url_for_provider,
+    fetch_catalog, provider_models,
+};
+use xai_omni_keychain::{KeyEntry, Keychain};
 
 use crate::app::cli::ConnectArgs;
 
@@ -39,15 +42,20 @@ pub async fn run(connect_args: ConnectArgs) -> anyhow::Result<bool> {
             println!("interaktif connect wizard, TUI göreviyle (Task 7/8) birlikte geliyor.");
             println!("Şimdilik flag'lerle kullanın, örnek:");
             println!("  grok connect --provider openai --api-key sk-... [--model gpt-4o]");
+            println!("  grok connect --auto --api-key sk-... [--model gpt-4o]");
         } else {
             anyhow::bail!(
-                "hiçbir flag verilmedi; en azından --provider + --api-key (veya --keychain-id) gerekli"
+                "hiçbir flag verilmedi; en azından --provider + --api-key (veya --auto + --api-key, veya --keychain-id) gerekli"
             );
         }
         return Ok(false);
     }
     let grok_home = xai_grok_shell::util::grok_home::grok_home();
-    programmatic_connect(&grok_home, &connect_args).await
+    if connect_args.auto {
+        programmatic_connect_auto(&grok_home, &connect_args).await
+    } else {
+        programmatic_connect(&grok_home, &connect_args).await
+    }
 }
 
 /// Oturum başlatma koşulları: `--no-session` yok VE stdin bir TTY.
@@ -58,12 +66,95 @@ pub fn session_will_launch(no_session: bool) -> bool {
 
 /// Flag'lerden en az biri verilmiş mi? (wizard-dan mı programatik mi?)
 fn has_flags(args: &ConnectArgs) -> bool {
-    args.provider.is_some()
+    args.auto
+        || args.provider.is_some()
         || args.api_key.is_some()
         || args.base_url.is_some()
         || args.model.is_some()
         || args.keychain_id.is_some()
         || args.category.is_some()
+}
+
+/// Auto-connect sonucunun config yazımına çevrilmiş girdileri (saf).
+#[derive(Debug, PartialEq)]
+pub(crate) struct AutoConnectPlan {
+    pub provider_id: String,
+    pub base_url: String,
+    pub api_backend: ApiBackend,
+    pub model: String,
+    pub model_key: String,
+}
+
+/// Winner outcome'u plana çevirir: provider/base URL/backend winner'dan,
+/// model `--model` ile doğrulanır (winner model listesine karşı); verilmezse
+/// tek model, çokluysa ilki seçilir — manuel akıştaki `resolve_model_id`
+/// davranışının aynısı. Key burada asla yer almaz (yalnızca katalog/outcome
+/// metadata'sı).
+pub(crate) fn plan_from_auto_outcome(
+    outcome: &AutoConnectOutcome,
+    catalog: &CatalogCache,
+    explicit_model: Option<&str>,
+) -> anyhow::Result<AutoConnectPlan> {
+    let api_backend = catalog
+        .providers
+        .get(&outcome.provider_id)
+        .map(api_backend_for_provider)
+        .unwrap_or(ApiBackend::ChatCompletions);
+    let models: IndexMap<String, ModelInfo> = outcome
+        .models
+        .iter()
+        .map(|m| (m.id.clone(), m.clone()))
+        .collect();
+    let model = resolve_model_id(explicit_model, None, &models)?;
+    Ok(AutoConnectPlan {
+        provider_id: outcome.provider_id.clone(),
+        base_url: outcome.base_url.clone(),
+        api_backend,
+        model: model.clone(),
+        model_key: model_entry_key(&outcome.provider_id, &model),
+    })
+}
+
+/// AutoConnectError'ün kullanıcıya giden Türkçe mesajı. Hiçbir variant API
+/// key içermez (typed error sözleşmesi); Ambiguous yalnızca provider id
+/// listesi taşır.
+fn auto_connect_error_msg(e: &AutoConnectError) -> String {
+    match e {
+        AutoConnectError::NoDetectedProviders => {
+            "auto-connect: API key'den provider tespit edilemedi (key formatı bilinmiyor)".into()
+        }
+        AutoConnectError::MissingCatalogEntry { provider_id } => format!(
+            "auto-connect: '{provider_id}' katalogda bulunamadı veya base URL çözülemedi"
+        ),
+        AutoConnectError::NoProbeWinner => {
+            "auto-connect: aday provider'lara canlı bağlantı kurulamadı (ağ/timeout)".into()
+        }
+        AutoConnectError::Ambiguous { providers } => format!(
+            "auto-connect: provider'lar arasında karar verilemedi (eşit güven: {})",
+            providers.join(", ")
+        ),
+        AutoConnectError::EmptyModels { provider_id } => {
+            format!("auto-connect: '{provider_id}' için uygulanabilir model yok")
+        }
+    }
+}
+
+/// `--auto` akışı: key → P0.3 orkestrasyonu (`auto_connect_from_key`) →
+/// winner planı → ortak keychain/config/oturum yolu. `--provider` gerekmez;
+/// `--auto` + manuel kaynak flag'leri clap'ta parse-time çakışır.
+async fn programmatic_connect_auto(grok_home: &Path, args: &ConnectArgs) -> anyhow::Result<bool> {
+    let mut kc = crate::keys_cmd::prompt_and_open_keychain(grok_home)?;
+    let Some(api_key) = args.api_key.as_deref() else {
+        anyhow::bail!("--auto için --api-key zorunlu");
+    };
+    let catalog = fetch_catalog(&reqwest::Client::new(), grok_home, false)
+        .await
+        .context("models.dev kataloğu çözümlenemedi")?;
+    let outcome = auto_connect_from_key(api_key, &catalog)
+        .await
+        .map_err(|e| anyhow::anyhow!("{}", auto_connect_error_msg(&e)))?;
+    let plan = plan_from_auto_outcome(&outcome, &catalog, args.model.as_deref())?;
+    finalize_connect(grok_home, args, &mut kc, None, &plan).await
 }
 
 /// Programatik akış: key → provider/model çözümleme → config yazımı →
@@ -131,6 +222,36 @@ async fn programmatic_connect(grok_home: &Path, args: &ConnectArgs) -> anyhow::R
         .map(api_backend_for_provider)
         .unwrap_or(ApiBackend::ChatCompletions);
 
+    let plan = AutoConnectPlan {
+        model_key: model_entry_key(&provider_id, &model),
+        provider_id,
+        base_url,
+        api_backend,
+        model,
+    };
+    finalize_connect(grok_home, args, &mut kc, entry.as_ref(), &plan).await
+}
+
+/// Ortak sonlandırma (manuel ve `--auto` akışları paylaşır): key'i keychain'e
+/// yaz veya mevcut kaydı doğrula → config.toml'a provider/model yaz →
+/// varsayılan modeli set et → (TTY + `--no-session` yoksa) oturum key'ini
+/// process runtime store'a it. `entry` yalnızca manuel `--keychain-id`
+/// akışında Some'dur; `--auto` akışında key her zaman `--api-key`'ten gelir.
+async fn finalize_connect(
+    grok_home: &Path,
+    args: &ConnectArgs,
+    kc: &mut Keychain,
+    entry: Option<&KeyEntry>,
+    plan: &AutoConnectPlan,
+) -> anyhow::Result<bool> {
+    let AutoConnectPlan {
+        provider_id,
+        base_url,
+        api_backend,
+        model,
+        model_key,
+    } = plan;
+
     // 8) Key'i keychain'e yaz veya mevcut kaydı doğrula.
     let category = match &args.category {
         Some(c) if !c.is_empty() => c.clone(),
@@ -139,7 +260,7 @@ async fn programmatic_connect(grok_home: &Path, args: &ConnectArgs) -> anyhow::R
     let key_id = if let Some(key) = &args.api_key {
         let id = kc.add_key(
             &category,
-            &provider_id,
+            provider_id,
             key,
             Some(model.clone()),
             Some(base_url.clone()),
@@ -147,23 +268,15 @@ async fn programmatic_connect(grok_home: &Path, args: &ConnectArgs) -> anyhow::R
         kc.save()?;
         println!("keychain'e eklendi: {provider_id} ({category}) [{id}]");
         id
-    } else if let Some(e) = &entry {
+    } else if let Some(e) = entry {
         e.id.clone()
     } else {
         anyhow::bail!("--api-key veya --keychain-id gerekli (keychain'de key yok)");
     };
 
     // 9) Config yazımı: model_providers + model + models.default.
-    let model_key = model_entry_key(&provider_id, &model);
-    write_provider_config(
-        grok_home,
-        &provider_id,
-        &base_url,
-        &api_backend,
-        &model_key,
-        &model,
-    )
-    .await?;
+    write_provider_config(grok_home, provider_id, base_url, api_backend, model_key, model)
+        .await?;
     xai_grok_shell::util::config::set_default_model(model_key.clone())
         .await
         .context("varsayılan model yazılamadı")?;
@@ -182,7 +295,7 @@ async fn programmatic_connect(grok_home: &Path, args: &ConnectArgs) -> anyhow::R
     //     çağırdı — OnceLock ikinci set'te panic eder); yalnızca User-Agent
     //     origin'ini etkiler, oturum akışını bozmaz.
     if session_will_launch(args.no_session) {
-        push_runtime_key(&mut kc, &key_id, &model)?;
+        push_runtime_key(kc, &key_id, model)?;
         return Ok(true);
     }
     println!(

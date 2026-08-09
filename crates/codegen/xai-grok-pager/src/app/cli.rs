@@ -257,6 +257,12 @@ pub struct WorkspaceStartArgs {
 /// config.toml and store its API key in the encrypted keychain.
 #[derive(Debug, Clone, clap::Args)]
 pub struct ConnectArgs {
+    /// API key'i canlı probe ile otomatik provider tespiti için kullan
+    /// (P0.3 orkestrasyonu). `--api-key` zorunlu; manuel kaynak flag'leri
+    /// (`--provider`, `--base-url`, `--keychain-id`) ile çakışır — çakışma
+    /// parse-time'da, yan etki öncesi deterministik hata verir.
+    #[arg(long, requires = "api_key", conflicts_with_all = ["provider", "base_url", "keychain_id"])]
+    pub auto: bool,
     /// Provider id from models.dev (e.g. openai, anthropic, deepseek)
     #[arg(long)]
     pub provider: Option<String>,
@@ -1527,6 +1533,7 @@ mod tests {
         assert!(matches!(
             bare.command,
             Some(Command::Connect(ConnectArgs {
+                auto: false,
                 provider: None,
                 api_key: None,
                 base_url: None,
@@ -1557,6 +1564,7 @@ mod tests {
         assert!(matches!(
             full.command,
             Some(Command::Connect(ConnectArgs {
+                auto: false,
                 provider: Some(ref p),
                 api_key: Some(ref k),
                 base_url: Some(ref b),
@@ -1567,6 +1575,58 @@ mod tests {
             })) if p == "openai" && k == "sk-test" && b == "https://gateway.example/v1"
                 && m == "gpt-4o" && kid == "k_1234" && c == "work"
         ));
+    }
+    /// `--auto` formu: `--api-key` zorunlu, `--provider`/`--base-url`/
+    /// `--keychain-id` ile parse-time'da (yan etki öncesi) çakışır.
+    #[test]
+    fn connect_auto_requires_api_key_and_conflicts_with_manual_flags() {
+        let no_key = PagerArgs::try_parse_from(["grok", "connect", "--auto"])
+            .expect_err("--auto without --api-key must fail");
+        assert_eq!(
+            no_key.kind(),
+            clap::error::ErrorKind::MissingRequiredArgument
+        );
+        for manual in [
+            vec!["--provider", "openai"],
+            vec!["--base-url", "https://gateway.example/v1"],
+            vec!["--keychain-id", "k_1"],
+        ] {
+            let mut argv = vec!["grok", "connect", "--auto", "--api-key", "sk-test"];
+            argv.extend(manual);
+            let conflict = PagerArgs::try_parse_from(argv)
+                .expect_err("--auto with a manual source flag must conflict");
+            assert_eq!(conflict.kind(), clap::error::ErrorKind::ArgumentConflict);
+        }
+    }
+    /// `grok connect --auto --api-key <key> [--model <id>] [--no-session]`
+    /// parses; provider flag'i verilmeden auto=true kalır.
+    #[test]
+    fn connect_auto_parses_with_api_key_model_and_no_session() {
+        let args = PagerArgs::try_parse_from([
+            "grok",
+            "connect",
+            "--auto",
+            "--api-key",
+            "sk-test",
+            "--model",
+            "gpt-4o",
+            "--no-session",
+        ])
+        .expect("--auto form parses");
+        let Some(Command::Connect(ConnectArgs {
+            auto,
+            provider,
+            model,
+            no_session,
+            ..
+        })) = args.command
+        else {
+            panic!("expected connect subcommand");
+        };
+        assert!(auto);
+        assert!(provider.is_none(), "--auto provider istemez");
+        assert_eq!(model.as_deref(), Some("gpt-4o"));
+        assert!(no_session);
     }
     #[test]
     fn headless_auth_flags_parse_on_pager() {
