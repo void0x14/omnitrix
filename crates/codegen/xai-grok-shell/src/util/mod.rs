@@ -2,8 +2,12 @@ pub mod config;
 pub mod grok_auth_credentials;
 pub mod hooks;
 pub mod limits;
+pub mod models_dev;
 pub(crate) mod subprocess;
 pub(crate) mod user_identity;
+
+#[cfg(test)]
+mod models_dev_tests;
 
 // The foundation utilities live in `xai-grok-shell-base` (upstream of this
 // crate so they build in parallel). Re-exported at the original paths so
