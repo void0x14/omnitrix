@@ -345,9 +345,16 @@ xai-tty-utils = { path = "crates/codegen/xai-tty-utils" }
 zbus = { version = "5" }
 zstd = "0.13"
 
+# Bellek güvenliği sertleştirmesi (kullanıcı emri): overflow-checks +
+# debug-assertions release ailesinde VARSayıLAN olarak kapalıdır — taşma
+# (wrap-around) ve güvenlik iddiaları yakalanmadan yayına giderdi. İkisi de
+# açıldı; release-dist/x-prod/release-dist-jemalloc `inherits = "release"`
+# üzerinden otomatik devralır.
 [profile.release]
 incremental = true
 panic = "abort"
+overflow-checks = true
+debug-assertions = true
 
 # Hardened release profile for shipping to end users (alpha + stable).
 # Use `cargo build --profile release-dist` for distribution builds.
@@ -395,7 +402,10 @@ debug = false
 opt-level = 0
 lto = false
 incremental = true
-overflow-checks = false
+# Bellek güvenliği (kullanıcı emri): taşma denetimi açık; geliştirme/test
+# derlemeleri de taşmayı yayınlamadan yakalar.
+overflow-checks = true
+debug-assertions = true
 
 [profile.bench]
 debug = true
