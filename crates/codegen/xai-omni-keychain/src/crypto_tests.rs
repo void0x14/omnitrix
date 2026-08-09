@@ -48,3 +48,26 @@ fn tampered_ciphertext_fails() {
     let bad = B64.encode(tampered);
     assert!(decrypt(&key, &bad).is_err());
 }
+
+#[test]
+fn encrypt_nonce_is_fresh() {
+    let salt = random_salt();
+    let key = derive_key("pw", &salt, &KdfParams::default());
+    let a = encrypt(&key, b"same-data").unwrap();
+    let b = encrypt(&key, b"same-data").unwrap();
+    assert_ne!(a, b, "two encryptions must not reuse a nonce");
+}
+
+#[test]
+fn decrypt_rejects_invalid_base64() {
+    let salt = random_salt();
+    let key = derive_key("pw", &salt, &KdfParams::default());
+    assert!(decrypt(&key, "!!!not-base64!!!").is_err());
+}
+
+#[test]
+fn decrypt_rejects_short_ciphertext() {
+    let salt = random_salt();
+    let key = derive_key("pw", &salt, &KdfParams::default());
+    assert!(decrypt(&key, "aGk").is_err(), "shorter than a nonce must fail");
+}

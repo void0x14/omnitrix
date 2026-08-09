@@ -81,4 +81,5 @@ pub fn wipe(mut v: Vec<u8>) {
 }
 
 #[cfg(test)]
+#[path = "crypto_tests.rs"]
 mod tests; // modül ayrı dosyada (crypto_tests.rs)
