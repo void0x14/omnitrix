@@ -591,11 +591,21 @@ async fn authenticate(
 
 /// `--api-key`/`--keychain-id` flag'leri için keychain erişim planı.
 ///
+/// - Key flag'i yok (`--api-key` ve `--keychain-id` ikisi de yok): keychain'e
+///   DOKUNULMAZ — ne master password prompt'u, ne de keychain oluşturma;
+///   yalnızca provider/model/base-url config akışı çalışır.
 /// - TTY: master password prompt'u mümkün → keychain açılır (persist).
 /// - TTY değil: master password SORULAMAZ (şifreleme anahtarı onsuz
 ///   türetilemez) → `--keychain-id` HATA verir (borrow imkânsız; fail-closed);
-///   `--api-key` (ya da yalnızca config akışı) yalnızca runtime store kullanır.
-fn plan_key_store(stdin_is_tty: bool, has_keychain_id_flag: bool) -> anyhow::Result<KeyStorePlan> {
+///   `--api-key` yalnızca runtime store kullanır.
+fn plan_key_store(
+    stdin_is_tty: bool,
+    has_keychain_id_flag: bool,
+    key_required: bool,
+) -> anyhow::Result<KeyStorePlan> {
+    if !key_required {
+        return Ok(KeyStorePlan::RuntimeOnly);
+    }
     if stdin_is_tty {
         return Ok(KeyStorePlan::KeychainPersist);
     }
@@ -651,8 +661,13 @@ async fn apply_auth_flags(
     }
     let grok_home = xai_grok_shell::util::grok_home::grok_home();
 
-    // Keychain yalnızca TTY'de açılabilir (master password prompt'u TTY ister).
-    let plan = plan_key_store(stdin_is_tty, flags.keychain_id.is_some())?;
+    // Keychain yalnızca (a) key flag'i verildiyse VE (b) TTY ise açılır
+    // (master password prompt'u TTY ister); key flag'i yoksa prompt yok.
+    let plan = plan_key_store(
+        stdin_is_tty,
+        flags.keychain_id.is_some(),
+        flags.api_key.is_some() || flags.keychain_id.is_some(),
+    )?;
     let mut kc: Option<Keychain> = match plan {
         KeyStorePlan::KeychainPersist => {
             Some(crate::keys_cmd::prompt_and_open_keychain(&grok_home)?)
@@ -2444,20 +2459,35 @@ mod tests {
     }
 
     #[test]
-    fn plan_key_store_tty_always_persists() {
+    fn plan_key_store_tty_with_key_required_persists() {
         assert_eq!(
-            plan_key_store(true, false).unwrap(),
+            plan_key_store(true, false, true).unwrap(),
             KeyStorePlan::KeychainPersist
         );
         assert_eq!(
-            plan_key_store(true, true).unwrap(),
+            plan_key_store(true, true, true).unwrap(),
             KeyStorePlan::KeychainPersist
         );
     }
 
     #[test]
+    fn plan_key_store_no_key_flags_never_prompts() {
+        // Key flag'i yok (`--api-key`/`--keychain-id` ikisi de yok) → TTY olsa
+        // bile keychain AÇILMAZ: master password prompt'u yok, keychain
+        // oluşturma yok; yalnızca config akışı (RuntimeOnly, kc = None).
+        assert_eq!(
+            plan_key_store(true, false, false).unwrap(),
+            KeyStorePlan::RuntimeOnly
+        );
+        assert_eq!(
+            plan_key_store(false, false, false).unwrap(),
+            KeyStorePlan::RuntimeOnly
+        );
+    }
+
+    #[test]
     fn plan_key_store_non_tty_keychain_id_fails_closed() {
-        let err = plan_key_store(false, true).unwrap_err();
+        let err = plan_key_store(false, true, true).unwrap_err();
         assert!(
             err.to_string().contains("keychain kilitli"),
             "non-TTY borrow must fail closed, got: {err}"
@@ -2466,10 +2496,10 @@ mod tests {
 
     #[test]
     fn plan_key_store_non_tty_api_key_is_runtime_only() {
-        // `--api-key` (ya da yalnızca config akışı) non-TTY'de keychain'e
-        // yazılamaz (master şifre sorulamaz) → oturum-scoped runtime store.
+        // `--api-key` non-TTY'de keychain'e yazılamaz (master şifre sorulamaz)
+        // → oturum-scoped runtime store.
         assert_eq!(
-            plan_key_store(false, false).unwrap(),
+            plan_key_store(false, false, true).unwrap(),
             KeyStorePlan::RuntimeOnly
         );
     }
