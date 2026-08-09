@@ -598,11 +598,6 @@ pub struct AppView {
     /// after [`Self::new`] (mirrors the voice channel's `auth_manager`
     /// clone). `None` only before wiring / in tests.
     pub(crate) auth_manager: Option<std::sync::Arc<xai_grok_shell::auth::AuthManager>>,
-    /// Keys/keychain manager placeholder flag. The TUI keys manager arrives
-    /// with Task 9; this flag keeps `Action::OpenKeysManager` dispatchable.
-    /// (Provider connect wizard Task 7'de `ActiveModal::ProviderConnect`
-    /// olarak gerçek modal akışına taşındı — flag kaldırıldı.)
-    pub(crate) keys_manager_open: bool,
     /// Open keychain handle (RAM master key cached, TTL'd). `None` = absent
     /// or locked — the unlock UI (Task 7-8) populates it; dispatch borrows
     /// from it RAM-only (never touches the filesystem).
@@ -1393,7 +1388,6 @@ impl AppView {
             active_view: ActiveView::Welcome,
             auth_return_view: None,
             auth_manager: None,
-            keys_manager_open: false,
             keychain: None,
             keychain_borrow: None,
             agents: IndexMap::new(),
@@ -2459,7 +2453,9 @@ impl AppView {
                     menu_count: if zdr_blocked {
                         2
                     } else {
-                        3 + if self.has_claude_import { 1 } else { 0 }
+                        // Worktree + Resume + Connect Provider + Quit, plus
+                        // the optional Import and Changelog rows.
+                        4 + if self.has_claude_import { 1 } else { 0 }
                             + if self.welcome_show_changelog_action {
                                 1
                             } else {
@@ -3501,6 +3497,15 @@ fn handle_welcome_input(ev: &Event, ctx: &mut WelcomeInputCtx<'_>) -> InputOutco
             if key!('s', CONTROL).matches(key) {
                 return InputOutcome::Action(Action::FetchSessionList);
             }
+            // Plain `c`: the "Connect Provider" menu row (hidden for
+            // ZDR/gated accounts — those menus have no connect row).
+            if ctx.has_access
+                && !ctx.is_zdr_blocked
+                && !*ctx.prompt_focused
+                && key!('c').matches(key)
+            {
+                return InputOutcome::Action(Action::OpenConnectPicker);
+            }
             if ctx.has_pending_update && key!('u', CONTROL).matches(key) {
                 return InputOutcome::Action(Action::QuitForUpdate);
             }
@@ -3576,6 +3581,9 @@ fn handle_welcome_input(ev: &Event, ctx: &mut WelcomeInputCtx<'_>) -> InputOutco
                 }
                 if key!('l').matches(key) || key!(Enter).matches(key) {
                     return InputOutcome::Action(Action::Login);
+                }
+                if key!('c').matches(key) {
+                    return InputOutcome::Action(Action::OpenConnectPicker);
                 }
             }
             AuthState::Authenticating { .. } if *ctx.show_raw_url => {
@@ -3888,11 +3896,12 @@ fn handle_menu_nav(
     }
 }
 /// Dispatch an action for a welcome menu item when not yet authenticated.
-/// Menu layout: 0 = Login, 1 = Quit.
+/// Menu layout: 0 = Connect Provider, 1 = Login, 2 = Quit.
 fn dispatch_pending_menu_action(index: usize) -> InputOutcome {
     match index {
-        0 => InputOutcome::Action(Action::Login),
-        1 => InputOutcome::Action(Action::Quit),
+        0 => InputOutcome::Action(Action::OpenConnectPicker),
+        1 => InputOutcome::Action(Action::Login),
+        2 => InputOutcome::Action(Action::Quit),
         _ => InputOutcome::Unchanged,
     }
 }
@@ -3917,9 +3926,9 @@ fn dispatch_access_gate_menu_action(index: usize) -> InputOutcome {
 }
 /// Dispatch an action for a welcome menu item by index.
 ///
-/// Menu order: `[Import]`, New worktree, Resume session, `[Changelog]`, Quit.
-/// `show_changelog_action` is true when the Changelog row is rendered; release
-/// notes open only once `changelog_md` is available.
+/// Menu order: `[Import]`, New worktree, Resume session, Connect Provider,
+/// `[Changelog]`, Quit. `show_changelog_action` is true when the Changelog
+/// row is rendered; release notes open only once `changelog_md` is available.
 fn dispatch_menu_action(
     index: usize,
     has_claude_import: bool,
@@ -3929,10 +3938,11 @@ fn dispatch_menu_action(
     let base = if has_claude_import { 1 } else { 0 };
     let worktree_idx = base;
     let resume_idx = base + 1;
+    let connect_idx = base + 2;
     let (changelog_idx, quit_idx) = if show_changelog_action {
-        (Some(base + 2), base + 3)
+        (Some(base + 3), base + 4)
     } else {
-        (None, base + 2)
+        (None, base + 3)
     };
     if has_claude_import && index == 0 {
         return InputOutcome::Action(Action::ImportClaudeSettings);
@@ -3942,6 +3952,9 @@ fn dispatch_menu_action(
     }
     if index == resume_idx {
         return InputOutcome::Action(Action::FetchSessionList);
+    }
+    if index == connect_idx {
+        return InputOutcome::Action(Action::OpenConnectPicker);
     }
     if Some(index) == changelog_idx {
         if let Some(md) = changelog_md {
@@ -6126,6 +6139,9 @@ pub(crate) mod tests {
     fn ctrl_c() -> Event {
         key_event(KeyCode::Char('c'), KeyModifiers::CONTROL)
     }
+    fn key_press(c: char) -> Event {
+        key_event(KeyCode::Char(c), KeyModifiers::NONE)
+    }
     fn left_mouse(kind: MouseEventKind, column: u16, row: u16) -> Event {
         Event::Mouse(MouseEvent {
             kind,
@@ -7760,6 +7776,26 @@ pub(crate) mod tests {
         ));
         assert!(matches!(
             dispatch_menu_action(2, false, false, None),
+            InputOutcome::Action(Action::OpenConnectPicker)
+        ));
+        assert!(matches!(
+            dispatch_menu_action(3, false, false, None),
+            InputOutcome::Action(Action::Quit)
+        ));
+    }
+    #[test]
+    fn menu_action_connect_provider_row_sits_above_changelog() {
+        let md = Some("# notes");
+        assert!(matches!(
+            dispatch_menu_action(2, false, true, md),
+            InputOutcome::Action(Action::OpenConnectPicker)
+        ));
+        assert!(matches!(
+            dispatch_menu_action(3, false, true, md),
+            InputOutcome::Action(Action::ShowReleaseNotes { .. })
+        ));
+        assert!(matches!(
+            dispatch_menu_action(4, false, true, md),
             InputOutcome::Action(Action::Quit)
         ));
     }
@@ -7771,18 +7807,18 @@ pub(crate) mod tests {
             InputOutcome::Action(Action::FetchSessionList)
         ));
         assert!(matches!(
-            dispatch_menu_action(2, false, true, md),
+            dispatch_menu_action(3, false, true, md),
             InputOutcome::Action(Action::ShowReleaseNotes { .. })
         ));
         assert!(matches!(
-            dispatch_menu_action(3, false, true, md),
+            dispatch_menu_action(4, false, true, md),
             InputOutcome::Action(Action::Quit)
         ));
     }
     #[test]
     fn menu_action_changelog_before_fetch_is_noop() {
         assert!(matches!(
-            dispatch_menu_action(2, false, true, None),
+            dispatch_menu_action(3, false, true, None),
             InputOutcome::Unchanged
         ));
     }
@@ -7803,12 +7839,54 @@ pub(crate) mod tests {
         ));
         assert!(matches!(
             dispatch_menu_action(3, true, true, md),
-            InputOutcome::Action(Action::ShowReleaseNotes { .. })
+            InputOutcome::Action(Action::OpenConnectPicker)
         ));
         assert!(matches!(
             dispatch_menu_action(4, true, true, md),
+            InputOutcome::Action(Action::ShowReleaseNotes { .. })
+        ));
+        assert!(matches!(
+            dispatch_menu_action(5, true, true, md),
             InputOutcome::Action(Action::Quit)
         ));
+    }
+    #[test]
+    fn pending_menu_action_indices() {
+        assert!(matches!(
+            dispatch_pending_menu_action(0),
+            InputOutcome::Action(Action::OpenConnectPicker)
+        ));
+        assert!(matches!(
+            dispatch_pending_menu_action(1),
+            InputOutcome::Action(Action::Login)
+        ));
+        assert!(matches!(
+            dispatch_pending_menu_action(2),
+            InputOutcome::Action(Action::Quit)
+        ));
+        assert!(matches!(
+            dispatch_pending_menu_action(9),
+            InputOutcome::Unchanged
+        ));
+    }
+    #[test]
+    fn welcome_pending_c_opens_connect_picker() {
+        let mut app = test_app();
+        app.auth_state = AuthState::Pending { error: None };
+        let outcome = app.handle_input(&key_press('c'));
+        assert!(
+            matches!(outcome, InputOutcome::Action(Action::OpenConnectPicker)),
+            "pending welcome 'c' must open the connect picker: {outcome:?}"
+        );
+    }
+    #[test]
+    fn welcome_done_c_opens_connect_picker() {
+        let mut app = test_app();
+        let outcome = app.handle_input(&key_press('c'));
+        assert!(
+            matches!(outcome, InputOutcome::Action(Action::OpenConnectPicker)),
+            "done welcome 'c' must open the connect picker: {outcome:?}"
+        );
     }
     #[test]
     fn welcome_pending_ctrl_c_quits_instantly() {

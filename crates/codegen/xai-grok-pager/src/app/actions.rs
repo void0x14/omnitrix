@@ -404,8 +404,9 @@ pub enum Action {
     /// with the step machine (Task 7) + async models.dev catalog load via
     /// [`Effect::FetchModelsCatalog`].
     OpenConnectPicker,
-    /// Open the keys/keychain manager (TUI in Task 9; placeholder flag for
-    /// now).
+    /// Open the keys/keychain manager TUI: `ActiveModal::KeysManager`
+    /// (table + reveal/add/edit/remove/export/import; kilitliyse kendi
+    /// master-password akışıyla açar).
     OpenKeysManager,
     /// Apply a provider connection: borrow the keychain key for this session
     /// (in-memory only — config.toml never holds the plaintext key), persist
@@ -422,14 +423,68 @@ pub enum Action {
     },
     /// Borrow a keychain key for this session (agent access) and keep it
     /// RAM-held on the app state for the session lifetime.
-    KeychainBorrow { key_id: String },
+    KeychainBorrow {
+        key_id: String,
+    },
+    /// Keys manager: keychain'i master password ile aç (RAM; dosya yoksa
+    /// yeni keychain yaratır). Başarı → modal `Browse` + satırlar; hata →
+    /// `Unlock { error }`.
+    KeychainUnlock {
+        password: zeroize::Zeroizing<String>,
+    },
+    /// Keys manager: tam key'i keychain'den çözüp `Reveal` moduna taşır
+    /// (RAM; `Zeroizing`).
+    KeychainReveal {
+        id: String,
+    },
+    /// Keys manager: yeni kayıt (RAM `add_key` + küçük atomik `save()`).
+    KeychainAdd {
+        category: String,
+        provider_id: String,
+        api_key: zeroize::Zeroizing<String>,
+        model_id: Option<String>,
+        base_url: Option<String>,
+    },
+    /// Keys manager: kayıt güncelle (model / base_url / opsiyonel key).
+    KeychainUpdate {
+        id: String,
+        model_id: Option<String>,
+        base_url: Option<String>,
+        api_key: Option<zeroize::Zeroizing<String>>,
+    },
+    /// Keys manager: kayıt sil.
+    KeychainRemove {
+        id: String,
+    },
+    /// Keys manager: kategori (ve içindeki tüm key'leri) sil.
+    KeychainRemoveCategory {
+        name: String,
+    },
+    /// Keys manager: varsayılan kategori.
+    KeychainSetDefaultCategory {
+        name: String,
+    },
+    /// Keys manager: kapsamı `.omx` dosyasına export et (export şifresi
+    /// ayrı; dosya `~/.grok/keychain-export-<ts>.omx`).
+    KeychainExport {
+        scope: xai_omni_keychain::ExportScope,
+        password: zeroize::Zeroizing<String>,
+    },
+    /// Keys manager: `.omx` dosyasını import et (merge; conflict → üzerine
+    /// yaz).
+    KeychainImport {
+        path: String,
+        password: zeroize::Zeroizing<String>,
+    },
     /// Fetch a custom provider's `/models` list for the connect wizard's
     /// Model step (offline/custom fallback: Model adımına boş liste
     /// girildiğinde bir kez tetiklenir). Dispatch resolves the optional key
     /// from the wizard flow (keychain borrow / draft / env) and pushes
     /// [`Effect::FetchProviderModels`]; completes with
     /// [`TaskResult::ProviderModelsFetched`].
-    FetchProviderModels { base_url: String },
+    FetchProviderModels {
+        base_url: String,
+    },
     /// Cancel the currently running turn.
     CancelTurn,
     /// User confirmed a cancel-turn choice from the panel.

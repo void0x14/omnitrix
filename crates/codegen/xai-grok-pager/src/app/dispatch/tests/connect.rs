@@ -4,11 +4,16 @@
 
 use super::*;
 use crate::app::dispatch::connect::{
-    dispatch_connect_provider, dispatch_fetch_provider_models, dispatch_keychain_borrow,
+    dispatch_connect_provider, dispatch_fetch_provider_models, dispatch_keychain_add,
+    dispatch_keychain_borrow, dispatch_keychain_export, dispatch_keychain_import,
+    dispatch_keychain_remove, dispatch_keychain_remove_category, dispatch_keychain_reveal,
+    dispatch_keychain_set_default_category, dispatch_keychain_unlock, dispatch_keychain_update,
     dispatch_open_connect_picker, dispatch_open_keys_manager,
 };
+use crate::views::keys_manager::{KeysManagerMode, KeysManagerState};
 use xai_grok_shell::auth::runtime_key;
 use xai_omni_keychain::{Keychain, KeychainOptions, MasterKeyTtl};
+use zeroize::Zeroizing;
 
 /// Tmpdir'de gerçek bir keychain açar (master password `"pw"`) ve bir kayıt
 /// ekler. `(Keychain, key_id, dir)` döner.
@@ -137,11 +142,43 @@ fn catalog_fetch_failure_enters_error_step_not_provider() {
 }
 
 #[test]
-fn open_keys_manager_sets_placeholder_flag() {
+fn open_keys_manager_opens_modal_with_entries() {
     let mut app = test_app();
-    let effects = dispatch_open_keys_manager(&mut app);
-    assert!(app.keys_manager_open);
-    assert!(effects.is_empty());
+    // Test app welcome'ta: placeholder agent yaratılır, modal ona kurulur.
+    let _effects = dispatch_open_keys_manager(&mut app);
+    let agent = app.agents.values().next().expect("agent created");
+    let modal = agent.active_modal.as_ref().expect("keys manager modal");
+    match modal {
+        crate::views::modal::ActiveModal::KeysManager { state } => {
+            assert_eq!(
+                state.mode,
+                crate::views::keys_manager::KeysManagerMode::Unlock { error: None }
+            );
+            assert!(state.entries.is_empty());
+        }
+        other => panic!("KeysManager bekleniyor, {other:?}"),
+    }
+}
+
+#[test]
+fn open_keys_manager_unlocked_keychain_lists_entries() {
+    let (kc, _id, _dir) = open_keychain_with_entry("openai");
+    let mut app = test_app();
+    app.keychain = Some(kc);
+    let _effects = dispatch_open_keys_manager(&mut app);
+    let agent = app.agents.values().next().expect("agent created");
+    let modal = agent.active_modal.as_ref().expect("keys manager modal");
+    match modal {
+        crate::views::modal::ActiveModal::KeysManager { state } => {
+            assert_eq!(
+                state.mode,
+                crate::views::keys_manager::KeysManagerMode::Browse
+            );
+            assert_eq!(state.entries.len(), 1);
+            assert_eq!(state.entries[0].provider_id, "openai");
+        }
+        other => panic!("KeysManager bekleniyor, {other:?}"),
+    }
 }
 
 #[test]
@@ -372,22 +409,22 @@ fn connect_provider_emits_switch_model_when_in_catalog() {
 // Task 8: wizard apply yolu (KeyMode + draft key + backend flow'dan)
 // ---------------------------------------------------------------------------
 
-use crate::views::provider_picker::{
-    ConnectStep, KeyMode, ProviderSelection,
-};
+use crate::views::provider_picker::{ConnectStep, KeyMode, ProviderSelection};
 use xai_grok_shell::sampling::ApiBackend;
 use zeroize::Zeroizing;
 
 /// Wizard'ı açıp flow'u Apply adımına hazırlar (custom provider + New key).
 fn wizard_at_apply(app: &mut AppView, key: &str) {
     use crate::views::modal::ActiveModal;
-    use crate::views::provider_picker::{ConnectStep, KeyMode, ProviderConnectFlow, ProviderSelection};
-    let _ = dispatch_open_connect_picker(app);
-    let flow: &mut ProviderConnectFlow = match &mut app.agents.get_mut(&AgentId(0)).unwrap().active_modal
-    {
-        Some(ActiveModal::ProviderConnect { flow, .. }) => flow,
-        _ => panic!("ProviderConnect modal expected"),
+    use crate::views::provider_picker::{
+        ConnectStep, KeyMode, ProviderConnectFlow, ProviderSelection,
     };
+    let _ = dispatch_open_connect_picker(app);
+    let flow: &mut ProviderConnectFlow =
+        match &mut app.agents.get_mut(&AgentId(0)).unwrap().active_modal {
+            Some(ActiveModal::ProviderConnect { flow, .. }) => flow,
+            _ => panic!("ProviderConnect modal expected"),
+        };
     flow.selected_provider = Some(ProviderSelection {
         provider_id: "custom-openai".to_string(),
         label: "Custom OpenAI".to_string(),
@@ -441,7 +478,10 @@ fn wizard_apply_new_key_uses_draft_and_emits_write() {
     }
     // Başarı toast'ı; flow Apply'de bekler (Done → ProviderConnectPersisted).
     let toast = welcome_toast(&app).expect("success toast");
-    assert!(toast.contains("bağlandı: custom-openai / my-model"), "toast: {toast}");
+    assert!(
+        toast.contains("bağlandı: custom-openai / my-model"),
+        "toast: {toast}"
+    );
     let flow = match &app.agents[&AgentId(0)].active_modal {
         Some(crate::views::modal::ActiveModal::ProviderConnect { flow, .. }) => flow,
         _ => panic!("ProviderConnect modal expected"),
@@ -655,7 +695,10 @@ fn wizard_apply_new_key_persists_to_keychain_when_open() {
     assert_eq!(entry.category, "personal");
     assert_eq!(effects.len(), 1);
     let toast = welcome_toast(&app).expect("success toast");
-    assert!(toast.contains("bağlandı: custom-openai / my-model"), "toast: {toast}");
+    assert!(
+        toast.contains("bağlandı: custom-openai / my-model"),
+        "toast: {toast}"
+    );
     runtime_key::clear_runtime_keys();
 }
 
@@ -768,4 +811,297 @@ fn wizard_models_fetched_failure_marks_failed_hint() {
         "hata → Failed hint"
     );
     runtime_key::clear_runtime_keys();
+}
+
+// ---------------------------------------------------------------------------
+// Keys manager (Task 9) — dispatch entegrasyonu (yazıldı, ÇALIŞTIRILMADI)
+// ---------------------------------------------------------------------------
+
+/// Açık KeysManager modalının state'ine erişim yardımcısı.
+fn keys_manager_state(app: &AppView) -> &KeysManagerState {
+    let agent = app.agents.values().next().expect("agent");
+    match &agent.active_modal {
+        Some(crate::views::modal::ActiveModal::KeysManager { state }) => state,
+        other => panic!("KeysManager modal expected, got {other:?}"),
+    }
+}
+
+fn keys_manager_state_mut(app: &mut AppView) -> &mut KeysManagerState {
+    let agent = app.agents.values_mut().next().expect("agent");
+    match &mut agent.active_modal {
+        Some(crate::views::modal::ActiveModal::KeysManager { state }) => state,
+        other => panic!("KeysManager modal expected, got {other:?}"),
+    }
+}
+
+fn open_keys_manager_locked(app: &mut AppView, keychain_path: std::path::PathBuf) {
+    let _ = dispatch_open_keys_manager(app);
+    keys_manager_state_mut(app).keychain_path = Some(keychain_path);
+    assert!(
+        matches!(keys_manager_state(app).mode, KeysManagerMode::Unlock { .. }),
+        "kilitli açılış Unlock modunda"
+    );
+}
+
+#[test]
+fn keys_unlock_action_opens_keychain_and_lists_entries() {
+    let (kc, _id, dir) = open_keychain_with_entry("openai");
+    let path = dir.path().join("keychain.omx");
+    drop(kc);
+    let mut app = test_app();
+    open_keys_manager_locked(&mut app, path);
+    let effects = dispatch_keychain_unlock(&mut app, Zeroizing::new("pw".to_string()));
+    assert!(effects.is_empty());
+    assert!(app.keychain.is_some(), "keychain açılmış olmalı");
+    let state = keys_manager_state(&app);
+    assert_eq!(state.mode, KeysManagerMode::Browse);
+    assert_eq!(state.entries.len(), 1);
+    assert_eq!(state.entries[0].provider_id, "openai");
+}
+
+#[test]
+fn keys_unlock_action_wrong_password_stays_locked_with_error() {
+    let (kc, _id, dir) = open_keychain_with_entry("openai");
+    let path = dir.path().join("keychain.omx");
+    drop(kc);
+    let mut app = test_app();
+    open_keys_manager_locked(&mut app, path);
+    let _ = dispatch_keychain_unlock(&mut app, Zeroizing::new("wrong".to_string()));
+    assert!(app.keychain.is_none());
+    match keys_manager_state(&app).mode {
+        KeysManagerMode::Unlock { error } => {
+            assert!(error.is_some(), "hata mesajı olmalı");
+        }
+        other => panic!("Unlock modunda kalmalı: {other:?}"),
+    }
+}
+
+#[test]
+fn keys_reveal_action_fills_reveal_mode() {
+    let (kc, id, _dir) = open_keychain_with_entry("openai");
+    let mut app = test_app();
+    app.keychain = Some(kc);
+    let _ = dispatch_open_keys_manager(&mut app);
+    assert_eq!(keys_manager_state(&app).mode, KeysManagerMode::Browse);
+    let effects = dispatch_keychain_reveal(&mut app, id.clone());
+    assert!(effects.is_empty());
+    match &keys_manager_state(&app).mode {
+        KeysManagerMode::Reveal { id: rid, full_key } => {
+            assert_eq!(rid, &id);
+            assert_eq!(full_key.as_str(), "sk-test-secret");
+        }
+        other => panic!("Reveal bekleniyor: {other:?}"),
+    }
+}
+
+#[test]
+fn keys_reveal_action_without_keychain_reports_error() {
+    let mut app = test_app();
+    let _ = dispatch_open_keys_manager(&mut app);
+    let _ = dispatch_keychain_reveal(&mut app, "k_openai".to_string());
+    let state = keys_manager_state(&app);
+    assert_eq!(state.mode, KeysManagerMode::Browse);
+    assert!(state.error.is_some(), "kilitli reveal hata göstermeli");
+}
+
+#[test]
+fn keys_add_action_adds_entry_and_refreshes() {
+    let (kc, _id, _dir) = open_keychain_with_entry("openai");
+    let mut app = test_app();
+    app.keychain = Some(kc);
+    let _ = dispatch_open_keys_manager(&mut app);
+    let effects = dispatch_keychain_add(
+        &mut app,
+        "work".to_string(),
+        "vllm".to_string(),
+        Zeroizing::new("sk-work-1".to_string()),
+        None,
+        None,
+    );
+    assert!(effects.is_empty());
+    let state = keys_manager_state(&app);
+    assert_eq!(state.mode, KeysManagerMode::Browse);
+    assert_eq!(state.entries.len(), 2);
+    let vllm = state
+        .entries
+        .iter()
+        .find(|e| e.provider_id == "vllm")
+        .expect("vllm kaydı");
+    assert_eq!(vllm.category, "work");
+    assert!(
+        !vllm.masked.contains("sk-work-1"),
+        "masked asla ham key içermez"
+    );
+    // Kalıcılık: save() yazıldı.
+    let stored = app.keychain.as_mut().unwrap().list_keys().unwrap();
+    assert_eq!(stored.len(), 2);
+}
+
+#[test]
+fn keys_update_action_changes_model() {
+    let (kc, id, _dir) = open_keychain_with_entry("openai");
+    let mut app = test_app();
+    app.keychain = Some(kc);
+    let _ = dispatch_open_keys_manager(&mut app);
+    let effects = dispatch_keychain_update(
+        &mut app,
+        id.clone(),
+        Some("gpt-4.1".to_string()),
+        None,
+        None,
+    );
+    assert!(effects.is_empty());
+    let state = keys_manager_state(&app);
+    assert_eq!(state.entries[0].model_id.as_deref(), Some("gpt-4.1"));
+    let stored = app
+        .keychain
+        .as_mut()
+        .unwrap()
+        .list_keys()
+        .unwrap()
+        .into_iter()
+        .find(|e| e.id == id)
+        .unwrap();
+    assert_eq!(stored.model_id.as_deref(), Some("gpt-4.1"));
+}
+
+#[test]
+fn keys_remove_action_deletes_entry() {
+    let (kc, id, _dir) = open_keychain_with_entry("openai");
+    let mut app = test_app();
+    app.keychain = Some(kc);
+    let _ = dispatch_open_keys_manager(&mut app);
+    let _ = dispatch_keychain_remove(&mut app, id);
+    let state = keys_manager_state(&app);
+    assert!(state.entries.is_empty(), "kayıt silinmiş olmalı");
+    assert!(
+        app.keychain
+            .as_mut()
+            .unwrap()
+            .list_keys()
+            .unwrap()
+            .is_empty()
+    );
+}
+
+#[test]
+fn keys_remove_category_action_deletes_category() {
+    let (kc, _id, _dir) = open_keychain_with_entry("openai");
+    let mut app = test_app();
+    app.keychain = Some(kc);
+    let _ = dispatch_open_keys_manager(&mut app);
+    let _ = dispatch_keychain_remove_category(&mut app, "personal".to_string());
+    let state = keys_manager_state(&app);
+    assert!(state.entries.is_empty());
+    assert_eq!(state.categories, Vec::<String>::new());
+}
+
+#[test]
+fn keys_set_default_category_action_updates_default() {
+    let (kc, _id, _dir) = open_keychain_with_entry("openai");
+    let mut app = test_app();
+    app.keychain = Some(kc);
+    let _ = dispatch_open_keys_manager(&mut app);
+    let _ = dispatch_keychain_set_default_category(&mut app, "personal".to_string());
+    let state = keys_manager_state(&app);
+    assert_eq!(state.default_category, "personal");
+    assert_eq!(
+        app.keychain.as_ref().unwrap().default_category(),
+        "personal"
+    );
+}
+
+#[test]
+fn keys_export_action_writes_file_and_reports_done() {
+    let (kc, _id, dir) = open_keychain_with_entry("openai");
+    let mut app = test_app();
+    app.keychain = Some(kc);
+    let _ = dispatch_open_keys_manager(&mut app);
+    keys_manager_state_mut(&mut app).export_dir = Some(dir.path().to_path_buf());
+    let effects = dispatch_keychain_export(
+        &mut app,
+        xai_omni_keychain::ExportScope::All,
+        Zeroizing::new("exp-pass".to_string()),
+    );
+    assert!(effects.is_empty());
+    match &keys_manager_state(&app).mode {
+        KeysManagerMode::ExportDone { path, count } => {
+            assert!(path.ends_with(".omx"), "export yolu .omx olmalı: {path}");
+            assert!(
+                std::path::Path::new(path).exists(),
+                "dosya yazılmış olmalı: {path}"
+            );
+            assert_eq!(*count, 1);
+        }
+        other => panic!("ExportDone bekleniyor: {other:?}"),
+    }
+}
+
+#[test]
+fn keys_import_action_merges_and_reports_summary() {
+    // Kaynak keychain → export.
+    let (src, _id, dir) = open_keychain_with_entry("openai");
+    let mut app = test_app();
+    app.keychain = Some(src);
+    let _ = dispatch_open_keys_manager(&mut app);
+    keys_manager_state_mut(&mut app).export_dir = Some(dir.path().to_path_buf());
+    let _ = dispatch_keychain_export(
+        &mut app,
+        xai_omni_keychain::ExportScope::All,
+        Zeroizing::new("exp-pass".to_string()),
+    );
+    let path = match &keys_manager_state(&app).mode {
+        KeysManagerMode::ExportDone { path, .. } => path.clone(),
+        _ => panic!("ExportDone bekleniyor"),
+    };
+
+    // Hedef keychain (boş) → import.
+    let (mut dst, _did, _dir2) = open_keychain_with_entry("anthropic");
+    let victim = dst.list_keys().expect("list")[0].id.clone();
+    let _ = dst.remove_key(victim);
+    let _ = dst.save();
+    let mut app = test_app();
+    app.keychain = Some(dst);
+    let _ = dispatch_open_keys_manager(&mut app);
+    let effects = dispatch_keychain_import(&mut app, path, Zeroizing::new("exp-pass".to_string()));
+    assert!(effects.is_empty());
+    match &keys_manager_state(&app).mode {
+        KeysManagerMode::ImportDone { summary } => {
+            assert_eq!(summary.imported_keys, 1, "1 key import edilmeli");
+            assert!(summary.skipped.is_empty());
+        }
+        other => panic!("ImportDone bekleniyor: {other:?}"),
+    }
+    let state = keys_manager_state(&app);
+    assert_eq!(state.entries.len(), 1);
+    assert_eq!(state.entries[0].provider_id, "openai");
+}
+
+#[test]
+fn keys_import_wrong_password_fails_back_to_path() {
+    let (src, _id, dir) = open_keychain_with_entry("openai");
+    let mut app = test_app();
+    app.keychain = Some(src);
+    let _ = dispatch_open_keys_manager(&mut app);
+    keys_manager_state_mut(&mut app).export_dir = Some(dir.path().to_path_buf());
+    let _ = dispatch_keychain_export(
+        &mut app,
+        xai_omni_keychain::ExportScope::All,
+        Zeroizing::new("exp-pass".to_string()),
+    );
+    let path = match &keys_manager_state(&app).mode {
+        KeysManagerMode::ExportDone { path, .. } => path.clone(),
+        _ => panic!("ExportDone bekleniyor"),
+    };
+    let (mut dst, _did, _dir2) = open_keychain_with_entry("anthropic");
+    let victim = dst.list_keys().expect("list")[0].id.clone();
+    let _ = dst.remove_key(victim);
+    let _ = dst.save();
+    let mut app = test_app();
+    app.keychain = Some(dst);
+    let _ = dispatch_open_keys_manager(&mut app);
+    let _ = dispatch_keychain_import(&mut app, path, Zeroizing::new("yanlis".to_string()));
+    let state = keys_manager_state(&app);
+    assert!(state.error.is_some(), "hata mesajı olmalı");
+    assert_eq!(state.mode, KeysManagerMode::ImportPath);
 }

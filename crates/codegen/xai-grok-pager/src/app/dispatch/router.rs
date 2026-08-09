@@ -5,7 +5,10 @@ use super::auth::{
 };
 use super::billing::dispatch_open_supergrok_url;
 use super::connect::{
-    dispatch_connect_provider, dispatch_fetch_provider_models, dispatch_keychain_borrow,
+    dispatch_connect_provider, dispatch_fetch_provider_models, dispatch_keychain_add,
+    dispatch_keychain_borrow, dispatch_keychain_export, dispatch_keychain_import,
+    dispatch_keychain_remove, dispatch_keychain_remove_category, dispatch_keychain_reveal,
+    dispatch_keychain_set_default_category, dispatch_keychain_unlock, dispatch_keychain_update,
     dispatch_open_connect_picker, dispatch_open_keys_manager,
 };
 use super::ctx::{
@@ -856,9 +859,7 @@ pub(crate) fn dispatch(action: Action, app: &mut AppView) -> Vec<Effect> {
         Action::NextModel => vec![],
         Action::OpenConnectPicker => dispatch_open_connect_picker(app),
         Action::OpenKeysManager => dispatch_open_keys_manager(app),
-        Action::FetchProviderModels { base_url } => {
-            dispatch_fetch_provider_models(app, base_url)
-        }
+        Action::FetchProviderModels { base_url } => dispatch_fetch_provider_models(app, base_url),
         Action::ConnectProvider {
             provider_id,
             category,
@@ -866,6 +867,30 @@ pub(crate) fn dispatch(action: Action, app: &mut AppView) -> Vec<Effect> {
             base_url,
         } => dispatch_connect_provider(app, provider_id, category, model_id, base_url),
         Action::KeychainBorrow { key_id } => dispatch_keychain_borrow(app, key_id),
+        Action::KeychainUnlock { password } => dispatch_keychain_unlock(app, password),
+        Action::KeychainReveal { id } => dispatch_keychain_reveal(app, id),
+        Action::KeychainAdd {
+            category,
+            provider_id,
+            api_key,
+            model_id,
+            base_url,
+        } => dispatch_keychain_add(app, category, provider_id, api_key, model_id, base_url),
+        Action::KeychainUpdate {
+            id,
+            model_id,
+            base_url,
+            api_key,
+        } => dispatch_keychain_update(app, id, model_id, base_url, api_key),
+        Action::KeychainRemove { id } => dispatch_keychain_remove(app, id),
+        Action::KeychainRemoveCategory { name } => dispatch_keychain_remove_category(app, name),
+        Action::KeychainSetDefaultCategory { name } => {
+            dispatch_keychain_set_default_category(app, name)
+        }
+        Action::KeychainExport { scope, password } => {
+            dispatch_keychain_export(app, scope, password)
+        }
+        Action::KeychainImport { path, password } => dispatch_keychain_import(app, path, password),
         Action::SwitchModel { model_id, effort } => {
             let ActiveView::Agent(id) = app.active_view else {
                 return vec![];

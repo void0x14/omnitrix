@@ -11,6 +11,7 @@ pub mod cd;
 pub mod compact;
 pub mod compact_mode;
 pub mod config_agents;
+pub mod connect;
 pub mod context;
 pub mod copy;
 pub mod dashboard;
@@ -34,6 +35,7 @@ pub mod imagine;
 pub mod imagine_video;
 pub mod import_claude;
 pub mod jump;
+pub mod keys;
 pub mod login;
 pub mod logout;
 pub mod loop_cmd;
@@ -145,6 +147,8 @@ pub fn builtin_commands() -> Vec<Arc<dyn SlashCommand>> {
         Arc::new(jump::JumpCommand),
         Arc::new(login::LoginCommand),
         Arc::new(logout::LogoutCommand),
+        Arc::new(connect::ConnectCommand),
+        Arc::new(keys::KeysCommand),
         Arc::new(import_claude::ImportClaudeCommand),
         Arc::new(usage::UsageCommand),
         Arc::new(queue::QueueCommand),
@@ -276,6 +280,7 @@ mod tests {
             "compact-mode",
             "config",
             "config-agents",
+            "connect",
             "context",
             "copy",
             "cost",
@@ -304,6 +309,7 @@ mod tests {
             "imagine-video",
             "import-claude",
             "jump",
+            "keys",
             "login",
             "logout",
             "log",
@@ -369,6 +375,26 @@ mod tests {
                 assert!(SHELL_RESERVED.contains(&key), "unreserved pager key {key}");
             }
         }
+    }
+    #[test]
+    fn connect_and_keys_registered_in_builtin_commands() {
+        let reg = CommandRegistry::new(builtin_commands());
+        let connect = reg.get("connect").expect("/connect must be registered");
+        assert_eq!(connect.name(), "connect");
+        assert_eq!(connect.usage(), "/connect");
+        let keys = reg.get("keys").expect("/keys must be registered");
+        assert_eq!(keys.name(), "keys");
+        assert_eq!(keys.usage(), "/keys");
+        let models = ModelState::default();
+        let mut ctx = make_ctx(&models);
+        assert!(matches!(
+            connect.run(&mut ctx, ""),
+            CommandResult::Action(Action::OpenConnectPicker)
+        ));
+        assert!(matches!(
+            keys.run(&mut ctx, ""),
+            CommandResult::Action(Action::OpenKeysManager)
+        ));
     }
     #[test]
     fn builtin_registry_lookup_by_alias() {

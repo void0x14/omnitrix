@@ -694,7 +694,11 @@ pub fn render_welcome(
         AuthState::Pending { error } => {
             let label = params.login_label.unwrap_or("grok.com");
             let login_text = format!("Login with {}", label);
-            let menu = [("l", login_text.as_str()), ("q", "Quit")];
+            let menu = [
+                ("c", "Connect Provider"),
+                ("l", login_text.as_str()),
+                ("q", "Quit"),
+            ];
             let msg = error.as_deref().map(|e| (e, theme.accent_error));
             let info = PromptInfo {
                 model_name: params.model_name,
@@ -1773,6 +1777,9 @@ fn render_welcome_done(
         }
         items.push((key_w, "New worktree"));
         items.push((key_s, "Resume session"));
+        // Provider connect wizard row — plain `c` key (also the palette /
+        // `/connect` route into the same modal).
+        items.push(("c", "Connect Provider"));
         // "Changelog" above Quit; no shortcut — opened by click (row or block).
         if show_changelog_action {
             items.push(("", "Changelog"));
@@ -3712,6 +3719,34 @@ mod tests {
             out.push('\n');
         }
         out
+    }
+
+    #[test]
+    fn pending_menu_includes_connect_provider_row() {
+        let auth = AuthState::Pending { error: None };
+        let trust = TrustState::Done;
+        let params = render_params(&auth, &trust, None);
+        let area = Rect::new(0, 0, 100, 40);
+        let mut buf = Buffer::empty(area);
+        let mut prompt = PromptWidget::new();
+        let mut picker = PickerState::default();
+        render_welcome(area, &mut buf, &params, &mut prompt, &mut picker);
+        let text = buffer_text(&buf);
+        assert!(
+            text.contains("Connect Provider"),
+            "pending menu must offer Connect Provider:\n{text}"
+        );
+    }
+
+    #[test]
+    fn done_menu_includes_connect_provider_row() {
+        let auth = AuthState::Done;
+        let trust = TrustState::Done;
+        let text = render_done_text(&render_params(&auth, &trust, None));
+        assert!(
+            text.contains("Connect Provider"),
+            "done menu must offer Connect Provider:\n{text}"
+        );
     }
 
     #[test]

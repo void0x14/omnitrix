@@ -2,8 +2,13 @@
 //!
 //! Invariants (dispatch/mod.rs): this module never touches the terminal,
 //! network, or filesystem. Keychain borrows here are RAM-only (the handle is
-//! opened by the unlock flow, Task 7-8); config.toml writes go through
+//! opened by the unlock flow); config.toml writes go through
 //! [`Effect::ConnectProviderWrite`] (async IO, `effects` katmanı).
+//!
+//! Keys manager (Task 9) dispatch'i şu istisnalarla çalışır (belgelenmiş
+//! invariant istisnaları — transcript export dispatch'iyle aynı model):
+//! - küçük atomik `save()` yazmaları (yeni key / silme / güncelleme),
+//! - export `.omx` dosya yazımı + import dosya okuması.
 //!
 //! Güvenlik kuralı: keychain'den çözülen key config.toml'a ASLA düz metin
 //! yazılmaz. Key yalnızca oturum süresince RAM'de yaşar:
@@ -12,18 +17,22 @@
 //! - `xai_grok_shell::auth::runtime_key` (chat seam — `resolve_credentials`
 //!   → `own_credential` fallback).
 
+use std::path::PathBuf;
+
 use xai_grok_shell::sampling::ApiBackend;
-use xai_omni_keychain::KeychainError;
+use xai_omni_keychain::{
+    ExportScope, ImportSummary, Keychain, KeychainError, KeychainOptions, MasterKeyTtl,
+};
+use zeroize::Zeroizing;
 
 use crate::app::actions::Effect;
 use crate::app::app_view::{ActiveView, AppView};
-use crate::views::provider_picker::{
-    ConnectStep, KeyMode, ModelFetchState, ProviderConnectFlow,
-};
+use crate::views::keys_manager::{KeysManagerMode, KeysManagerState};
+use crate::views::provider_picker::{ConnectStep, KeyMode, ModelFetchState, ProviderConnectFlow};
 
-/// Keychain kilitli / henüz açılmamış durum mesajı. Task 7-8 unlock TUI'si bu
-/// akışı devralır; şimdilik `grok keys` / `grok connect` stdin akışı açar.
-pub(super) const KEYCHAIN_LOCKED_MSG: &str = "keychain kilitli; önce keychain'i açın (unlock TUI'si Task 7-8'de; şimdilik `grok keys list` ile açın)";
+/// Keychain kilitli / henüz açılmamış durum mesajı.
+pub(super) const KEYCHAIN_LOCKED_MSG: &str =
+    "keychain kilitli; `/keys` içinde master password ile açın";
 
 // ---------------------------------------------------------------------------
 // Provider connect wizard (Task 7: durum makinesi modalı) / keys manager
@@ -95,10 +104,433 @@ pub(super) fn dispatch_open_connect_picker(app: &mut AppView) -> Vec<Effect> {
     effects
 }
 
-/// Keys/keychain manager'ı açar. Task 9 bu flag'i gerçek keys TUI'siyle
-/// değiştirir; şimdilik yalnızca placeholder flag kurulur.
+/// Keys/keychain manager'ı açar (Task 9: gerçek keys TUI'si —
+/// `ActiveModal::KeysManager`). `dispatch_open_connect_picker` deseni:
+/// aktif agent'a (yoksa placeholder oturuma) modalı kurar; keychain RAM'den
+/// listelenir (kilitli/henüz açılmamışsa boş liste + `Unlock` modu). IO yok
+/// (keychain açma/export/import kullanıcı akışlarında dispatch katmanında
+/// olur — belgelenmiş invariant istisnaları).
 pub(super) fn dispatch_open_keys_manager(app: &mut AppView) -> Vec<Effect> {
-    app.keys_manager_open = true;
+    use crate::views::modal::ActiveModal;
+
+    let mut effects = vec![];
+    let id = match app.active_view {
+        ActiveView::Agent(id) => id,
+        _ => {
+            if let Some(existing) = app.agents.keys().next().copied() {
+                crate::app::dispatch::ctx::switch_to_agent(
+                    app,
+                    existing,
+                    crate::app::dispatch::ctx::SwitchCause::Picker,
+                );
+                existing
+            } else {
+                let (new_id, create_effects) =
+                    crate::app::dispatch::session::lifecycle::dispatch_new_session_inner_with_id(
+                        app, None,
+                    );
+                effects.extend(create_effects);
+                new_id
+            }
+        }
+    };
+
+    let keychain_open = app.keychain.is_some();
+    let entries = match app.keychain.as_mut() {
+        Some(kc) => kc.list_keys().unwrap_or_default(),
+        None => vec![],
+    };
+
+    if let Some(agent) = app.agents.get_mut(&id) {
+        agent.active_modal = Some(ActiveModal::KeysManager {
+            state: Box::new(KeysManagerState::new(entries, !keychain_open)),
+        });
+    }
+    effects
+}
+
+// ---------------------------------------------------------------------------
+// Keys manager keychain işlemleri (Task 9) — aksiyonlar dispatch'e gelir,
+// sonuç modal state'ine geri yazılır (pure-state view invariant'ı).
+// ---------------------------------------------------------------------------
+
+/// Açık `KeysManager` modalını taşıyan ilk agent'ın state'ine erişim.
+fn with_keys_manager(app: &mut AppView, f: impl FnOnce(&mut KeysManagerState)) {
+    use crate::views::modal::ActiveModal;
+    for agent in app.agents.values_mut() {
+        if let Some(ActiveModal::KeysManager { state }) = &mut agent.active_modal {
+            f(state);
+            return;
+        }
+    }
+}
+
+/// Modalın `keychain_path` override'ı veya `$GROK_HOME/keychain.omx`.
+fn keys_manager_keychain_path(app: &AppView) -> PathBuf {
+    use crate::views::modal::ActiveModal;
+    for agent in app.agents.values() {
+        if let Some(ActiveModal::KeysManager { state }) = &agent.active_modal
+            && let Some(p) = &state.keychain_path
+        {
+            return p.clone();
+        }
+    }
+    xai_grok_config::grok_home().join(crate::keys_cmd::KEYCHAIN_FILE)
+}
+
+/// Modalın `export_dir` override'ı veya `grok_home()`.
+fn keys_manager_export_dir(app: &AppView) -> PathBuf {
+    use crate::views::modal::ActiveModal;
+    for agent in app.agents.values() {
+        if let Some(ActiveModal::KeysManager { state }) = &agent.active_modal
+            && let Some(d) = &state.export_dir
+        {
+            return d.clone();
+        }
+    }
+    xai_grok_config::grok_home()
+}
+
+/// Keychain'den güncel kayıtları modal state'ine taşır.
+fn reload_keys_manager_entries(app: &mut AppView) {
+    let entries = match app.keychain.as_mut() {
+        Some(kc) => kc.list_keys().unwrap_or_default(),
+        None => vec![],
+    };
+    let default = app
+        .keychain
+        .as_ref()
+        .map(|kc| kc.default_category())
+        .unwrap_or_default();
+    with_keys_manager(app, |state| state.apply_entries(entries, default));
+}
+
+/// Keychain açma: master password → `Keychain::open` (dosya yoksa yeni
+/// keychain). Başarı → `Browse` + satırlar; hata → `Unlock { error }`.
+pub(super) fn dispatch_keychain_unlock(
+    app: &mut AppView,
+    password: Zeroizing<String>,
+) -> Vec<Effect> {
+    let path = keys_manager_keychain_path(app);
+    match Keychain::open(
+        KeychainOptions {
+            path: Some(path),
+            ttl: MasterKeyTtl::default(),
+        },
+        || password.to_string(),
+    ) {
+        Ok(kc) => {
+            app.keychain = Some(kc);
+            reload_keys_manager_entries(app);
+            with_keys_manager(app, |state| state.apply_unlocked());
+        }
+        Err(_) => {
+            with_keys_manager(app, |state| {
+                state.apply_unlock_failed("yanlış master password (veya bozuk dosya)".to_string());
+            });
+        }
+    }
+    vec![]
+}
+
+/// Tam key'i keychain'den çözüp `Reveal` moduna taşır (RAM; `Zeroizing`).
+pub(super) fn dispatch_keychain_reveal(app: &mut AppView, id: String) -> Vec<Effect> {
+    match app.keychain.as_mut() {
+        Some(kc) => match kc.reveal(id.clone()) {
+            Ok(full_key) => {
+                with_keys_manager(app, |state| state.apply_reveal(id, full_key));
+            }
+            Err(e) => {
+                with_keys_manager(app, |state| {
+                    state.apply_error_and_browse(format!(
+                        "reveal başarısız: {}",
+                        keychain_error_msg(&e)
+                    ));
+                });
+            }
+        },
+        None => {
+            with_keys_manager(app, |state| {
+                state.apply_error_and_browse(KEYCHAIN_LOCKED_MSG.to_string());
+            });
+        }
+    }
+    vec![]
+}
+
+/// Yeni kayıt: RAM `add_key` + küçük atomik `save()` → satırlar taze.
+pub(super) fn dispatch_keychain_add(
+    app: &mut AppView,
+    category: String,
+    provider_id: String,
+    api_key: Zeroizing<String>,
+    model_id: Option<String>,
+    base_url: Option<String>,
+) -> Vec<Effect> {
+    match app.keychain.as_mut() {
+        Some(kc) => match kc.add_key(&category, &provider_id, &api_key, model_id, base_url) {
+            Ok(_id) => {
+                if let Err(e) = kc.save() {
+                    tracing::warn!(target: "keys", error = %e, "keychain save failed after add");
+                }
+                reload_keys_manager_entries(app);
+                with_keys_manager(app, |state| {
+                    state.mode = KeysManagerMode::Browse;
+                    state.error = None;
+                    state.selected = 0;
+                    state.master_editor.reset();
+                });
+            }
+            Err(e) => {
+                with_keys_manager(app, |state| {
+                    state.apply_error_and_browse(format!(
+                        "kayıt başarısız: {}",
+                        keychain_error_msg(&e)
+                    ));
+                });
+            }
+        },
+        None => {
+            with_keys_manager(app, |state| {
+                state.apply_error_and_browse(KEYCHAIN_LOCKED_MSG.to_string());
+            });
+        }
+    }
+    vec![]
+}
+
+/// Kayıt güncelle (model / base_url / opsiyonel key).
+pub(super) fn dispatch_keychain_update(
+    app: &mut AppView,
+    id: String,
+    model_id: Option<String>,
+    base_url: Option<String>,
+    api_key: Option<Zeroizing<String>>,
+) -> Vec<Effect> {
+    match app.keychain.as_mut() {
+        Some(kc) => match kc.update_key(id, model_id, base_url, api_key) {
+            Ok(()) => {
+                if let Err(e) = kc.save() {
+                    tracing::warn!(target: "keys", error = %e, "keychain save failed after update");
+                }
+                reload_keys_manager_entries(app);
+                with_keys_manager(app, |state| {
+                    state.mode = KeysManagerMode::Browse;
+                    state.error = None;
+                    state.master_editor.reset();
+                });
+            }
+            Err(e) => {
+                with_keys_manager(app, |state| {
+                    state.apply_error_and_browse(format!(
+                        "güncelleme başarısız: {}",
+                        keychain_error_msg(&e)
+                    ));
+                });
+            }
+        },
+        None => {
+            with_keys_manager(app, |state| {
+                state.apply_error_and_browse(KEYCHAIN_LOCKED_MSG.to_string());
+            });
+        }
+    }
+    vec![]
+}
+
+/// Kayıt sil.
+pub(super) fn dispatch_keychain_remove(app: &mut AppView, id: String) -> Vec<Effect> {
+    match app.keychain.as_mut() {
+        Some(kc) => match kc.remove_key(id) {
+            Ok(()) => {
+                if let Err(e) = kc.save() {
+                    tracing::warn!(target: "keys", error = %e, "keychain save failed after remove");
+                }
+                reload_keys_manager_entries(app);
+                with_keys_manager(app, |state| {
+                    state.mode = KeysManagerMode::Browse;
+                    state.error = None;
+                });
+            }
+            Err(e) => {
+                with_keys_manager(app, |state| {
+                    state.apply_error_and_browse(format!(
+                        "silme başarısız: {}",
+                        keychain_error_msg(&e)
+                    ));
+                });
+            }
+        },
+        None => {
+            with_keys_manager(app, |state| {
+                state.apply_error_and_browse(KEYCHAIN_LOCKED_MSG.to_string());
+            });
+        }
+    }
+    vec![]
+}
+
+/// Kategori (ve içindeki tüm key'leri) sil.
+pub(super) fn dispatch_keychain_remove_category(app: &mut AppView, name: String) -> Vec<Effect> {
+    match app.keychain.as_mut() {
+        Some(kc) => match kc.remove_category(&name) {
+            Ok(()) => {
+                if let Err(e) = kc.save() {
+                    tracing::warn!(target: "keys", error = %e, "keychain save failed after category remove");
+                }
+                reload_keys_manager_entries(app);
+                with_keys_manager(app, |state| {
+                    state.mode = KeysManagerMode::Browse;
+                    state.selected = 0;
+                    state.error = None;
+                });
+            }
+            Err(e) => {
+                with_keys_manager(app, |state| {
+                    state.apply_error_and_browse(format!(
+                        "kategori silme başarısız: {}",
+                        keychain_error_msg(&e)
+                    ));
+                });
+            }
+        },
+        None => {
+            with_keys_manager(app, |state| {
+                state.apply_error_and_browse(KEYCHAIN_LOCKED_MSG.to_string());
+            });
+        }
+    }
+    vec![]
+}
+
+/// Varsayılan kategori.
+pub(super) fn dispatch_keychain_set_default_category(
+    app: &mut AppView,
+    name: String,
+) -> Vec<Effect> {
+    match app.keychain.as_mut() {
+        Some(kc) => match kc.set_default_category(&name) {
+            Ok(()) => {
+                if let Err(e) = kc.save() {
+                    tracing::warn!(target: "keys", error = %e, "keychain save failed after default change");
+                }
+                reload_keys_manager_entries(app);
+                with_keys_manager(app, |state| {
+                    state.mode = KeysManagerMode::Browse;
+                    state.error = None;
+                });
+            }
+            Err(e) => {
+                with_keys_manager(app, |state| {
+                    state.apply_error_and_browse(format!(
+                        "varsayılan ayarlanamadı: {}",
+                        keychain_error_msg(&e)
+                    ));
+                });
+            }
+        },
+        None => {
+            with_keys_manager(app, |state| {
+                state.apply_error_and_browse(KEYCHAIN_LOCKED_MSG.to_string());
+            });
+        }
+    }
+    vec![]
+}
+
+/// Export: kapsam + export şifresi → `.omx` dosyası (varsayılan yol
+/// `~/.grok/keychain-export-<ts>.omx`; test override'ı `export_dir`).
+pub(super) fn dispatch_keychain_export(
+    app: &mut AppView,
+    scope: ExportScope,
+    password: Zeroizing<String>,
+) -> Vec<Effect> {
+    let result: Result<(PathBuf, usize), String> = (|| {
+        let kc = app
+            .keychain
+            .as_ref()
+            .ok_or_else(|| KEYCHAIN_LOCKED_MSG.to_string())?;
+        let count = match kc.list_keys() {
+            Ok(entries) => entries
+                .iter()
+                .filter(|e| match &scope {
+                    ExportScope::All => true,
+                    ExportScope::Categories(cats) => cats.contains(&e.category),
+                })
+                .count(),
+            Err(_) => 0,
+        };
+        let bytes = xai_omni_keychain::export_keychain(kc, scope, &password)
+            .map_err(|e| format!("export başarısız: {e}"))?;
+        let dir = keys_manager_export_dir(app);
+        let path = crate::keys_cmd::default_export_path(
+            &dir,
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs())
+                .unwrap_or(0),
+        );
+        std::fs::write(&path, &bytes)
+            .map_err(|e| format!("export dosyası yazılamadı ({}): {e}", path.display()))?;
+        Ok((path, count))
+    })();
+    match result {
+        Ok((path, count)) => {
+            with_keys_manager(app, |state| {
+                state.mode = KeysManagerMode::ExportDone {
+                    path: path.display().to_string(),
+                    count,
+                };
+                state.error = None;
+                state.master_editor.reset();
+                state.show_master = false;
+            });
+        }
+        Err(msg) => {
+            with_keys_manager(app, |state| state.apply_error_and_browse(msg));
+        }
+    }
+    vec![]
+}
+
+/// Import: dosya oku + merge (conflict → üzerine yaz) + `save()` → özet.
+pub(super) fn dispatch_keychain_import(
+    app: &mut AppView,
+    path: String,
+    password: Zeroizing<String>,
+) -> Vec<Effect> {
+    let result: Result<ImportSummary, String> = (|| {
+        let bytes = std::fs::read(&path).map_err(|e| format!("export dosyası okunamadı: {e}"))?;
+        let kc = app
+            .keychain
+            .as_mut()
+            .ok_or_else(|| KEYCHAIN_LOCKED_MSG.to_string())?;
+        let summary = xai_omni_keychain::import_keychain(kc, &bytes, &password, true)
+            .map_err(|e| format!("import başarısız: {e}"))?;
+        if let Err(e) = kc.save() {
+            tracing::warn!(target: "keys", error = %e, "keychain save failed after import");
+        }
+        Ok(summary)
+    })();
+    match result {
+        Ok(summary) => {
+            reload_keys_manager_entries(app);
+            with_keys_manager(app, |state| {
+                state.mode = KeysManagerMode::ImportDone { summary };
+                state.error = None;
+                state.master_editor.reset();
+                state.show_master = false;
+            });
+        }
+        Err(msg) => {
+            with_keys_manager(app, |state| {
+                state.error = Some(msg);
+                state.mode = KeysManagerMode::ImportPath;
+                state.master_editor.reset();
+                state.show_master = false;
+            });
+        }
+    }
     vec![]
 }
 
@@ -311,8 +743,8 @@ fn resolve_wizard_key(
             }
         }
         KeyMode::Env(name) => {
-            let value = std::env::var(name)
-                .map_err(|_| format!("ortam değişkeni '{name}' set değil"))?;
+            let value =
+                std::env::var(name).map_err(|_| format!("ortam değişkeni '{name}' set değil"))?;
             Ok((
                 value,
                 name.clone(),

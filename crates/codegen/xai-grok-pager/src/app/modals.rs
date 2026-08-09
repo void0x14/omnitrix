@@ -127,6 +127,16 @@ impl AgentView {
             return self.handle_connect_picker_input(&ev);
         }
 
+        // KeysManager: own mode machine owns every key (forms, reveals,
+        // confirms, scope pickers) — Esc is `Close` (unlock screen / browse)
+        // or `Back` (sub-modes); the modal chrome handles nothing here.
+        // Keychain işlemleri `KeysManagerOutcome::Action` olarak dispatch'e
+        // gider (AppView keychain'e sahiptir; view pure-state kalır).
+        if matches!(modal, ActiveModal::KeysManager { .. }) {
+            let ev = crossterm::event::Event::Key(*key);
+            return self.handle_keys_manager_input(&ev);
+        }
+
         // Picker-based modals: route Esc through ModalWindow chrome first,
         // then delegate remaining keys to the picker input handler.
         if matches!(
@@ -494,6 +504,7 @@ impl AgentView {
             | ActiveModal::MemoryBrowser { .. }
             | ActiveModal::Settings { .. }
             | ActiveModal::ProviderConnect { .. }
+            | ActiveModal::KeysManager { .. }
             | ActiveModal::ResetSettingsConfirm { .. }
             | ActiveModal::RememberNoteReview { .. } => unreachable!(),
         }
@@ -512,6 +523,9 @@ impl AgentView {
         }
         if matches!(self.active_modal, Some(ActiveModal::ProviderConnect { .. })) {
             return self.handle_connect_picker_input(&event);
+        }
+        if matches!(self.active_modal, Some(ActiveModal::KeysManager { .. })) {
+            return self.handle_keys_manager_input(&event);
         }
         if matches!(
             self.active_modal,
@@ -620,7 +634,8 @@ impl AgentView {
                 // `/models` fetch'ini bir kez tetikle (Idle guard).
                 let mut fetch_url: Option<String> = None;
                 {
-                    let Some(ActiveModal::ProviderConnect { flow, .. }) = self.active_modal.as_mut()
+                    let Some(ActiveModal::ProviderConnect { flow, .. }) =
+                        self.active_modal.as_mut()
                     else {
                         return InputOutcome::Changed;
                     };
@@ -636,13 +651,36 @@ impl AgentView {
                     }
                 }
                 if let Some(url) = fetch_url {
-                    InputOutcome::Action(Action::FetchProviderModels {
-                        base_url: url,
-                    })
+                    InputOutcome::Action(Action::FetchProviderModels { base_url: url })
                 } else {
                     InputOutcome::Changed
                 }
             }
+        }
+    }
+
+    /// Keys/keychain manager input. Routes the raw event into the manager's
+    /// own mode machine (`crate::views::keys_manager`); keychain operations
+    /// come back as [`InputOutcome::Action`] and run in dispatch (AppView
+    /// layer owns the keychain). `Close` closes the modal.
+    fn handle_keys_manager_input(&mut self, ev: &crossterm::event::Event) -> InputOutcome {
+        use crate::views::keys_manager::{KeysManagerOutcome, handle_keys_manager_event};
+        let outcome = {
+            let Some(crate::views::modal::ActiveModal::KeysManager { state, .. }) =
+                self.active_modal.as_mut()
+            else {
+                return InputOutcome::Changed;
+            };
+            handle_keys_manager_event(state, ev)
+        };
+        match outcome {
+            KeysManagerOutcome::Close => {
+                self.active_modal = None;
+                InputOutcome::Changed
+            }
+            KeysManagerOutcome::Changed => InputOutcome::Changed,
+            KeysManagerOutcome::Unchanged => InputOutcome::Unchanged,
+            KeysManagerOutcome::Action(action) => InputOutcome::Action(action),
         }
     }
 
@@ -942,6 +980,14 @@ impl AgentView {
                             PaletteCommand::OpenAgentsModal => {
                                 self.active_modal = None;
                                 InputOutcome::Action(Action::OpenConfigAgentsModal(None))
+                            }
+                            PaletteCommand::ConnectProvider => {
+                                self.active_modal = None;
+                                InputOutcome::Action(Action::OpenConnectPicker)
+                            }
+                            PaletteCommand::OpenKeys => {
+                                self.active_modal = None;
+                                InputOutcome::Action(Action::OpenKeysManager)
                             }
                             PaletteCommand::EditPromptExternal => {
                                 self.active_modal = None;
@@ -1669,6 +1715,34 @@ impl AgentView {
                 ModalWindowOutcome::Unhandled => {
                     let ev = crossterm::event::Event::Mouse(*mouse);
                     self.handle_connect_picker_input(&ev)
+                }
+                _ => InputOutcome::Changed,
+            };
+        }
+
+        // KeysManager: chrome (close button) first, then content (row click).
+        if let Some(ActiveModal::KeysManager { state, .. }) = &mut self.active_modal {
+            let outcome =
+                mw::handle_modal_mouse(&mut state.window, mouse.kind, mouse.column, mouse.row);
+            return match outcome {
+                ModalWindowOutcome::CloseRequested => {
+                    self.active_modal = None;
+                    InputOutcome::Changed
+                }
+                ModalWindowOutcome::Handled => InputOutcome::Changed,
+                ModalWindowOutcome::Unhandled => {
+                    use crate::views::keys_manager::{
+                        KeysManagerOutcome, handle_keys_manager_mouse,
+                    };
+                    match handle_keys_manager_mouse(state, mouse.kind, mouse.column, mouse.row) {
+                        KeysManagerOutcome::Changed => InputOutcome::Changed,
+                        KeysManagerOutcome::Close => {
+                            self.active_modal = None;
+                            InputOutcome::Changed
+                        }
+                        KeysManagerOutcome::Unchanged => InputOutcome::Unchanged,
+                        KeysManagerOutcome::Action(action) => InputOutcome::Action(action),
+                    }
                 }
                 _ => InputOutcome::Changed,
             };
@@ -2530,6 +2604,8 @@ impl AgentView {
                         flow,
                     );
                 }
+            } else if let modal::ActiveModal::KeysManager { state: km_state } = active_modal {
+                crate::views::keys_manager::render_keys_manager(buf, area, km_state, compact);
             } else if let modal::ActiveModal::Settings {
                 state: settings_state,
             } = active_modal

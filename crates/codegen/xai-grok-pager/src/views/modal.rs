@@ -300,6 +300,16 @@ pub enum ActiveModal {
         /// Shared modal window chrome state.
         window: ModalWindowState,
     },
+    /// Keys/keychain manager (`Action::OpenKeysManager` — `/keys`).
+    ///
+    /// Tablo görünümü (Kategori | Provider | Maskeli | Model | Son Kullanım)
+    /// + action çubuğu; kilitliyse kendi master-password mini-input'uyla
+    /// açar (`KeysManagerState::Unlock`). Keychain RAM mutasyonları + küçük
+    /// atomik `save()` yazmaları view katmanında yapılır (memory_modal
+    /// örneği).
+    KeysManager {
+        state: Box<crate::views::keys_manager::KeysManagerState>,
+    },
     /// Reset-settings confirmation, stacked above Settings.
     ///
     /// The underlying `SettingsModalState` is moved in/out so cancel
@@ -373,6 +383,10 @@ pub enum PaletteCommand {
     OpenSettings,
     /// Open the Agents modal (listing all agent definitions).
     OpenAgentsModal,
+    /// Open the provider connect wizard (`Action::OpenConnectPicker`).
+    ConnectProvider,
+    /// Open the keychain manager (`Action::OpenKeysManager`).
+    OpenKeys,
 }
 /// Build the default set of palette entries with section grouping.
 ///
@@ -532,6 +546,22 @@ pub(crate) fn default_palette_entries(
             shortcut: "/config-agents".into(),
             command: PaletteCommand::OpenAgentsModal,
         },
+        // ── Auth ──
+        PaletteEntry {
+            label: "Auth".into(),
+            shortcut: String::new(),
+            command: PaletteCommand::SectionHeader("Auth".into()),
+        },
+        PaletteEntry {
+            label: "Connect Provider".into(),
+            shortcut: "/connect".into(),
+            command: PaletteCommand::ConnectProvider,
+        },
+        PaletteEntry {
+            label: "API Keys (Keychain)".into(),
+            shortcut: "/keys".into(),
+            command: PaletteCommand::OpenKeys,
+        },
         // ── Other ──
         PaletteEntry {
             label: "Other".into(),
@@ -648,6 +678,7 @@ impl ActiveModal {
             | ActiveModal::MemoryBrowser { .. }
             | ActiveModal::Settings { .. }
             | ActiveModal::ProviderConnect { .. }
+            | ActiveModal::KeysManager { .. }
             | ActiveModal::RememberNoteReview { .. } => vec![],
         }
     }
@@ -677,6 +708,7 @@ impl ActiveModal {
             ActiveModal::ShortcutsHelp { .. } => "Keyboard Shortcuts",
             ActiveModal::MemoryBrowser { .. } => "Memory",
             ActiveModal::ProviderConnect { .. } => "Connect provider",
+            ActiveModal::KeysManager { .. } => "API Keys (Keychain)",
             ActiveModal::Settings { .. } => crate::views::settings_modal::MODAL_TITLE,
             ActiveModal::ResetSettingsConfirm { .. } => "Reset setting?",
             ActiveModal::RememberNoteReview { .. } => "Memory Note",
@@ -1415,6 +1447,83 @@ mod palette_sharing_tests {
         assert_eq!(
             entries.first().map(|e| e.title.as_str()),
             Some("Getting Started")
+        );
+    }
+}
+#[cfg(test)]
+mod auth_palette_tests {
+    use super::*;
+    #[test]
+    fn connect_provider_entry_present_with_shortcut() {
+        let entries = default_palette_entries(true, crate::app::ScreenMode::Fullscreen);
+        let entry = entries
+            .iter()
+            .find(|e| matches!(e.command, PaletteCommand::ConnectProvider))
+            .expect("Connect Provider palette entry missing");
+        assert_eq!(entry.label, "Connect Provider");
+        assert_eq!(entry.shortcut, "/connect");
+    }
+    #[test]
+    fn open_keys_entry_present_with_shortcut() {
+        let entries = default_palette_entries(true, crate::app::ScreenMode::Fullscreen);
+        let entry = entries
+            .iter()
+            .find(|e| matches!(e.command, PaletteCommand::OpenKeys))
+            .expect("API Keys palette entry missing");
+        assert_eq!(entry.label, "API Keys (Keychain)");
+        assert_eq!(entry.shortcut, "/keys");
+    }
+    #[test]
+    fn auth_entries_live_in_auth_section() {
+        let entries = default_palette_entries(true, crate::app::ScreenMode::Fullscreen);
+        let auth_idx = entries
+            .iter()
+            .position(|e| matches!(&e.command, PaletteCommand::SectionHeader(h) if h == "Auth"))
+            .expect("Auth section header missing");
+        assert!(
+            entries
+                .iter()
+                .skip(auth_idx)
+                .take(3)
+                .any(|e| matches!(e.command, PaletteCommand::ConnectProvider)),
+            "Connect Provider must sit inside the Auth section"
+        );
+        assert!(
+            entries
+                .iter()
+                .skip(auth_idx)
+                .take(3)
+                .any(|e| matches!(e.command, PaletteCommand::OpenKeys)),
+            "Open Keys must sit inside the Auth section"
+        );
+    }
+    #[test]
+    fn auth_entries_filter_by_label_and_shortcut() {
+        let by_label = filter_palette_entries("connect", true, crate::app::ScreenMode::Fullscreen);
+        assert!(
+            by_label
+                .iter()
+                .any(|e| matches!(e.command, PaletteCommand::ConnectProvider)),
+            "filtering 'connect' must surface Connect Provider"
+        );
+        let by_shortcut = filter_palette_entries("/keys", true, crate::app::ScreenMode::Fullscreen);
+        assert!(
+            by_shortcut
+                .iter()
+                .any(|e| matches!(e.command, PaletteCommand::OpenKeys)),
+            "filtering '/keys' must surface the keychain entry"
+        );
+    }
+    #[test]
+    fn auth_entries_survive_minimal_mode() {
+        let minimal = default_palette_entries(true, crate::app::ScreenMode::Minimal);
+        assert!(
+            minimal
+                .iter()
+                .any(|e| matches!(e.command, PaletteCommand::ConnectProvider))
+                && minimal
+                    .iter()
+                    .any(|e| matches!(e.command, PaletteCommand::OpenKeys))
         );
     }
 }

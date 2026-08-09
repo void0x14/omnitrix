@@ -276,7 +276,6 @@ fn test_app() -> AppView {
         voice_cmd_tx: None,
         voice_state: VoiceState::Idle,
         auth_manager: None,
-        keys_manager_open: false,
         keychain: None,
         keychain_borrow: None,
     }
