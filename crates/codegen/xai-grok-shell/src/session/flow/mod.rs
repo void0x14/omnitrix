@@ -5,11 +5,11 @@
 //! makinelerine aittir. AI yalnızca mevcut aşamanın araçlarıyla çalışır ve
 //! aşamayı `flow_checkpoint` ile kapatır.
 
+pub mod classifier;
 pub mod definition;
+pub mod duration;
+pub mod gate;
 pub mod state;
-// pub mod classifier;  // Task 2
-// pub mod duration;    // Task 2
 // pub mod events;      // Task 3
-// pub mod gate;        // Task 2
 // pub mod governor;    // Task 3
 // pub mod store;       // Task 3
