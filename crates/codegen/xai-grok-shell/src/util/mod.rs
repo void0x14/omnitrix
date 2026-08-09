@@ -1,3 +1,4 @@
+pub mod auto_connect;
 pub mod config;
 pub mod grok_auth_credentials;
 pub mod hooks;
