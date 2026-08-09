@@ -128,10 +128,49 @@ async fn probe_one(
     }
 }
 
-/// base URL'yi normalize eder: sondaki `/`'ler atılır; gerisi olduğu gibi
+/// base URL'yi normalize eder: userinfo (örn. `https://sk-secret@host/`)
+/// güvenli biçimde strip edilir, sondaki `/`'ler atılır; gerisi olduğu gibi
 /// korunur (aynı endpoint). Probe path'i `{base}/models` olarak eklenir.
+///
+/// Userinfo strip edilmezse secret hem log/Debug çıktısına sızar hem de
+/// reqwest tarafından Basic Authorization'a çevrilir; bu fonksiyon ikisini de
+/// engeller. Userinfo içermeyen URL'ler birebir (yalnızca son `/` silinerek)
+/// geçer.
 fn normalize_base_url(url: &str) -> String {
-    url.trim_end_matches('/').to_string()
+    let cleaned = match url::Url::parse(url) {
+        Ok(mut parsed) if !parsed.username().is_empty() || parsed.password().is_some() => {
+            let _ = parsed.set_username("");
+            let _ = parsed.set_password(None);
+            parsed.as_str().to_string()
+        }
+        Ok(_) => url.to_string(),
+        // Parse edilemeyen girişlerde de authority bölümündeki userinfo'yu
+        // elle temizle (log/result'a sızmaması için).
+        Err(_) => strip_userinfo_manual(url),
+    };
+    cleaned.trim_end_matches('/').to_string()
+}
+
+/// URL olarak parse edilemeyen string'lerde userinfo'yu elle kaldırır:
+/// `scheme://userinfo@host/path` → `scheme://host/path`. Userinfo yoksa
+/// (ya da scheme yoksa) girdiyi olduğu gibi döner.
+fn strip_userinfo_manual(url: &str) -> String {
+    let Some(scheme_end) = url.find("://") else {
+        return url.to_string();
+    };
+    let rest = &url[scheme_end + 3..];
+    let authority_end = rest
+        .find(|c| c == '/' || c == '?' || c == '#')
+        .unwrap_or(rest.len());
+    let authority = &rest[..authority_end];
+    let Some(at) = authority.rfind('@') else {
+        return url.to_string();
+    };
+    let mut out = String::with_capacity(url.len());
+    out.push_str(&url[..scheme_end + 3]);
+    out.push_str(&authority[at + 1..]);
+    out.push_str(&rest[authority_end..]);
+    out
 }
 
 /// URL'den deterministik region çıkarımı: host label'ları arasında AWS/GCP

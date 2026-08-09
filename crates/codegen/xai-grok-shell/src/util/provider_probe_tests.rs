@@ -315,6 +315,84 @@ async fn probe_empty_requests_empty_results() {
     assert!(results.is_empty());
 }
 
+#[tokio::test]
+async fn probe_strips_userinfo_never_leaks_in_request_logs_or_debug() {
+    struct BufWriter(Arc<Mutex<Vec<u8>>>);
+    impl std::io::Write for BufWriter {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            self.0.lock().unwrap().extend_from_slice(buf);
+            Ok(buf.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+    impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for BufWriter {
+        type Writer = BufWriter;
+        fn make_writer(&'a self) -> Self::Writer {
+            BufWriter(self.0.clone())
+        }
+    }
+
+    let log_buf = Arc::new(Mutex::new(Vec::new()));
+    let subscriber = tracing_subscriber::fmt()
+        .with_max_level(tracing::Level::DEBUG)
+        .with_writer(BufWriter(log_buf.clone()))
+        .finish();
+    let _guard = tracing::subscriber::set_default(subscriber);
+
+    // 404: ok=true (endpoint erişilebilir) + non-success log yolu tetiklenir.
+    let capture = Arc::new(Mutex::new(Vec::new()));
+    let addr = spawn_status_server(404, Some(capture.clone())).await;
+    let userinfo_secret = "sk-userinfo-secret-0001";
+    let results = probe_candidates(vec![ProbeRequest {
+        provider_id: "xai".to_string(),
+        api_key: Zeroizing::new(TEST_KEY.to_string()),
+        base_urls: vec![format!("http://{userinfo_secret}@{addr}/")],
+        timeout: Duration::from_millis(1000),
+    }])
+    .await;
+
+    // Endpoint userinfo'ya rağmen erişilebilir.
+    let r = &results[0];
+    assert!(r.ok);
+    assert_eq!(r.http_status, Some(404));
+    // Userinfo sonuçtan temizlendi (Debug'a da sızmaz).
+    assert_eq!(r.base_url, format!("http://{addr}"));
+    assert!(!r.base_url.contains('@'));
+    assert!(!r.base_url.contains(userinfo_secret));
+
+    // İstekte secret yok; userinfo Basic Authorization'a dönüşmedi.
+    let raw = String::from_utf8_lossy(&capture.lock().unwrap().clone()).to_string();
+    assert!(
+        !raw.contains(userinfo_secret),
+        "userinfo isteğe sızdı:\n{raw}"
+    );
+    assert!(
+        !raw.to_ascii_lowercase().contains("authorization: basic"),
+        "userinfo Basic Authorization'a dönüştü:\n{raw}"
+    );
+    // Normal Bearer akışı korundu.
+    assert!(
+        raw.to_ascii_lowercase()
+            .contains(&format!("authorization: bearer {TEST_KEY}")),
+        "bearer header eksik:\n{raw}"
+    );
+    let request_line = raw.lines().next().unwrap_or_default().to_string();
+    assert!(request_line.contains("/models"), "request line: {request_line}");
+
+    // Loglar ve ProbeResult Debug secret içermiyor.
+    let logs = String::from_utf8_lossy(&log_buf.lock().unwrap().clone()).to_string();
+    assert!(
+        !logs.contains(userinfo_secret),
+        "userinfo log çıktısına sızdı:\n{logs}"
+    );
+    assert!(
+        !format!("{:?}", results).contains(userinfo_secret),
+        "userinfo Debug çıktısına sızdı"
+    );
+}
+
 #[test]
 fn region_from_url_derives_known_region() {
     assert_eq!(
