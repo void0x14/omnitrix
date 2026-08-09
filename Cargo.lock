@@ -14256,6 +14256,7 @@ dependencies = [
  "xai-hooks-plugins-types",
  "xai-hunk-tracker",
  "xai-interjection-core",
+ "xai-omni-keychain",
  "xai-prompt-queue",
  "xai-sqlite-journal",
  "xai-system-power",

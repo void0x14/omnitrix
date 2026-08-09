@@ -4,6 +4,7 @@ pub mod hooks;
 pub mod key_balance;
 pub mod limits;
 pub mod models_dev;
+pub mod provider_probe;
 pub(crate) mod subprocess;
 pub(crate) mod user_identity;
 
