@@ -27,6 +27,7 @@ pub mod grounding;
 pub mod handle;
 pub mod metrics;
 pub mod retry;
+pub mod router_engine;
 pub mod sampling_log;
 mod shared_http;
 pub mod stream;
@@ -54,6 +55,10 @@ pub use retry::{
     DEFAULT_MAX_RETRIES, FallbackConfig, FallbackEndpoint, FallbackStep, FallbackWalk,
     RATE_LIMIT_RETRY_THRESHOLD, RetryDecision, classify_error, format_sampling_error,
     is_fallback_eligible, resolve_max_retries, retry_backoff_with_jitter,
+};
+pub use router_engine::{
+    AttemptResult, BudgetSnapshot, Endpoint, EndpointHealth, EngineSnapshot, JEP_ROLE_ORDER,
+    RouteContext, RouteError, RouterEngine, SUPPORTED_MODES,
 };
 pub use sampling_log::AuthInfo;
 pub use stream::{collect_response, stream_chat_completions, stream_messages, stream_responses};

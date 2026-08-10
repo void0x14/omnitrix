@@ -278,6 +278,16 @@ impl FallbackRouter {
         self.endpoints.len()
     }
 
+    /// The whole chain (primary + fallbacks), in order.
+    ///
+    /// Read-only accessor used by `RouterEngine`'s fallback-strict
+    /// adapter to map pick tokens back to concrete chain endpoints.
+    /// Behavior is unchanged.
+    #[must_use]
+    pub fn endpoints(&self) -> &[FallbackEndpoint] {
+        &self.endpoints
+    }
+
     /// The endpoint the next attempt should use, if any.
     #[must_use]
     pub fn current_endpoint(&self) -> Option<&FallbackEndpoint> {
@@ -366,6 +376,15 @@ impl FallbackWalk {
     #[must_use]
     pub fn endpoint_count(&self) -> usize {
         self.router.endpoint_count()
+    }
+
+    /// The whole chain (primary + fallbacks), in order.
+    ///
+    /// Read-only accessor used by `RouterEngine`'s fallback-strict
+    /// adapter; behavior is unchanged.
+    #[must_use]
+    pub fn chain(&self) -> &[FallbackEndpoint] {
+        self.router.endpoints()
     }
 
     /// The endpoint the next attempt should use, if any.
