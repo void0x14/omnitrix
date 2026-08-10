@@ -1,9 +1,12 @@
 use std::fs;
 
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use ratatui::buffer::Buffer;
+use ratatui::layout::Rect;
 use xai_grok_shell::util::routing_catalog::ModeFamily;
 
 use super::modal::{PaletteCommand, default_palette_entries};
-use super::routing_picker::RoutingPicker;
+use super::routing_picker::{RoutingPicker, RoutingPickerOutcome};
 
 #[test]
 fn command_palette_exposes_routing_picker_command() {
@@ -38,6 +41,29 @@ fn picker_selection_exposes_blurb_and_persists_via_routing_path() {
     assert!(!selected.blurb.is_empty());
     picker.apply_selected().expect("secim yazilmali");
 
+    let written = fs::read_to_string(dir.path().join("config/routing.toml"))
+        .expect("routing config yazilmali");
+    assert!(written.contains("strategy = \"rr\""));
+}
+
+#[test]
+fn picker_rendered_blurb_and_enter_apply_selected_mode() {
+    let dir = tempfile::tempdir().expect("gecici dizin");
+    let mut picker = RoutingPicker::new(dir.path());
+    picker.set_query("rr");
+    let selected = picker.selected_mode().expect("secili mod");
+
+    let mut buffer = Buffer::empty(Rect::new(0, 0, 120, 12));
+    picker.render(Rect::new(0, 0, 120, 12), &mut buffer);
+    let rendered = buffer
+        .content
+        .iter()
+        .map(|cell| cell.symbol())
+        .collect::<String>();
+    assert!(rendered.contains(&selected.blurb));
+
+    let outcome = picker.handle_key(&KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    assert!(matches!(outcome, RoutingPickerOutcome::Applied(Ok(()))));
     let written = fs::read_to_string(dir.path().join("config/routing.toml"))
         .expect("routing config yazilmali");
     assert!(written.contains("strategy = \"rr\""));

@@ -16,19 +16,25 @@ grok routing show
 grok routing explain <id>
 ```
 
-`list` prints each catalog ID, family, and short blurb. `set` accepts only a
-canonical catalog ID and writes `strategy = "<id>"`; an unknown ID fails before
-the file is changed. `show` resolves the selected ID through the existing
-legacy-alias bridge before displaying its catalog record. `explain` prints the
-catalog's long help for its ID.
+[`list`](../crates/codegen/xai-grok-pager/src/routing_cmd.rs#L58) prints each
+catalog ID, family, and short blurb. [`set`](../crates/codegen/xai-grok-pager/src/routing_cmd.rs#L75)
+accepts only a canonical catalog ID and writes `strategy = "<id>"`; an unknown
+ID fails before the file is changed. [`show`](../crates/codegen/xai-grok-pager/src/routing_cmd.rs#L92)
+resolves the selected ID through the existing legacy-alias bridge before
+displaying its catalog record. [`explain`](../crates/codegen/xai-grok-pager/src/routing_cmd.rs#L58)
+prints the catalog's long help for its ID.
 
 ## TUI picker
 
-Use `/routing` or choose **Routing Mode** in the command palette. Type to
-fuzzy-narrow mode IDs, titles, and families. Press `Tab` to cycle the family
-filter, use Up/Down to select a result, and Enter to persist it. The lower pane
-shows the selected catalog entry's one-sentence blurb. Esc closes the picker.
+Use [`/routing`](../crates/codegen/xai-grok-pager/src/slash/commands/routing.rs#L15)
+or choose [**Routing Mode** in the command palette](../crates/codegen/xai-grok-pager/src/views/modal.rs#L492).
+Type to [fuzzy-narrow](../crates/codegen/xai-grok-pager/src/views/routing_picker.rs#L37)
+mode IDs, titles, and families. Press [`Tab`, Up/Down, Enter, or Esc](../crates/codegen/xai-grok-pager/src/views/routing_picker.rs#L68)
+to filter, select, persist, or close. The [lower pane](../crates/codegen/xai-grok-pager/src/views/routing_picker.rs#L168)
+shows the selected catalog entry's one-sentence blurb.
 
-`/omni-routing` remains the legacy strategy/role assignment command. `/connect`
+[`/omni-routing`](../crates/codegen/xai-grok-pager/src/slash/commands/omni_routing.rs#L66)
+remains the legacy strategy/role assignment command.
+[`/connect`](../crates/codegen/xai-grok-pager/src/slash/commands/connect.rs#L9)
 continues to open the provider connection wizard and is unrelated to routing
 mode selection.

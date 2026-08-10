@@ -1161,6 +1161,20 @@ fn slash_hooks_opens_modal() {
     assert!(app.agents[&id].extensions_modal.is_some());
     assert_eq!(effects.len(), 6);
 }
+
+#[test]
+fn slash_routing_opens_picker_through_registered_dispatch() {
+    let mut app = test_app_with_agent();
+    let id = AgentId(0);
+
+    let effects = dispatch(Action::SendPrompt("/routing".into()), &mut app);
+
+    assert!(effects.is_empty());
+    assert!(matches!(
+        app.agents[&id].active_modal,
+        Some(crate::views::modal::ActiveModal::RoutingPicker { .. })
+    ));
+}
 #[test]
 fn acp_bootstrap_command_appears_in_autocomplete() {
     let mut app = test_app();

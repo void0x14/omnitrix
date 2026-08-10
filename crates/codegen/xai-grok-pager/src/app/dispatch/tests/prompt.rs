@@ -2583,6 +2583,23 @@ fn palette_dispatch_preserves_prompt_draft() {
 }
 
 #[test]
+fn palette_routing_command_opens_picker_through_dispatch() {
+    let mut app = test_app_with_agent();
+    let id = AgentId(0);
+
+    let effects = dispatch(
+        Action::SendSlashCommandPreservingDraft("/routing".into()),
+        &mut app,
+    );
+
+    assert!(effects.is_empty());
+    assert!(matches!(
+        app.agents[&id].active_modal,
+        Some(crate::views::modal::ActiveModal::RoutingPicker { .. })
+    ));
+}
+
+#[test]
 fn slash_compact_with_context_enqueues_command() {
     let mut app = test_app_with_agent();
     let effects = dispatch(
