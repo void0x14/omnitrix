@@ -79,12 +79,12 @@ pub struct DetectCandidate {
 pub fn detect_providers_from_key(api_key: &str) -> Vec<DetectCandidate>;
 ```
 
-- [ ] **Step 1:** sequential-thinking ile prefix çakışma stratejisini netleştir (sk- çok aday, confidence düşük).
-- [ ] **Step 2:** `detect_tests.rs` — sk-ant-, AIza, gsk_, xai-, sk-proj-, bilinmeyen.
-- [ ] **Step 3:** `detect.rs` implementasyonu (saf, ağ yok). En az 25 provider kuralı.
-- [ ] **Step 4:** `lib.rs` `pub mod detect; pub use detect::*`.
-- [ ] **Step 5:** `cargo test -p xai-omni-keychain detect` (veya static).
-- [ ] **Step 6:** commit `feat(keychain): auto-detect providers from api key prefix`
+- [x] **Step 1:** sequential-thinking ile prefix çakışma stratejisini netleştir (sk- çok aday, confidence düşük).
+- [x] **Step 2:** `detect_tests.rs` — sk-ant-, AIza, gsk_, xai-, sk-proj-, bilinmeyen.
+- [x] **Step 3:** `detect.rs` implementasyonu (saf, ağ yok). En az 25 provider kuralı.
+- [x] **Step 4:** `lib.rs` `pub mod detect; pub use detect::*`.
+- [x] **Step 5:** `cargo test -p xai-omni-keychain detect` (veya static).
+- [x] **Step 6:** commit `feat(keychain): auto-detect providers from api key prefix`
 
 ### Task P0.2: Live provider probe
 
@@ -114,10 +114,10 @@ pub async fn probe_candidates(reqs: Vec<ProbeRequest>) -> Vec<ProbeResult>;
 pub fn pick_winner(results: &[ProbeResult], offline: &[DetectCandidate]) -> Option<ProbeResult>;
 ```
 
-- [ ] **Step 1:** models.dev base_url haritasını oku (`util/models_dev.rs`).
-- [ ] **Step 2:** mockable HTTP trait ile unit test (401 = doğru host yanlış key vs connection fail).
-- [ ] **Step 3:** implement + wire mod.
-- [ ] **Step 4:** commit `feat(shell): live provider/region probe for auto-connect`
+- [x] **Step 1:** models.dev base_url haritasını oku (`util/models_dev.rs`).
+- [x] **Step 2:** mockable HTTP trait ile unit test (401 = doğru host yanlış key vs connection fail).
+- [x] **Step 3:** implement + wire mod.
+- [x] **Step 4:** commit `feat(shell): live provider/region probe for auto-connect`
 
 ### Task P0.3: Auto-Connect orkestrasyonu
 
@@ -136,10 +136,10 @@ pub struct AutoConnectOutcome {
 pub async fn auto_connect_from_key(api_key: &str, catalog: &CatalogCache) -> Result<AutoConnectOutcome, AutoConnectError>;
 ```
 
-- [ ] detect → probe → models.dev models → Outcome
-- [ ] Ambiguous error variant
-- [ ] tests with mocked probe
-- [ ] commit `feat(shell): auto_connect_from_key orchestration`
+- [x] detect → probe → models.dev models → Outcome
+- [x] Ambiguous error variant
+- [x] tests with mocked probe
+- [x] commit `feat(shell): auto_connect_from_key orchestration`
 
 ### Task P0.4: TUI Auto sekmesi
 
@@ -148,12 +148,12 @@ pub async fn auto_connect_from_key(api_key: &str, catalog: &CatalogCache) -> Res
 - Create: `.../provider_picker/auto.rs`
 - Modify: apply/key_input as needed
 
-- [ ] `ConnectStep` genişlet: `ModeSelect { Auto, Manual }`, `AutoKey`, `AutoDetecting`, `AutoAmbiguous`
-- [ ] ModeSelect varsayılan ilk ekran; Manual mevcut Provider adımına gider
-- [ ] AutoKey → maskeli paste → async detect task → Model adımına atla
-- [ ] Error path mevcut Error step
-- [ ] Manuel akış regression: Provider→… sırası aynı
-- [ ] commit `feat(tui): auto-connect wizard path`
+- [x] `ConnectStep` genişlet: `ModeSelect { Auto, Manual }`, `AutoKey`, `AutoDetecting`, `AutoAmbiguous`
+- [x] ModeSelect varsayılan ilk ekran; Manual mevcut Provider adımına gider
+- [x] AutoKey → maskeli paste → async detect task → Model adımına atla
+- [x] Error path mevcut Error step
+- [x] Manuel akış regression: Provider→… sırası aynı
+- [x] commit `feat(tui): auto-connect wizard path`
 
 ### Task P0.5: CLI `--auto`
 
@@ -161,15 +161,15 @@ pub async fn auto_connect_from_key(api_key: &str, catalog: &CatalogCache) -> Res
 - Modify: `crates/codegen/xai-grok-pager/src/app/cli.rs`
 - Modify: headless connect dispatch
 
-- [ ] `grok connect --auto --api-key … [--model …] [--no-session]`
-- [ ] provider flag yoksa auto; hem provider hem auto → hata
-- [ ] docs/provider-connect.md Auto bölümü
-- [ ] commit `feat(cli): grok connect --auto`
+- [x] `grok connect --auto --api-key … [--model …] [--no-session]`
+- [x] provider flag yoksa auto; hem provider hem auto → hata
+- [x] docs/provider-connect.md Auto bölümü
+- [x] commit `feat(cli): grok connect --auto`
 
 ### Task P0.6: P0 review gate
 
-- [ ] Controller: review-package P0 range; checklist spec §3.1 + başarı kriteri 1
-- [ ] ledger: `P0 complete`
+- [x] Controller: review-package P0 range; checklist spec §3.1 + başarı kriteri 1
+- [x] ledger: `P0 complete`
 
 ---
 
@@ -177,12 +177,12 @@ pub async fn auto_connect_from_key(api_key: &str, catalog: &CatalogCache) -> Res
 
 ### Task P1.1: Literatür + rakip tarama (araştırma-only)
 
-- [ ] sequential-thinking
-- [ ] Web: 9router, OpenRouter routing, LiteLLM router strategies, AWS bedrock routing
-- [ ] paper-search: load balancing LLM inference, fallback cascades
-- [ ] Context7: ilgili lib yoksa atla
-- [ ] Çıktı dosyası: `.superpowers/sdd/routing-research.md` (≥40 mod id + 1 cümle blurb taslağı)
-- [ ] commit docs only `docs: routing modes research notes`
+- [x] sequential-thinking
+- [x] Web: 9router, OpenRouter routing, LiteLLM router strategies, AWS bedrock routing
+- [x] paper-search: load balancing LLM inference, fallback cascades
+- [x] Context7: ilgili lib yoksa atla
+- [x] Çıktı dosyası: `.superpowers/sdd/routing-research.md` (≥40 mod id + 1 cümle blurb taslağı)
+- [x] commit docs only `docs: routing modes research notes`
 
 ### Task P1.2: `RoutingModeDef` + katalog
 
@@ -198,8 +198,8 @@ pub fn load_routing_modes(path: &Path) -> Result<Vec<RoutingModeDef>, …>;
 pub fn find_mode(id: &str) -> Option<&'static RoutingModeDef>; // or owned catalog
 ```
 
-- [ ] TOML şema + built-in fallback if file missing
-- [ ] commit `feat(routing): mode catalog with 40+ definitions`
+- [x] TOML şema + built-in fallback if file missing
+- [x] commit `feat(routing): mode catalog with 40+ definitions`
 
 ### Task P1.3: RouterEngine
 
@@ -221,24 +221,24 @@ impl RouterEngine {
 }
 ```
 
-- [ ] Implement selectors: rr, wrr, fallback-strict, jep-classic, cheapest-alive, balance-then-fallback, hedge (basit), sticky-session
-- [ ] Diğer modlar: composition of primitives (document mapping in TOML `selector = "fallback"`)
-- [ ] unit tests per selector
-- [ ] commit `feat(sampler): RouterEngine multi-mode selection`
+- [x] Implement selectors: rr, wrr, fallback-strict, jep-classic, cheapest-alive, balance-then-fallback, hedge (basit), sticky-session
+- [x] Diğer modlar: composition of primitives (document mapping in TOML `selector = "fallback"`)
+- [x] unit tests per selector
+- [x] commit `feat(sampler): RouterEngine multi-mode selection`
 
 ### Task P1.4: Config bridge
 
-- [ ] `config/routing.toml` `strategy` alanı ya id kabul eder ya legacy alias (`fallback`→`fallback-strict`)
-- [ ] models.toml/jep roller I5
-- [ ] commit `feat(config): routing mode id + legacy aliases`
+- [x] `config/routing.toml` `strategy` alanı ya id kabul eder ya legacy alias (`fallback`→`fallback-strict`)
+- [x] models.toml/jep roller I5
+- [x] commit `feat(config): routing mode id + legacy aliases`
 
 ### Task P1.5: TUI + CLI
 
-- [ ] `/routing` slash + palette
-- [ ] `routing_picker.rs` fuzzy + family filter + blurb pane
-- [ ] CLI: `grok routing list|set <id>|show|explain <id>`
-- [ ] `docs/routing-modes.md`
-- [ ] commit `feat(ux): routing mode picker and cli`
+- [x] `/routing` slash + palette
+- [x] `routing_picker.rs` fuzzy + family filter + blurb pane
+- [x] CLI: `grok routing list|set <id>|show|explain <id>`
+- [x] `docs/routing-modes.md`
+- [x] commit `feat(ux): routing mode picker and cli`
 
 ### Task P1.6: P1 review gate → ledger
 
