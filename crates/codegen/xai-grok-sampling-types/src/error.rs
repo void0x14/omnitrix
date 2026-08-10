@@ -40,7 +40,7 @@ impl fmt::Display for EmptyReason {
 /// Structured context captured at L2 stream completion time when the
 /// response is classified as empty. Carries everything needed to
 /// root-cause the issue from a single log line or error payload.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct EmptyResponseContext {
     pub reason: EmptyReason,
     /// Whether the response contained reasoning tokens.
@@ -68,7 +68,7 @@ impl EmptyResponseContext {
 }
 
 /// Model metadata from response headers.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ResponseModelMetadata {
     pub context_window: Option<u64>,
     pub max_completion_tokens: Option<u32>,

@@ -11,11 +11,11 @@
 //! |--------|----------|
 //! | `rr` | Havuzu sırayla dolaşan round robin. Sıra motor içindeki kursor ile taşınır. |
 //! | `wrr` | Ağırlıklı round robin. Ağırlık öncelikle motor `weights` haritasından, yoksa `Endpoint::weight`'ten, ikisi de yoksa 1'den gelir. |
-//! | `fallback-strict` | Mevcut [`FallbackWalk`] semantiğiyle birebir çalışan katı zincir: ilk başarıda durur, hata olunca sıradaki canlı endpoint'e geçer. Zincir yoksa [`RouteError::MissingFallbackChain`], zincir tükendiyse [`RouteError::FallbackChainExhausted`]. |
+//! | `fallback-strict` | Mevcut [`FallbackWalk`] semantiğiyle birebir çalışan katı zincir: ilk başarıda durur, hata olunca sıradaki canlı endpoint'e geçer. Zincir yoksa [`RouteError::MissingFallbackChain`], terminal yürüyüşte [`RouteError::FallbackTerminal`] döner. |
 //! | `jep-classic` | Rol öncelikli zincir: judge → executor → planner (talep `role`'u verilmişse o rolden başlar). Başarısız endpoint'ler sonraki pick'lerde atlanır (sağlık durumu). |
 //! | `cheapest-alive` | Canlı havuzda birim maliyeti (`Endpoint::cost`) en düşük olanı seçer; en ucuz aday kalan bütçeyi aşıyorsa [`RouteError::BudgetExhausted`]. |
 //! | `balance-then-fallback` | Kompozisyon: sağlıklı havuzda rr ile dengeler; havuzun tamamı dejenere olunca (her endpoint `degrade_threshold` kadar başarısız) fallback zincirine geçer. Zincir yoksa [`RouteError::FallbackChainExhausted`]. |
-//! | `hedge` | Temel hedge: en düşük gecikmeli adayı seçer. `pick_hedge` ile isteğe bağlı `k` adet sıralı aday listesi üretir — **yalnızca planlama**: kopya istek göndermek çağrıcının işidir. |
+//! | `hedge-p95` (`hedge` iç kullanımı korunur) | Temel hedge: en düşük gecikmeli adayı seçer. `pick_hedge` ile isteğe bağlı `k` adet sıralı aday listesi üretir — **yalnızca planlama**: kopya istek göndermek çağrıcının işidir. |
 //! | `sticky-session` | Oturum bağı: ilk pick'te seçilen endpoint, havuzdan düşene kadar sabit döner; başarısızlık bağı çözer, bağ düşen endpoint havuzdan kaybolursa yeni bağ kurulur. |
 //!
 //! ## Katalogdaki diğer modlar
@@ -61,6 +61,7 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use xai_grok_sampling_types::SamplingError;
 
+use crate::events::SamplingErrorInfo;
 use crate::retry::{FallbackConfig, FallbackEndpoint, FallbackStep, FallbackWalk};
 
 /// JEP rol öncelik sırası (`jep-classic`).
@@ -74,9 +75,40 @@ pub const SUPPORTED_MODES: &[&str] = &[
     "jep-classic",
     "cheapest-alive",
     "balance-then-fallback",
+    "hedge-p95",
+    // Katalog öncesi doğrudan/iç kullanım uyumluluğu.
     "hedge",
     "sticky-session",
 ];
+
+/// Katalog ID'lerini motorun küçük seçici primitive'lerine bağlayan tablo.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RoutingPrimitive {
+    RoundRobin,
+    WeightedRoundRobin,
+    FallbackStrict,
+    JepClassic,
+    CheapestAlive,
+    BalanceThenFallback,
+    Hedge,
+    StickySession,
+}
+
+impl RoutingPrimitive {
+    fn for_mode(mode_id: &str) -> Option<Self> {
+        match mode_id {
+            "rr" => Some(Self::RoundRobin),
+            "wrr" => Some(Self::WeightedRoundRobin),
+            "fallback-strict" => Some(Self::FallbackStrict),
+            "jep-classic" => Some(Self::JepClassic),
+            "cheapest-alive" => Some(Self::CheapestAlive),
+            "balance-then-fallback" => Some(Self::BalanceThenFallback),
+            "hedge-p95" | "hedge" => Some(Self::Hedge),
+            "sticky-session" => Some(Self::StickySession),
+            _ => None,
+        }
+    }
+}
 
 /// Fallback zinciri endpoint'lerinin ürettiği ID öneki.
 const FALLBACK_ID_PREFIX: &str = "fallback";
@@ -165,7 +197,7 @@ pub struct AttemptResult {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RouteContext {
     /// İstek içeriğinin kararlı özeti (hash-prompt gibi modlar için
-    /// ayrılmış; bu sürümde deterministik planlamada kullanılmaz).
+    /// ayrılmış); fallback istek sınırı ve sticky-session anahtarıdır.
     pub prompt_hash: u64,
     /// Talep edilen rol (`judge` / `executor` / `planner`).
     pub role: Option<String>,
@@ -186,6 +218,8 @@ pub enum RouteError {
     MissingFallbackChain,
     /// Seçim zinciri (birincil havuz veya fallback kaskadı) tükendi.
     FallbackChainExhausted,
+    /// `FallbackWalk` terminal sonucu; sebep ve korunmuş hata incelenebilir.
+    FallbackTerminal(FallbackTerminal),
     /// En ucuz canlı aday kalan bütçeyi aşıyor.
     BudgetExhausted { cheapest: u64, remaining: u64 },
     /// `pick_hedge` yalnızca `hedge` modunda çağrılabilir.
@@ -205,12 +239,23 @@ impl fmt::Display for RouteError {
             RouteError::FallbackChainExhausted => {
                 write!(f, "selection chain exhausted: no usable endpoint")
             }
-            RouteError::BudgetExhausted { cheapest, remaining } => write!(
+            RouteError::FallbackTerminal(terminal) => write!(
+                f,
+                "fallback request terminated ({:?}): {}",
+                terminal.reason, terminal.error.message
+            ),
+            RouteError::BudgetExhausted {
+                cheapest,
+                remaining,
+            } => write!(
                 f,
                 "cheapest alive endpoint costs {cheapest} but only {remaining} budget remains"
             ),
             RouteError::NotHedgeMode(mode) => {
-                write!(f, "pick_hedge requires the 'hedge' mode, engine is in mode {mode:?}")
+                write!(
+                    f,
+                    "pick_hedge requires the 'hedge' mode, engine is in mode {mode:?}"
+                )
             }
             RouteError::HedgeDepthInvalid(k) => {
                 write!(f, "hedge candidate depth must be >= 1, got {k}")
@@ -221,6 +266,22 @@ impl fmt::Display for RouteError {
 
 impl std::error::Error for RouteError {}
 
+/// Fallback yürüyüşünün neden terminal olduğunu ayıran tip.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum FallbackTerminalReason {
+    /// Hata farklı bir endpoint ile giderilemez; mevcut hata yüzeye çıkar.
+    NotEligible,
+    /// Tüm zincir tükendi; ilk hata yüzeye çıkar.
+    ChainExhausted,
+}
+
+/// Terminal fallback sonucu ve `SamplingError`'ın serileştirilebilir aynası.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FallbackTerminal {
+    pub reason: FallbackTerminalReason,
+    pub error: SamplingErrorInfo,
+}
+
 /// Motor durumunun serileştirilebilir anlık görüntüsü (test/telemetri).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct EngineSnapshot {
@@ -228,6 +289,8 @@ pub struct EngineSnapshot {
     pub cursor: u64,
     /// Aktif sticky-session bağı (varsa).
     pub sticky_endpoint: Option<String>,
+    /// Prompt özeti → endpoint bağı (anahtar sıralı, deterministik).
+    pub sticky_sessions: BTreeMap<u64, String>,
     /// Endpoint ID → sağlık durumu (ID sıralı, deterministik).
     pub health: BTreeMap<String, EndpointHealth>,
 }
@@ -248,14 +311,16 @@ pub struct RouterEngine {
     weights: BTreeMap<String, u32>,
     /// Döngü kursoru (`rr`, `wrr`, balance fazı, sticky ilk seçim).
     cursor: Cell<u64>,
-    /// Sticky-session oturum bağı.
-    sticky: RefCell<Option<String>>,
+    /// Prompt özeti → sticky-session oturum bağı.
+    sticky: RefCell<BTreeMap<u64, String>>,
     /// Endpoint ID → sağlık durumu.
     health: BTreeMap<String, EndpointHealth>,
     /// Fallback kompozisyon modları için mevcut `FallbackWalk`.
-    walk: Option<FallbackWalk>,
-    /// Zincir tükendi işareti (son başarıda sıfırlanır).
-    walk_exhausted: bool,
+    walk: RefCell<Option<FallbackWalk>>,
+    /// Yürüyüşün bağlı olduğu mantıksal istek özeti.
+    walk_request_hash: Cell<Option<u64>>,
+    /// Aynı istekte sonraki pick'in yüzeye çıkaracağı terminal sonuç.
+    walk_terminal: RefCell<Option<FallbackTerminal>>,
     /// `balance-then-fallback` degrade eşiği: bu sayıda başarısızlıkta
     /// endpoint dengeleme fazından düşer.
     degrade_threshold: u32,
@@ -271,10 +336,11 @@ impl RouterEngine {
             mode_id: mode_id.into(),
             weights: BTreeMap::new(),
             cursor: Cell::new(0),
-            sticky: RefCell::new(None),
+            sticky: RefCell::new(BTreeMap::new()),
             health: BTreeMap::new(),
-            walk: None,
-            walk_exhausted: false,
+            walk: RefCell::new(None),
+            walk_request_hash: Cell::new(None),
+            walk_terminal: RefCell::new(None),
             degrade_threshold: 1,
         }
     }
@@ -298,10 +364,11 @@ impl RouterEngine {
             mode_id: mode_id.into(),
             weights: BTreeMap::new(),
             cursor: Cell::new(0),
-            sticky: RefCell::new(None),
+            sticky: RefCell::new(BTreeMap::new()),
             health: BTreeMap::new(),
-            walk: Some(FallbackWalk::new(config, primary)),
-            walk_exhausted: false,
+            walk: RefCell::new(Some(FallbackWalk::new(config, primary))),
+            walk_request_hash: Cell::new(None),
+            walk_terminal: RefCell::new(None),
             degrade_threshold: 1,
         }
     }
@@ -315,10 +382,7 @@ impl RouterEngine {
 
     /// `wrr` için ağırlık haritasını topluca kurar.
     #[must_use]
-    pub fn with_weights(
-        mut self,
-        weights: impl IntoIterator<Item = (String, u32)>,
-    ) -> Self {
+    pub fn with_weights(mut self, weights: impl IntoIterator<Item = (String, u32)>) -> Self {
         self.weights.extend(weights);
         self
     }
@@ -334,15 +398,20 @@ impl RouterEngine {
     /// `mode_id` motor tarafından destekleniyor mu?
     #[must_use]
     pub fn is_supported(mode_id: &str) -> bool {
-        SUPPORTED_MODES.contains(&mode_id)
+        RoutingPrimitive::for_mode(mode_id).is_some()
     }
 
     /// Motor durumunun anlık görüntüsü (test/telemetri için).
     #[must_use]
     pub fn snapshot(&self) -> EngineSnapshot {
+        let sticky_sessions = self.sticky.borrow().clone();
+        let sticky_endpoint = (sticky_sessions.len() == 1)
+            .then(|| sticky_sessions.values().next().cloned())
+            .flatten();
         EngineSnapshot {
             cursor: self.cursor.get(),
-            sticky_endpoint: self.sticky.borrow().clone(),
+            sticky_endpoint,
+            sticky_sessions,
             health: self.health.clone(),
         }
     }
@@ -354,8 +423,13 @@ impl RouterEngine {
     /// için `None` döner.
     #[must_use]
     pub fn fallback_endpoint(&self, ep: &Endpoint) -> Option<FallbackEndpoint> {
-        let index = ep.id.strip_prefix(FALLBACK_ID_TOKEN)?.parse::<usize>().ok()?;
-        self.walk.as_ref()?.chain().get(index).cloned()
+        let index = ep
+            .id
+            .strip_prefix(FALLBACK_ID_TOKEN)?
+            .parse::<usize>()
+            .ok()?;
+        let walk = self.walk.borrow();
+        walk.as_ref()?.chain().get(index).cloned()
     }
 
     /// Aktif moda göre bir endpoint seçer.
@@ -365,20 +439,23 @@ impl RouterEngine {
     /// - Desteklenmeyen mod ID'si [`RouteError::UnknownMode`] döner.
     /// - Asla panic etmez; tüm hatalar tip kırılımlıdır.
     pub fn pick(&self, ctx: &RouteContext) -> Result<Endpoint, RouteError> {
-        match self.mode_id.as_str() {
-            "rr" => self.pick_rr(ctx),
-            "wrr" => self.pick_wrr(ctx),
-            "fallback-strict" => self.pick_from_walk(),
-            "jep-classic" => self.pick_jep_classic(ctx),
-            "cheapest-alive" => self.pick_cheapest_alive(ctx),
-            "balance-then-fallback" => self.pick_balance_then_fallback(ctx),
-            "hedge" => self
+        let Some(primitive) = RoutingPrimitive::for_mode(&self.mode_id) else {
+            return Err(RouteError::UnknownMode(self.mode_id.clone()));
+        };
+        self.begin_request(ctx.prompt_hash);
+        match primitive {
+            RoutingPrimitive::RoundRobin => self.pick_rr(ctx),
+            RoutingPrimitive::WeightedRoundRobin => self.pick_wrr(ctx),
+            RoutingPrimitive::FallbackStrict => self.pick_from_walk(),
+            RoutingPrimitive::JepClassic => self.pick_jep_classic(ctx),
+            RoutingPrimitive::CheapestAlive => self.pick_cheapest_alive(ctx),
+            RoutingPrimitive::BalanceThenFallback => self.pick_balance_then_fallback(ctx),
+            RoutingPrimitive::Hedge => self
                 .hedge_candidates(ctx, 1)?
                 .into_iter()
                 .next()
                 .ok_or(RouteError::FallbackChainExhausted),
-            "sticky-session" => self.pick_sticky(ctx),
-            other => Err(RouteError::UnknownMode(other.to_string())),
+            RoutingPrimitive::StickySession => self.pick_sticky(ctx),
         }
     }
 
@@ -389,7 +466,7 @@ impl RouterEngine {
     /// `k` adayla yarış başlatmak çağrıcının kararıdır. Yalnızca `hedge`
     /// modunda çağrılabilir; diğer modlarda [`RouteError::NotHedgeMode`].
     pub fn pick_hedge(&self, ctx: &RouteContext, k: usize) -> Result<Vec<Endpoint>, RouteError> {
-        if self.mode_id != "hedge" {
+        if RoutingPrimitive::for_mode(&self.mode_id) != Some(RoutingPrimitive::Hedge) {
             return Err(RouteError::NotHedgeMode(self.mode_id.clone()));
         }
         self.hedge_candidates(ctx, k)
@@ -416,19 +493,30 @@ impl RouterEngine {
             health.latency_ms = Some(latency_ms);
         }
 
-        // 2) Sticky-session: başarısızlık oturum bağını çözer.
-        if !res.ok
-            && self.mode_id == "sticky-session"
-            && self.sticky.borrow().as_deref() == Some(ep.id.as_str())
-        {
-            *self.sticky.borrow_mut() = None;
+        // 2) Sticky-session: başarısız endpoint'e bağlı oturumlar çözülür;
+        //    başka endpoint'e bağlı oturumlar korunur.
+        if !res.ok && self.mode_id == "sticky-session" {
+            self.sticky.borrow_mut().retain(|_, bound| bound != &ep.id);
         }
 
         // 3) Fallback kompozisyonları: "fallback:N" belirteçli sonuçlar
         //    mevcut FallbackWalk semantiğine beslenir.
-        if self.walk.is_some() && ep.id.starts_with(FALLBACK_ID_TOKEN) {
+        let has_walk = self.walk.borrow().is_some();
+        if has_walk && ep.id.starts_with(FALLBACK_ID_TOKEN) {
             self.feed_walk(ep, res);
         }
+    }
+
+    /// `prompt_hash` değiştiğinde per-request yürüyüş durumunu sıfırlar.
+    fn begin_request(&self, prompt_hash: u64) {
+        if self.walk.borrow().is_none() || self.walk_request_hash.get() == Some(prompt_hash) {
+            return;
+        }
+        if let Some(walk) = self.walk.borrow_mut().as_mut() {
+            walk.restart();
+        }
+        self.walk_request_hash.set(Some(prompt_hash));
+        *self.walk_terminal.borrow_mut() = None;
     }
 
     fn weight_of(&self, ep: &Endpoint) -> u32 {
@@ -449,16 +537,6 @@ impl RouterEngine {
 
     fn fallback_id(index: usize) -> String {
         format!("{FALLBACK_ID_PREFIX}:{index}")
-    }
-
-    /// Yürüyüş zincirinde `fe`'nin konum ID'si (yoksa `None`).
-    fn chain_id_for(&self, fe: &FallbackEndpoint) -> Option<String> {
-        self.walk
-            .as_ref()?
-            .chain()
-            .iter()
-            .position(|c| c == fe)
-            .map(Self::fallback_id)
     }
 
     /// Zincir konumu için yalnızca yönlendirme belirteci olarak kullanılan
@@ -510,16 +588,20 @@ impl RouterEngine {
 
     /// Zincirden (varsa) mevcut endpoint'i seçer.
     fn pick_from_walk(&self) -> Result<Endpoint, RouteError> {
-        let Some(walk) = self.walk.as_ref() else {
+        if let Some(terminal) = self.walk_terminal.borrow().clone() {
+            return Err(RouteError::FallbackTerminal(terminal));
+        }
+        let walk = self.walk.borrow();
+        let Some(walk) = walk.as_ref() else {
             return Err(RouteError::MissingFallbackChain);
         };
-        if self.walk_exhausted {
-            return Err(RouteError::FallbackChainExhausted);
-        }
         match walk.current_endpoint() {
             Some(fe) => {
-                let id = self
-                    .chain_id_for(fe)
+                let id = walk
+                    .chain()
+                    .iter()
+                    .position(|candidate| candidate == fe)
+                    .map(Self::fallback_id)
                     .ok_or(RouteError::FallbackChainExhausted)?;
                 Ok(self.endpoint_for(&id))
             }
@@ -614,7 +696,7 @@ impl RouterEngine {
             }
         } else {
             // Faz 2 — kurtarma: havuz dejenere; sıralı fallback kaskadı.
-            if self.walk.is_none() {
+            if self.walk.borrow().is_none() {
                 return Err(RouteError::FallbackChainExhausted);
             }
             self.pick_from_walk()
@@ -627,21 +709,25 @@ impl RouterEngine {
         if ctx.alive.is_empty() {
             return Err(RouteError::EmptyPool);
         }
-        if let Some(ep) = self
-            .sticky
-            .borrow()
+        let bound = self.sticky.borrow().get(&ctx.prompt_hash).cloned();
+        if let Some(ep) = bound
             .as_ref()
-            .and_then(|bound| ctx.alive.iter().find(|e| &e.id == bound))
+            .and_then(|id| ctx.alive.iter().find(|candidate| &candidate.id == id))
         {
             return Ok(ep.clone());
-            // Bağlı endpoint havuzdan çıkmışsa yeni bağ kurulacak.
+        }
+        if bound.is_some() {
+            // Bağlı endpoint yalnızca bu oturumun havuzundan çıktı.
+            self.sticky.borrow_mut().remove(&ctx.prompt_hash);
         }
         let index = (self.cursor.get() % ctx.alive.len() as u64) as usize;
         self.cursor.set(self.cursor.get().wrapping_add(1));
         let Some(chosen) = ctx.alive.get(index) else {
             return Err(RouteError::EmptyPool);
         };
-        *self.sticky.borrow_mut() = Some(chosen.id.clone());
+        self.sticky
+            .borrow_mut()
+            .insert(ctx.prompt_hash, chosen.id.clone());
         Ok(chosen.clone())
     }
 
@@ -654,11 +740,8 @@ impl RouterEngine {
         if ctx.alive.is_empty() {
             return Err(RouteError::EmptyPool);
         }
-        let mut candidates: Vec<&Endpoint> = ctx
-            .alive
-            .iter()
-            .filter(|e| !self.degraded(&e.id))
-            .collect();
+        let mut candidates: Vec<&Endpoint> =
+            ctx.alive.iter().filter(|e| !self.degraded(&e.id)).collect();
         if candidates.is_empty() {
             return Err(RouteError::FallbackChainExhausted);
         }
@@ -680,69 +763,85 @@ impl RouterEngine {
 
     /// Fallback kompozisyonlarında mevcut `FallbackWalk`'u besler.
     ///
-    /// Bayat/başka endpoint sonuçları yürüyüşü etkilemez; zincir
-    /// tükenmesi işaretlenir; `NotEligible` (sınıflandırılmamış dahil)
-    /// yürüyüşü ilerletmez — mevcut fallback semantiği birebir korunur.
+    /// Bayat/başka endpoint sonuçları yürüyüşü etkilemez. `NotEligible`
+    /// mevcut hatayı, `ChainExhausted` ilk hatayı terminal olarak saklar.
     fn feed_walk(&mut self, ep: &Endpoint, res: &AttemptResult) {
-        // Mevcut konum ve ID eşlemesi önce hesaplanır (kısa ömürlü
-        // değişmez borçlar), sonra yürüyüş değişebilir borçla güncellenir.
-        let Some(current) = self
-            .walk
-            .as_ref()
-            .and_then(|w| w.current_endpoint().cloned())
-        else {
-            return;
-        };
-        let Some(current_id) = self.chain_id_for(&current) else {
-            return;
-        };
-        if current_id != ep.id {
+        // Terminal istek, yeni prompt_hash gelene dek kapanmıştır.
+        if self.walk_terminal.borrow().is_some() {
             return;
         }
-        let Some(walk) = self.walk.as_mut() else {
+
+        let mut walk_slot = self.walk.borrow_mut();
+        let Some(walk) = walk_slot.as_mut() else {
             return;
         };
+        let current_id = walk.current_endpoint().and_then(|current| {
+            walk.chain()
+                .iter()
+                .position(|candidate| candidate == current)
+                .map(Self::fallback_id)
+        });
+        if current_id.as_deref() != Some(ep.id.as_str()) {
+            return;
+        }
         if res.ok {
             walk.on_success();
-            self.walk_exhausted = false;
             return;
         }
+
         let synthetic = SamplingError::EventStreamError(UNCLASSIFIED_FAILURE_MESSAGE.to_string());
-        let step = match res.error.as_ref() {
-            Some(err) => walk.on_failure(err),
-            None => walk.on_failure(&synthetic),
+        let error = match res.error.as_ref() {
+            Some(error) => error,
+            None => &synthetic,
         };
-        if matches!(step, FallbackStep::ChainExhausted) {
-            self.walk_exhausted = true;
+        let terminal = match walk.on_failure(error) {
+            FallbackStep::RetryWith(_) => None,
+            FallbackStep::NotEligible => Some(FallbackTerminal {
+                reason: FallbackTerminalReason::NotEligible,
+                error: SamplingErrorInfo::from(error),
+            }),
+            FallbackStep::ChainExhausted => {
+                let original = match walk.original_error() {
+                    Some(original) => original,
+                    None => error,
+                };
+                Some(FallbackTerminal {
+                    reason: FallbackTerminalReason::ChainExhausted,
+                    error: SamplingErrorInfo::from(original),
+                })
+            }
+        };
+        drop(walk_slot);
+        if let Some(terminal) = terminal {
+            *self.walk_terminal.borrow_mut() = Some(terminal);
         }
     }
 }
 
 impl fmt::Debug for RouterEngine {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let fallback_chain = self.walk.borrow().as_ref().map(|walk| {
+            walk.chain()
+                .iter()
+                .map(|endpoint| {
+                    (
+                        endpoint.base_url.clone(),
+                        endpoint.model.clone(),
+                        endpoint.api_key.as_ref().map(|_| "***"),
+                    )
+                })
+                .collect::<Vec<_>>()
+        });
         f.debug_struct("RouterEngine")
             .field("mode_id", &self.mode_id)
             .field("weights", &self.weights)
             .field("cursor", &self.cursor.get())
-            .field("sticky_endpoint", &self.sticky.borrow())
+            .field("sticky_sessions", &self.sticky.borrow())
             .field("health", &self.health)
-            .field("walk_exhausted", &self.walk_exhausted)
+            .field("walk_request_hash", &self.walk_request_hash.get())
+            .field("walk_terminal", &self.walk_terminal.borrow())
             .field("degrade_threshold", &self.degrade_threshold)
-            .field(
-                "fallback_chain",
-                &self.walk.as_ref().map(|w| {
-                    w.chain()
-                        .iter()
-                        .map(|fe| {
-                            (
-                                &fe.base_url,
-                                &fe.model,
-                                fe.api_key.as_ref().map(|_| "***"),
-                            )
-                        })
-                        .collect::<Vec<_>>()
-                }),
-            )
+            .field("fallback_chain", &fallback_chain)
             .finish()
     }
 }
@@ -757,18 +856,26 @@ struct RouterEngineSerde {
     mode_id: String,
     weights: BTreeMap<String, u32>,
     cursor: u64,
+    #[serde(default)]
     sticky_endpoint: Option<String>,
+    #[serde(default)]
+    sticky_sessions: BTreeMap<u64, String>,
     health: BTreeMap<String, EndpointHealth>,
     degrade_threshold: u32,
 }
 
 impl Serialize for RouterEngine {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        let sticky_sessions = self.sticky.borrow().clone();
+        let sticky_endpoint = (sticky_sessions.len() == 1)
+            .then(|| sticky_sessions.values().next().cloned())
+            .flatten();
         RouterEngineSerde {
             mode_id: self.mode_id.clone(),
             weights: self.weights.clone(),
             cursor: self.cursor.get(),
-            sticky_endpoint: self.sticky.borrow().clone(),
+            sticky_endpoint,
+            sticky_sessions,
             health: self.health.clone(),
             degrade_threshold: self.degrade_threshold,
         }
@@ -779,14 +886,18 @@ impl Serialize for RouterEngine {
 impl<'de> Deserialize<'de> for RouterEngine {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         let s = RouterEngineSerde::deserialize(deserializer)?;
+        // Eski global `sticky_endpoint` anahtarsız olduğu için oturumlar
+        // arasında güvenle taşınamaz; yeni harita yoksa bağsız başlanır.
+        let _legacy_sticky_endpoint = s.sticky_endpoint;
         Ok(Self {
             mode_id: s.mode_id,
             weights: s.weights,
             cursor: Cell::new(s.cursor),
-            sticky: RefCell::new(s.sticky_endpoint),
+            sticky: RefCell::new(s.sticky_sessions),
             health: s.health,
-            walk: None,
-            walk_exhausted: false,
+            walk: RefCell::new(None),
+            walk_request_hash: Cell::new(None),
+            walk_terminal: RefCell::new(None),
             degrade_threshold: s.degrade_threshold,
         })
     }
@@ -820,17 +931,11 @@ mod tests {
     }
 
     fn ep_cost(id: &str, cost: u64) -> Endpoint {
-        Endpoint {
-            cost,
-            ..ep(id)
-        }
+        Endpoint { cost, ..ep(id) }
     }
 
     fn ep_weight(id: &str, weight: u32) -> Endpoint {
-        Endpoint {
-            weight,
-            ..ep(id)
-        }
+        Endpoint { weight, ..ep(id) }
     }
 
     fn ep_latency(id: &str, latency_ms: u64) -> Endpoint {
@@ -841,8 +946,12 @@ mod tests {
     }
 
     fn ctx(alive: Vec<Endpoint>) -> RouteContext {
+        ctx_with_hash(7, alive)
+    }
+
+    fn ctx_with_hash(prompt_hash: u64, alive: Vec<Endpoint>) -> RouteContext {
         RouteContext {
-            prompt_hash: 7,
+            prompt_hash,
             role: None,
             alive,
             budgets: BudgetSnapshot::default(),
@@ -943,10 +1052,8 @@ mod tests {
 
     #[test]
     fn wrr_distributes_according_to_engine_weights() {
-        let engine = RouterEngine::new("wrr").with_weights(vec![
-            ("a".to_string(), 2),
-            ("b".to_string(), 1),
-        ]);
+        let engine =
+            RouterEngine::new("wrr").with_weights(vec![("a".to_string(), 2), ("b".to_string(), 1)]);
         let c = ctx(vec![ep("a"), ep("b")]);
         let mut counts = std::collections::BTreeMap::new();
         for _ in 0..9 {
@@ -986,7 +1093,14 @@ mod tests {
         assert_eq!(second.id, "fallback:1");
         engine.on_result(&second, &fail_res(rate_fail()));
 
-        assert_eq!(engine.pick(&c), Err(RouteError::FallbackChainExhausted));
+        let terminal = engine.pick(&c).unwrap_err();
+        assert!(matches!(
+            terminal,
+            RouteError::FallbackTerminal(FallbackTerminal {
+                reason: FallbackTerminalReason::ChainExhausted,
+                ..
+            })
+        ));
     }
 
     #[test]
@@ -1012,7 +1126,8 @@ mod tests {
 
     #[test]
     fn fallback_strict_unknown_pick_id_returns_none_from_adapter() {
-        let engine = RouterEngine::with_fallback("fallback-strict", &chain_config(&[], 1), primary());
+        let engine =
+            RouterEngine::with_fallback("fallback-strict", &chain_config(&[], 1), primary());
         assert!(engine.fallback_endpoint(&ep("a")).is_none());
     }
 
@@ -1051,23 +1166,28 @@ mod tests {
     }
 
     #[test]
-    fn fallback_strict_ineligible_failure_does_not_advance_walk() {
+    fn fallback_strict_ineligible_failure_is_terminal_and_preserves_error() {
         // EmptyResponse fallback'e uygun değildir (deterministik içerik
-        // hatası): mevcut is_fallback_eligible semantiği zinciri ilerletmez.
+        // hatası): aynı istek başarısız endpoint'i yeniden seçmemeli ve
+        // gerçek hata terminal sonuçta korunmalıdır.
         let cfg = chain_config(&["key-2"], 1);
         let mut engine = RouterEngine::with_fallback("fallback-strict", &cfg, primary());
         let c = ctx(Vec::new());
 
         let first = engine.pick(&c).unwrap();
         engine.on_result(&first, &fail_res(empty_fail()));
-        let second = engine.pick(&c).unwrap();
-        assert_eq!(second.id, "fallback:0");
+        let terminal = engine.pick(&c).unwrap_err();
+        assert_ne!(terminal, RouteError::FallbackChainExhausted);
+        assert!(
+            terminal.to_string().contains("empty response from model"),
+            "terminal sonuç gerçek SamplingError mesajını korumalı: {terminal}"
+        );
     }
 
     #[test]
-    fn fallback_strict_unclassified_failure_does_not_advance_walk() {
+    fn fallback_strict_unclassified_failure_is_terminal() {
         // error=None (sınıflandırılmamış) başarısızlık muhafazakâr
-        // varsayılanla zinciri ilerletmez.
+        // varsayılanla terminaldir ve aynı endpoint'i yeniden seçmez.
         let cfg = chain_config(&["key-2"], 1);
         let mut engine = RouterEngine::with_fallback("fallback-strict", &cfg, primary());
         let c = ctx(Vec::new());
@@ -1081,8 +1201,9 @@ mod tests {
                 error: None,
             },
         );
-        let second = engine.pick(&c).unwrap();
-        assert_eq!(second.id, "fallback:0");
+        let terminal = engine.pick(&c).unwrap_err();
+        assert_ne!(terminal, RouteError::FallbackChainExhausted);
+        assert!(terminal.to_string().contains(UNCLASSIFIED_FAILURE_MESSAGE));
     }
 
     #[test]
@@ -1103,21 +1224,40 @@ mod tests {
     }
 
     #[test]
-    fn fallback_strict_recovery_after_chain_exhaustion() {
+    fn fallback_strict_chain_exhaustion_preserves_original_and_resets_next_request() {
         let cfg = chain_config(&["key-2"], 1);
         let mut engine = RouterEngine::with_fallback("fallback-strict", &cfg, primary());
-        let c = ctx(Vec::new());
+        let first_request = ctx_with_hash(101, Vec::new());
 
-        let first = engine.pick(&c).unwrap();
+        let first = engine.pick(&first_request).unwrap();
         engine.on_result(&first, &fail_res(auth_fail()));
-        let second = engine.pick(&c).unwrap();
+        let second = engine.pick(&first_request).unwrap();
         engine.on_result(&second, &fail_res(rate_fail()));
-        assert_eq!(engine.pick(&c), Err(RouteError::FallbackChainExhausted));
+        let terminal = engine.pick(&first_request).unwrap_err();
+        assert_ne!(terminal, RouteError::FallbackChainExhausted);
+        assert!(
+            terminal.to_string().contains("rejected"),
+            "son 429 yerine ilk auth hatası korunmalı: {terminal}"
+        );
 
-        // Tükenen zincirdeki son endpoint başarılı olursa devre kesici
-        // sıfırlanır ve seçim devam eder (self-healing).
-        engine.on_result(&second, &ok_res(None));
-        assert_eq!(engine.pick(&c).unwrap().id, "fallback:1");
+        let next_request = ctx_with_hash(202, Vec::new());
+        assert_eq!(engine.pick(&next_request).unwrap().id, "fallback:0");
+    }
+
+    #[test]
+    fn fallback_strict_success_resets_next_request_to_primary() {
+        let cfg = chain_config(&["key-2"], 1);
+        let mut engine = RouterEngine::with_fallback("fallback-strict", &cfg, primary());
+        let first_request = ctx_with_hash(101, Vec::new());
+
+        let primary_pick = engine.pick(&first_request).unwrap();
+        engine.on_result(&primary_pick, &fail_res(auth_fail()));
+        let fallback_pick = engine.pick(&first_request).unwrap();
+        assert_eq!(fallback_pick.id, "fallback:1");
+        engine.on_result(&fallback_pick, &ok_res(None));
+
+        let next_request = ctx_with_hash(202, Vec::new());
+        assert_eq!(engine.pick(&next_request).unwrap().id, "fallback:0");
     }
 
     // ---------------------------------------------------------------
@@ -1251,8 +1391,11 @@ mod tests {
 
     #[test]
     fn balance_then_fallback_round_robins_while_pool_healthy() {
-        let engine =
-            RouterEngine::with_fallback("balance-then-fallback", &chain_config(&["key-2"], 1), primary());
+        let engine = RouterEngine::with_fallback(
+            "balance-then-fallback",
+            &chain_config(&["key-2"], 1),
+            primary(),
+        );
         let c = ctx(vec![ep("a"), ep("b")]);
         assert_eq!(engine.pick(&c).unwrap().id, "a");
         assert_eq!(engine.pick(&c).unwrap().id, "b");
@@ -1261,8 +1404,11 @@ mod tests {
 
     #[test]
     fn balance_then_fallback_switches_to_chain_when_pool_degraded() {
-        let mut engine =
-            RouterEngine::with_fallback("balance-then-fallback", &chain_config(&["key-2"], 1), primary());
+        let mut engine = RouterEngine::with_fallback(
+            "balance-then-fallback",
+            &chain_config(&["key-2"], 1),
+            primary(),
+        );
         let c = ctx(vec![ep("a"), ep("b")]);
 
         let a = engine.pick(&c).unwrap();
@@ -1302,10 +1448,7 @@ mod tests {
         assert_eq!(engine.pick(&c).unwrap().id, "b");
         engine.on_result(&ep("b"), &fail_res(rate_fail()));
         // İkisi de dejenere: kaskad devreye girer.
-        assert_eq!(
-            engine.pick(&c),
-            Err(RouteError::FallbackChainExhausted)
-        );
+        assert_eq!(engine.pick(&c), Err(RouteError::FallbackChainExhausted));
     }
 
     // ---------------------------------------------------------------
@@ -1324,6 +1467,35 @@ mod tests {
     }
 
     #[test]
+    fn catalog_hedge_p95_id_executes_hedge_selector() {
+        #[derive(Deserialize)]
+        struct Catalog {
+            modes: Vec<CatalogMode>,
+        }
+
+        #[derive(Deserialize)]
+        struct CatalogMode {
+            id: String,
+            selector: String,
+        }
+
+        let catalog: Catalog =
+            toml::from_str(include_str!("../../../../config/routing_modes.toml")).unwrap();
+        let mode = catalog
+            .modes
+            .iter()
+            .find(|mode| mode.id == "hedge-p95")
+            .unwrap();
+        assert_eq!(mode.selector, "hedge");
+        assert!(RouterEngine::is_supported(&mode.id));
+
+        let engine = RouterEngine::new(&mode.id);
+        let c = ctx(vec![ep_latency("slow", 800), ep_latency("fast", 120)]);
+        assert_eq!(engine.pick(&c).unwrap().id, "fast");
+        assert_eq!(engine.pick_hedge(&c, 2).unwrap().len(), 2);
+    }
+
+    #[test]
     fn hedge_pick_hedge_returns_ordered_top_k() {
         let engine = RouterEngine::new("hedge");
         let c = ctx(vec![
@@ -1332,9 +1504,10 @@ mod tests {
             ep_latency("mid", 400),
         ]);
         let two = engine.pick_hedge(&c, 2).unwrap();
-        assert_eq!(two.iter().map(|e| e.id.as_str()).collect::<Vec<_>>(), [
-            "fast", "mid"
-        ]);
+        assert_eq!(
+            two.iter().map(|e| e.id.as_str()).collect::<Vec<_>>(),
+            ["fast", "mid"]
+        );
         let all = engine.pick_hedge(&c, 99).unwrap();
         assert_eq!(all.len(), 3);
         assert_eq!(all[0].id, "fast");
@@ -1372,7 +1545,10 @@ mod tests {
     fn hedge_depth_zero_returns_typed_error() {
         let engine = RouterEngine::new("hedge");
         let c = ctx(vec![ep("a")]);
-        assert_eq!(engine.pick_hedge(&c, 0), Err(RouteError::HedgeDepthInvalid(0)));
+        assert_eq!(
+            engine.pick_hedge(&c, 0),
+            Err(RouteError::HedgeDepthInvalid(0))
+        );
     }
 
     #[test]
@@ -1422,6 +1598,59 @@ mod tests {
         assert_eq!(engine.pick(&c).unwrap().id, "b");
     }
 
+    #[test]
+    fn sticky_session_keeps_independent_prompt_hash_bindings() {
+        let engine = RouterEngine::new("sticky-session");
+        let first_session = ctx_with_hash(101, vec![ep("a"), ep("b")]);
+        let second_session = ctx_with_hash(202, vec![ep("a"), ep("b")]);
+
+        assert_eq!(engine.pick(&first_session).unwrap().id, "a");
+        assert_eq!(engine.pick(&second_session).unwrap().id, "b");
+        assert_eq!(engine.pick(&first_session).unwrap().id, "a");
+        assert_eq!(engine.pick(&second_session).unwrap().id, "b");
+    }
+
+    #[test]
+    fn sticky_session_unavailable_endpoint_rebinds_only_that_session() {
+        let engine = RouterEngine::new("sticky-session");
+        let first_session = ctx_with_hash(101, vec![ep("a"), ep("b")]);
+        let second_session = ctx_with_hash(202, vec![ep("a"), ep("b")]);
+        assert_eq!(engine.pick(&first_session).unwrap().id, "a");
+        assert_eq!(engine.pick(&second_session).unwrap().id, "b");
+
+        let first_session_changed = ctx_with_hash(101, vec![ep("c")]);
+        assert_eq!(engine.pick(&first_session_changed).unwrap().id, "c");
+        assert_eq!(engine.pick(&second_session).unwrap().id, "b");
+    }
+
+    #[test]
+    fn sticky_session_failure_clears_only_bindings_for_failed_endpoint() {
+        let mut engine = RouterEngine::new("sticky-session");
+        let first_session = ctx_with_hash(101, vec![ep("a"), ep("b")]);
+        let second_session = ctx_with_hash(202, vec![ep("a"), ep("b")]);
+        let first = engine.pick(&first_session).unwrap();
+        assert_eq!(first.id, "a");
+        assert_eq!(engine.pick(&second_session).unwrap().id, "b");
+
+        engine.on_result(&first, &fail_res(auth_fail()));
+        assert_eq!(engine.pick(&second_session).unwrap().id, "b");
+    }
+
+    #[test]
+    fn sticky_session_serde_round_trip_preserves_independent_bindings() {
+        let engine = RouterEngine::new("sticky-session");
+        let first_session = ctx_with_hash(101, vec![ep("a"), ep("b")]);
+        let second_session = ctx_with_hash(202, vec![ep("a"), ep("b")]);
+        assert_eq!(engine.pick(&first_session).unwrap().id, "a");
+        assert_eq!(engine.pick(&second_session).unwrap().id, "b");
+
+        let json = serde_json::to_string(&engine).unwrap();
+        let restored: RouterEngine = serde_json::from_str(&json).unwrap();
+        assert_eq!(restored.pick(&first_session).unwrap().id, "a");
+        assert_eq!(restored.pick(&second_session).unwrap().id, "b");
+        assert_eq!(json, serde_json::to_string(&engine).unwrap());
+    }
+
     // ---------------------------------------------------------------
     // Ortak hata yolları
     // ---------------------------------------------------------------
@@ -1429,7 +1658,12 @@ mod tests {
     #[test]
     fn empty_pool_returns_typed_error_for_all_pool_modes() {
         for mode in [
-            "rr", "wrr", "jep-classic", "cheapest-alive", "balance-then-fallback", "hedge",
+            "rr",
+            "wrr",
+            "jep-classic",
+            "cheapest-alive",
+            "balance-then-fallback",
+            "hedge",
             "sticky-session",
         ] {
             let engine = RouterEngine::new(mode);
@@ -1465,7 +1699,10 @@ mod tests {
             "quality-diff-router",
             "",
         ] {
-            assert!(!RouterEngine::is_supported(mode), "{mode:?} iddia edilmemeli");
+            assert!(
+                !RouterEngine::is_supported(mode),
+                "{mode:?} iddia edilmemeli"
+            );
         }
     }
 
@@ -1492,7 +1729,8 @@ mod tests {
 
     #[test]
     fn debug_output_redacts_api_keys() {
-        let engine = RouterEngine::with_fallback("fallback-strict", &chain_config(&["key-2"], 1), primary());
+        let engine =
+            RouterEngine::with_fallback("fallback-strict", &chain_config(&["key-2"], 1), primary());
         let rendered = format!("{engine:?}");
         assert!(rendered.contains("***"));
         assert!(!rendered.contains("key-1"));
@@ -1521,18 +1759,13 @@ mod tests {
         assert_eq!(restored.snapshot().health["fallback:0"].failures, 1);
 
         // Zincir serileştirilmedi: yeniden kurulmadan seçim yapılamaz.
-        assert_eq!(
-            restored.pick(&c),
-            Err(RouteError::MissingFallbackChain)
-        );
+        assert_eq!(restored.pick(&c), Err(RouteError::MissingFallbackChain));
     }
 
     #[test]
     fn serde_round_trip_preserves_deterministic_selection() {
-        let engine = RouterEngine::new("wrr").with_weights(vec![
-            ("a".to_string(), 2),
-            ("b".to_string(), 1),
-        ]);
+        let engine =
+            RouterEngine::new("wrr").with_weights(vec![("a".to_string(), 2), ("b".to_string(), 1)]);
         let c = ctx(vec![ep("a"), ep("b")]);
         engine.pick(&c).unwrap();
         engine.pick(&c).unwrap();

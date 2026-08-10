@@ -117,7 +117,7 @@ pub enum SamplingEvent {
 /// (`reqwest::Error`, `serde_json::Error`) so it cannot cross a network
 /// boundary. `SamplingErrorInfo` extracts the bits that downstream
 /// consumers (UIs, gRPC adapters) actually need.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SamplingErrorInfo {
     pub kind: SamplingErrorKind,
     pub status_code: Option<u16>,

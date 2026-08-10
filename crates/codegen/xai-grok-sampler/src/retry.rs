@@ -315,6 +315,13 @@ impl FallbackRouter {
         }
     }
 
+    /// Yeni bir mantıksal istek için konumu ve istek-yerel devre
+    /// kesici sayaçlarını başlangıca döndürür.
+    pub fn restart(&mut self) {
+        self.current = 0;
+        self.failures.fill(0);
+    }
+
     fn is_tripped(&self, idx: usize) -> bool {
         self.failures[idx] >= self.threshold
     }
@@ -403,6 +410,13 @@ impl FallbackWalk {
     /// working key.
     pub fn on_success(&mut self) {
         self.router.record_success();
+    }
+
+    /// Aynı zinciri yeni bir mantıksal istek için birincilden başlatır.
+    /// Zincir uçları/eşik korunur; yalnızca istek-yerel durum temizlenir.
+    pub fn restart(&mut self) {
+        self.router.restart();
+        self.original = None;
     }
 
     /// Feed a failed hop into the walk. Records the first failure as
