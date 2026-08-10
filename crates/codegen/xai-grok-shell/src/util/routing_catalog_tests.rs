@@ -265,3 +265,251 @@ fn load_returns_io_error_for_unreadable_path() {
         other => panic!("dizin yolu Io hatası dönmeli, alınan: {other:?}"),
     }
 }
+
+/// Tek modlu, tek parametreli katalog şablonu: `param_block` değeri
+/// `[[modes.params]]` bloğu olarak gömülür.
+fn param_catalog(param_block: &str) -> String {
+    format!(
+        r#"
+[[modes]]
+id = "demo"
+family = "Balance"
+class = "primitive"
+selector = "demo_selector"
+title = "Demo Modu"
+blurb = "Blurb."
+long_help = "Uzun yardım."
+{param_block}
+"#
+    )
+}
+
+fn write_param_catalog(dir: &TempDir, name: &str, param_block: &str) -> std::path::PathBuf {
+    write_sample(dir, name, &param_catalog(param_block))
+}
+
+#[test]
+fn required_param_with_default_fails_validation() {
+    let dir = TempDir::new().expect("tempdir oluşmalı");
+    let path = write_param_catalog(
+        &dir,
+        "required-with-default.toml",
+        r#"
+[[modes.params]]
+name = "canary_ratio"
+type = "number"
+optional = false
+default = "0.1"
+help = "Zorunlu ama default'lu parametre."
+"#,
+    );
+
+    let err = load_routing_modes(&path).expect_err("zorunlu+default parametre hata dönmeli");
+    let msg = err.to_string();
+    assert!(
+        msg.contains("canary_ratio"),
+        "hata mesajı parametre adını içermeli: {msg}"
+    );
+    assert!(matches!(err, RoutingCatalogError::Validation { .. }));
+}
+
+#[test]
+fn number_default_must_be_finite_number() {
+    let dir = TempDir::new().expect("tempdir oluşmalı");
+    let path = write_param_catalog(
+        &dir,
+        "bad-number-default.toml",
+        r#"
+[[modes.params]]
+name = "decay"
+type = "number"
+optional = true
+default = "abc"
+help = "Sayı olmayan default."
+"#,
+    );
+
+    let err = load_routing_modes(&path).expect_err("sayı olmayan default hata dönmeli");
+    let msg = err.to_string();
+    assert!(
+        msg.contains("decay"),
+        "hata mesajı parametre adını içermeli: {msg}"
+    );
+    assert!(matches!(err, RoutingCatalogError::Validation { .. }));
+}
+
+#[test]
+fn non_finite_number_default_fails_validation() {
+    let dir = TempDir::new().expect("tempdir oluşmalı");
+    for bad in ["inf", "NaN"] {
+        let path = write_param_catalog(
+            &dir,
+            "non-finite-default.toml",
+            &format!(
+                r#"
+[[modes.params]]
+name = "decay"
+type = "number"
+optional = true
+default = "{bad}"
+help = "Sonlu olmayan default."
+"#
+            ),
+        );
+        let err =
+            load_routing_modes(&path).expect_err("sonlu olmayan default hata dönmeli");
+        assert!(matches!(err, RoutingCatalogError::Validation { .. }));
+    }
+}
+
+#[test]
+fn bool_default_must_be_bool() {
+    let dir = TempDir::new().expect("tempdir oluşmalı");
+    let path = write_param_catalog(
+        &dir,
+        "bad-bool-default.toml",
+        r#"
+[[modes.params]]
+name = "pre_call_checks"
+type = "bool"
+optional = true
+default = "evet"
+help = "Bool olmayan default."
+"#,
+    );
+
+    let err = load_routing_modes(&path).expect_err("bool olmayan default hata dönmeli");
+    assert!(matches!(err, RoutingCatalogError::Validation { .. }));
+}
+
+#[test]
+fn list_default_must_be_json_array() {
+    let dir = TempDir::new().expect("tempdir oluşmalı");
+    let path = write_param_catalog(
+        &dir,
+        "bad-list-default.toml",
+        r#"
+[[modes.params]]
+name = "tiers"
+type = "list"
+optional = true
+default = "1,2,3"
+help = "JSON dizi olmayan default."
+"#,
+    );
+
+    let err = load_routing_modes(&path).expect_err("JSON dizi olmayan default hata dönmeli");
+    assert!(matches!(err, RoutingCatalogError::Validation { .. }));
+}
+
+#[test]
+fn map_default_must_be_json_object() {
+    let dir = TempDir::new().expect("tempdir oluşmalı");
+    let path = write_param_catalog(
+        &dir,
+        "bad-map-default.toml",
+        r#"
+[[modes.params]]
+name = "weights"
+type = "map"
+optional = true
+default = "[1,2]"
+help = "JSON nesne olmayan default."
+"#,
+    );
+
+    let err = load_routing_modes(&path).expect_err("JSON nesne olmayan default hata dönmeli");
+    assert!(matches!(err, RoutingCatalogError::Validation { .. }));
+}
+
+#[test]
+fn string_default_accepts_any_value() {
+    let dir = TempDir::new().expect("tempdir oluşmalı");
+    for value in ["deep", "0.1", "true", "{\"a\":1}", "[1,2]"] {
+        let path = write_param_catalog(
+            &dir,
+            "string-default.toml",
+            &format!(
+                r#"
+[[modes.params]]
+name = "depth"
+type = "string"
+optional = true
+default = '{value}'
+help = "String default serbest olmalı."
+"#
+            ),
+        );
+        let modes =
+            load_routing_modes(&path).unwrap_or_else(|e| panic!("string default geçmeli: {e}"));
+        assert_eq!(modes.len(), 1);
+    }
+}
+
+#[test]
+fn kind_matching_defaults_pass() {
+    let dir = TempDir::new().expect("tempdir oluşmalı");
+    let content = r#"
+[[modes]]
+id = "demo"
+family = "Balance"
+class = "primitive"
+selector = "demo_selector"
+title = "Demo Modu"
+blurb = "Blurb."
+long_help = "Uzun yardım."
+
+[[modes.params]]
+name = "p_number"
+type = "number"
+optional = true
+default = "0.5"
+
+[[modes.params]]
+name = "p_bool"
+type = "bool"
+optional = true
+default = "false"
+
+[[modes.params]]
+name = "p_list"
+type = "list"
+optional = true
+default = "[\"a\",\"b\"]"
+
+[[modes.params]]
+name = "p_map"
+type = "map"
+optional = true
+default = "{\"k\":\"v\"}"
+
+[[modes.params]]
+name = "p_string"
+type = "string"
+optional = true
+default = "majority"
+"#;
+    let path = write_sample(&dir, "kind-defaults-ok.toml", content);
+
+    let modes = load_routing_modes(&path).expect("tiplerine uygun default'lar geçmeli");
+    assert_eq!(modes[0].params_schema.defs.len(), 5);
+}
+
+#[test]
+fn required_param_without_default_passes() {
+    let dir = TempDir::new().expect("tempdir oluşmalı");
+    let path = write_param_catalog(
+        &dir,
+        "required-no-default.toml",
+        r#"
+[[modes.params]]
+name = "max_tpm"
+type = "number"
+optional = false
+help = "Zorunlu ama default'suz parametre."
+"#,
+    );
+
+    let modes = load_routing_modes(&path).expect("zorunlu+default'suz parametre geçmeli");
+    assert_eq!(modes.len(), 1);
+}

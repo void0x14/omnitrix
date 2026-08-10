@@ -18,8 +18,10 @@
 #     [[modes.params]]                 # opsiyonel parametre şeması (ModeParams)
 #       name     = "<param adı>"
 #       type     = "<bool|number|string|list|map>"
-#       optional = true|false          # varsayılan: true
-#       default  = "<string gösterim>" # opsiyonel
+#       optional = true|false          # varsayılan: true; false ise `default` TANIMLANAMAZ
+#       default  = "<string gösterim>" # opsiyonel; tip ile uyumlu olmalı:
+#                                      #   bool→true/false, number→sonlu sayı,
+#                                      #   list→JSON dizi, map→JSON nesne, string→serbest
 #       help     = "<açıklama>"        # opsiyonel
 #
 # Katalog veridir: model adı veya fiyat literal'i İÇERMEZ (uygulama mantığından
@@ -589,7 +591,7 @@ long_help = "Trafiğin yapılandırılan oranı aday endpoint'e, geri kalanı st
 [[modes.params]]
 name = "canary_ratio"
 type = "number"
-optional = false
+optional = true
 default = "0.1"
 help = "Adaya gönderilecek trafik oranı (0-1)."
 [[modes.params]]

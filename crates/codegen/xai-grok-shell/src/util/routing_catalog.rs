@@ -105,6 +105,25 @@ pub enum ParamKind {
     Map,
 }
 
+impl ParamKind {
+    /// TOML'de kullanılan tip adı.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            ParamKind::Bool => "bool",
+            ParamKind::Number => "number",
+            ParamKind::String => "string",
+            ParamKind::List => "list",
+            ParamKind::Map => "map",
+        }
+    }
+}
+
+impl std::fmt::Display for ParamKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
 /// Tek parametre tanımı — P1.3'ün kullanıcı config'ini bu şemaya göre doğrulaması
 /// ve TUI'nin form/yardım basması için yeterli bilgiyi taşır.
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
@@ -114,6 +133,9 @@ pub struct ParamDef {
     pub kind: ParamKind,
     #[serde(default = "default_optional")]
     pub optional: bool,
+    /// String gösterimde varsayılan değer; `kind` ile uyumlu olmalıdır
+    /// (bool → bool, number → sonlu f64, list → JSON dizi, map → JSON nesne,
+    /// string → serbest). Zorunlu parametrede (`optional = false`) tanımlanamaz.
     #[serde(default)]
     pub default: Option<String>,
     #[serde(default)]
@@ -266,7 +288,8 @@ fn parse_catalog(
     Ok(file.modes)
 }
 
-/// Unique id ve zorunlu alan kontrolü; tüm ihlaller tek mesajda toplanır.
+/// Unique id, zorunlu alan ve parametre şeması kontrolü; tüm ihlaller tek
+/// mesajda toplanır.
 fn validate_catalog(
     modes: &[RoutingModeDef],
     path: &Path,
@@ -291,6 +314,22 @@ fn validate_catalog(
         if mode.selector.trim().is_empty() {
             errors.push(format!("{}: selector boş", mode.id));
         }
+        for param in &mode.params_schema.defs {
+            if !param.optional && param.default.is_some() {
+                errors.push(format!(
+                    "{}: parametre '{}' zorunlu (optional=false) ama default tanımlı",
+                    mode.id, param.name
+                ));
+            }
+            if let Some(default) = &param.default
+                && !default_matches_kind(param.kind, default)
+            {
+                errors.push(format!(
+                    "{}: parametre '{}' default değeri '{}' tip '{}' ile uyuşmuyor",
+                    mode.id, param.name, default, param.kind
+                ));
+            }
+        }
     }
     if errors.is_empty() {
         Ok(())
@@ -299,5 +338,24 @@ fn validate_catalog(
             path: path.to_path_buf(),
             details: errors.join("; "),
         })
+    }
+}
+
+/// String gösterimdeki default değer `kind` ile uyumlu mu?
+///
+/// Kural: bool → bool ayrıştırması, number → sonlu f64 ayrıştırması,
+/// list → JSON dizi, map → JSON nesne, string → serbest.
+fn default_matches_kind(kind: ParamKind, default: &str) -> bool {
+    match kind {
+        ParamKind::Bool => default.parse::<bool>().is_ok(),
+        ParamKind::Number => default
+            .parse::<f64>()
+            .ok()
+            .is_some_and(|value| value.is_finite()),
+        ParamKind::String => true,
+        ParamKind::List => serde_json::from_str::<serde_json::Value>(default)
+            .is_ok_and(|value| value.is_array()),
+        ParamKind::Map => serde_json::from_str::<serde_json::Value>(default)
+            .is_ok_and(|value| value.is_object()),
     }
 }
