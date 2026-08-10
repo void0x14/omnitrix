@@ -564,16 +564,25 @@ impl RouterEngine {
             .collect()
     }
 
-    /// `cheapest-alive`: en düşük maliyetli canlı aday; en ucuz aday
-    /// kalan bütçeyi aşıyorsa [`RouteError::BudgetExhausted`].
+    /// `cheapest-alive`: dejenere olmayan canlı adaylar arasında en düşük
+    /// maliyetli olanı seçer; en ucuz aday kalan bütçeyi aşıyorsa
+    /// [`RouteError::BudgetExhausted`], hiçbir kullanılabilir aday
+    /// kalmadıysa [`RouteError::FallbackChainExhausted`].
     fn pick_cheapest_alive(&self, ctx: &RouteContext) -> Result<Endpoint, RouteError> {
         if ctx.alive.is_empty() {
             return Err(RouteError::EmptyPool);
         }
-        let mut sorted: Vec<&Endpoint> = ctx.alive.iter().collect();
+        // Dejenere endpoint'ler aday havuzundan elenir (diğer seçicilerle
+        // aynı degrade eşiği semantiği); sıralama maliyet → ID determinizmi
+        // ve bütçe kontrolü korunur.
+        let mut sorted: Vec<&Endpoint> = ctx
+            .alive
+            .iter()
+            .filter(|e| self.health_for(&e.id).failures < self.degrade_threshold)
+            .collect();
         sorted.sort_by(|a, b| a.cost.cmp(&b.cost).then_with(|| a.id.cmp(&b.id)));
         let Some(cheapest) = sorted.first() else {
-            return Err(RouteError::EmptyPool);
+            return Err(RouteError::FallbackChainExhausted);
         };
         if cheapest.cost > ctx.budgets.remaining() {
             return Err(RouteError::BudgetExhausted {
@@ -1195,6 +1204,45 @@ mod tests {
                 remaining: 1,
             })
         );
+    }
+
+    /// Regression: degrade edilmiş (başarısızlık kayıtlı) ucuz endpoint,
+    /// sağlıklı daha pahalı endpoint varken seçilememeli.
+    #[test]
+    fn cheapest_alive_skips_degraded_cheaper_endpoint() {
+        let mut engine = RouterEngine::new("cheapest-alive");
+        let mut c = ctx(vec![ep_cost("cheap-failed", 5), ep_cost("healthy", 50)]);
+        c.budgets = BudgetSnapshot {
+            budget: 1_000,
+            spent: 0,
+        };
+        let cheap = engine.pick(&c).unwrap();
+        assert_eq!(cheap.id, "cheap-failed");
+        engine.on_result(&cheap, &fail_res(auth_fail()));
+
+        // Bütçe sağlıklı adaya yeter: dejenere ucuz aday atlanır.
+        assert_eq!(engine.pick(&c).unwrap().id, "healthy");
+    }
+
+    /// Tüm canlı adaylar dejenere ise mevcut hata sözlüğündeki tükenme
+    /// hatası döner (jep-classic / hedge / balance ile aynı semantik).
+    #[test]
+    fn cheapest_alive_all_degraded_returns_exhausted_error() {
+        let mut engine = RouterEngine::new("cheapest-alive");
+        let mut c = ctx(vec![ep_cost("a", 5), ep_cost("b", 50)]);
+        c.budgets = BudgetSnapshot {
+            budget: 1_000,
+            spent: 0,
+        };
+        let a = engine.pick(&c).unwrap();
+        engine.on_result(&a, &fail_res(auth_fail()));
+        let b = engine.pick(&c).unwrap();
+        engine.on_result(&b, &fail_res(rate_fail()));
+        assert_eq!(engine.pick(&c), Err(RouteError::FallbackChainExhausted));
+
+        // Başarılı hop devre kesiciyi sıfırlar: seçim devam eder.
+        engine.on_result(&b, &ok_res(None));
+        assert_eq!(engine.pick(&c).unwrap().id, "b");
     }
 
     // ---------------------------------------------------------------
