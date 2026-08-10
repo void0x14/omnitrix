@@ -126,6 +126,9 @@ impl AgentView {
             let ev = crossterm::event::Event::Key(*key);
             return self.handle_connect_picker_input(&ev);
         }
+        if matches!(modal, ActiveModal::RoutingPicker { .. }) {
+            return self.handle_routing_picker_input(key);
+        }
 
         // KeysManager: own mode machine owns every key (forms, reveals,
         // confirms, scope pickers) — Esc is `Close` (unlock screen / browse)
@@ -504,6 +507,7 @@ impl AgentView {
             | ActiveModal::MemoryBrowser { .. }
             | ActiveModal::Settings { .. }
             | ActiveModal::ProviderConnect { .. }
+            | ActiveModal::RoutingPicker { .. }
             | ActiveModal::KeysManager { .. }
             | ActiveModal::ResetSettingsConfirm { .. }
             | ActiveModal::RememberNoteReview { .. } => unreachable!(),
@@ -523,6 +527,9 @@ impl AgentView {
         }
         if matches!(self.active_modal, Some(ActiveModal::ProviderConnect { .. })) {
             return self.handle_connect_picker_input(&event);
+        }
+        if matches!(self.active_modal, Some(ActiveModal::RoutingPicker { .. })) {
+            return InputOutcome::Changed;
         }
         if matches!(self.active_modal, Some(ActiveModal::KeysManager { .. })) {
             return self.handle_keys_manager_input(&event);
@@ -676,6 +683,32 @@ impl AgentView {
                 } else {
                     InputOutcome::Changed
                 }
+            }
+        }
+    }
+
+    fn handle_routing_picker_input(&mut self, key: &crossterm::event::KeyEvent) -> InputOutcome {
+        use crate::views::modal::ActiveModal;
+        use crate::views::routing_picker::RoutingPickerOutcome;
+
+        let outcome = match self.active_modal.as_mut() {
+            Some(ActiveModal::RoutingPicker { state }) => state.handle_key(key),
+            _ => return InputOutcome::Changed,
+        };
+        match outcome {
+            RoutingPickerOutcome::Changed => InputOutcome::Changed,
+            RoutingPickerOutcome::Close => {
+                self.active_modal = None;
+                InputOutcome::Changed
+            }
+            RoutingPickerOutcome::Applied(Ok(())) => {
+                self.show_toast("routing modu kaydedildi");
+                self.active_modal = None;
+                InputOutcome::Changed
+            }
+            RoutingPickerOutcome::Applied(Err(error)) => {
+                self.show_toast(&format!("routing modu kaydedilemedi: {error}"));
+                InputOutcome::Changed
             }
         }
     }
@@ -2625,6 +2658,8 @@ impl AgentView {
                         flow,
                     );
                 }
+            } else if let modal::ActiveModal::RoutingPicker { state } = active_modal {
+                state.render(area, buf);
             } else if let modal::ActiveModal::KeysManager { state: km_state } = active_modal {
                 crate::views::keys_manager::render_keys_manager(buf, area, km_state, compact);
             } else if let modal::ActiveModal::Settings {

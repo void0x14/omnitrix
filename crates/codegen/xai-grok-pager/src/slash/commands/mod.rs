@@ -80,6 +80,9 @@ pub mod view_plan;
 pub mod vim_mode;
 pub mod voice;
 pub mod workflows;
+pub mod routing;
+#[cfg(test)]
+mod routing_tests;
 use super::command::SlashCommand;
 use std::sync::Arc;
 /// All pager-local builtin commands, in display order.
@@ -162,6 +165,7 @@ pub fn builtin_commands() -> Vec<Arc<dyn SlashCommand>> {
         Arc::new(omni_autonomous::OmniAutonomousCommand::new()),
         Arc::new(omni_backup::OmniBackupCommand::new()),
         Arc::new(omni_routing::OmniRoutingCommand::new()),
+        Arc::new(routing::RoutingCommand::new()),
         Arc::new(release_notes::ReleaseNotesCommand),
         Arc::new(tutorial::TutorialCommand),
         Arc::new(config_agents::ConfigAgentsCommand),

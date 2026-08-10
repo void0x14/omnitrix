@@ -104,6 +104,45 @@ pub(super) fn dispatch_open_connect_picker(app: &mut AppView) -> Vec<Effect> {
     effects
 }
 
+/// Katalog tabanli routing picker'i acar; disk yazimi yalnızca picker'da
+/// kullanici Enter ile secimi onayladiginda yapilir.
+pub(super) fn dispatch_open_routing_picker(app: &mut AppView) -> Vec<Effect> {
+    use crate::views::modal::ActiveModal;
+    use crate::views::routing_picker::RoutingPicker;
+
+    let id = match app.active_view {
+        ActiveView::Agent(id) => id,
+        _ => {
+            if let Some(existing) = app.agents.keys().next().copied() {
+                crate::app::dispatch::ctx::switch_to_agent(
+                    app,
+                    existing,
+                    crate::app::dispatch::ctx::SwitchCause::Picker,
+                );
+                existing
+            } else {
+                crate::app::dispatch::session::lifecycle::dispatch_new_session_inner_with_id(
+                    app, None,
+                )
+                .0
+            }
+        }
+    };
+    let root = match std::env::current_dir() {
+        Ok(path) => path,
+        Err(error) => {
+            app.show_toast(&format!("routing dizini okunamadi: {error}"));
+            return vec![];
+        }
+    };
+    if let Some(agent) = app.agents.get_mut(&id) {
+        agent.active_modal = Some(ActiveModal::RoutingPicker {
+            state: Box::new(RoutingPicker::new(&root)),
+        });
+    }
+    vec![]
+}
+
 /// Keys/keychain manager'ı açar (Task 9: gerçek keys TUI'si —
 /// `ActiveModal::KeysManager`). `dispatch_open_connect_picker` deseni:
 /// aktif agent'a (yoksa placeholder oturuma) modalı kurar; keychain RAM'den

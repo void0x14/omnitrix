@@ -441,6 +441,8 @@ pub enum Action {
     /// with the step machine (Task 7) + async models.dev catalog load via
     /// [`Effect::FetchModelsCatalog`].
     OpenConnectPicker,
+    /// Open the catalog-backed routing mode picker.
+    OpenRoutingPicker,
     /// Open the keys/keychain manager TUI: `ActiveModal::KeysManager`
     /// (table + reveal/add/edit/remove/export/import; kilitliyse kendi
     /// master-password akışıyla açar).

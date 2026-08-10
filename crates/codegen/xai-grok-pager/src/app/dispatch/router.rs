@@ -9,7 +9,7 @@ use super::connect::{
     dispatch_keychain_add, dispatch_keychain_borrow, dispatch_keychain_export,
     dispatch_keychain_import, dispatch_keychain_remove, dispatch_keychain_remove_category,
     dispatch_keychain_reveal, dispatch_keychain_unlock, dispatch_keychain_update,
-    dispatch_open_connect_picker, dispatch_open_keys_manager,
+    dispatch_open_connect_picker, dispatch_open_keys_manager, dispatch_open_routing_picker,
 };
 use super::ctx::{
     active_agent_session_id, get_active_agent_mut, navigate_clearing_selection, open_url_or_show,
@@ -858,6 +858,7 @@ pub(crate) fn dispatch(action: Action, app: &mut AppView) -> Vec<Effect> {
         }
         Action::NextModel => vec![],
         Action::OpenConnectPicker => dispatch_open_connect_picker(app),
+        Action::OpenRoutingPicker => dispatch_open_routing_picker(app),
         Action::OpenKeysManager => dispatch_open_keys_manager(app),
         Action::FetchProviderModels { base_url } => dispatch_fetch_provider_models(app, base_url),
         Action::AutoConnect { api_key, catalog } => dispatch_auto_connect(app, api_key, catalog),

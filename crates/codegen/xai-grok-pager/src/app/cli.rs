@@ -144,6 +144,45 @@ See ~/.grok/README.md for more information.
     /// `~/.grok/config.toml` or when the `GROK_AGENT_DASHBOARD=0` env
     /// var is set.
     Dashboard,
+    /// List, select, and explain routing modes.
+    Routing(RoutingArgs),
+}
+
+#[derive(Debug, Clone, clap::Args)]
+pub struct RoutingArgs {
+    #[command(subcommand)]
+    pub command: RoutingCommand,
+}
+
+#[derive(Debug, Clone, Subcommand)]
+pub enum RoutingCommand {
+    /// List catalog-backed routing modes.
+    List,
+    /// Persist a canonical catalog mode ID.
+    Set { id: String },
+    /// Show the selected routing mode.
+    Show,
+    /// Print catalog-backed long help for a mode.
+    Explain { id: String },
+}
+
+#[cfg(test)]
+mod routing_cli_tests {
+    use super::*;
+
+    #[test]
+    fn routing_subcommands_parse() {
+        let set =
+            PagerArgs::try_parse_from(["grok", "routing", "set", "rr"]).expect("routing set parse");
+        assert!(
+            matches!(set.command, Some(Command::Routing(RoutingArgs { command: RoutingCommand::Set { ref id } })) if id == "rr")
+        );
+        let unknown = PagerArgs::try_parse_from(["grok", "routing", "explain", "unknown-mode"])
+            .expect("unknown id parse edilir; calisma zamaninda reddedilir");
+        assert!(
+            matches!(unknown.command, Some(Command::Routing(RoutingArgs { command: RoutingCommand::Explain { ref id } })) if id == "unknown-mode")
+        );
+    }
 }
 /// Arguments for the `wrap` subcommand: the command to run, then its args.
 #[derive(Debug, clap::Args, Clone)]

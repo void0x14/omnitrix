@@ -39,6 +39,9 @@ pub mod provider_picker;
 pub mod question_view;
 pub mod queue_pane;
 pub mod rewind;
+pub mod routing_picker;
+#[cfg(test)]
+mod routing_picker_tests;
 pub mod scroll_debug_hud;
 pub mod session_picker;
 pub mod session_title;

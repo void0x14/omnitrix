@@ -47,6 +47,9 @@ pub mod omni_bridge;
 pub mod plugin_cmd;
 pub mod project_picker;
 pub mod pty_wrap;
+pub mod routing_cmd;
+#[cfg(test)]
+mod routing_cmd_tests;
 pub mod scrollback;
 pub mod search;
 pub mod sessions_cmd;

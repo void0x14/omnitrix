@@ -300,6 +300,10 @@ pub enum ActiveModal {
         /// Shared modal window chrome state.
         window: ModalWindowState,
     },
+    /// Katalog tabanli routing modu secici (`/routing`).
+    RoutingPicker {
+        state: Box<crate::views::routing_picker::RoutingPicker>,
+    },
     /// Keys/keychain manager (`Action::OpenKeysManager` — `/keys`).
     ///
     /// Tablo görünümü (Kategori | Provider | Maskeli | Model | Son Kullanım)
@@ -484,6 +488,11 @@ pub(crate) fn default_palette_entries(
             label: "Switch Model".into(),
             shortcut: "/model".into(),
             command: PaletteCommand::SlashCommand("/model ".into()),
+        },
+        PaletteEntry {
+            label: "Routing Mode".into(),
+            shortcut: "/routing".into(),
+            command: PaletteCommand::SlashCommand("/routing".into()),
         },
         PaletteEntry {
             label: "Always Approve Mode".into(),
@@ -678,6 +687,7 @@ impl ActiveModal {
             | ActiveModal::MemoryBrowser { .. }
             | ActiveModal::Settings { .. }
             | ActiveModal::ProviderConnect { .. }
+            | ActiveModal::RoutingPicker { .. }
             | ActiveModal::KeysManager { .. }
             | ActiveModal::RememberNoteReview { .. } => vec![],
         }
@@ -708,6 +718,7 @@ impl ActiveModal {
             ActiveModal::ShortcutsHelp { .. } => "Keyboard Shortcuts",
             ActiveModal::MemoryBrowser { .. } => "Memory",
             ActiveModal::ProviderConnect { .. } => "Connect provider",
+            ActiveModal::RoutingPicker { .. } => "Routing Modes",
             ActiveModal::KeysManager { .. } => "API Keys (Keychain)",
             ActiveModal::Settings { .. } => crate::views::settings_modal::MODAL_TITLE,
             ActiveModal::ResetSettingsConfirm { .. } => "Reset setting?",

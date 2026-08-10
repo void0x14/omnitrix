@@ -57,6 +57,7 @@ fn active_modal_kind(m: &crate::views::modal::ActiveModal) -> &'static str {
     match m {
         crate::views::modal::ActiveModal::KeysManager { .. } => "KeysManager",
         crate::views::modal::ActiveModal::ProviderConnect { .. } => "ProviderConnect",
+        crate::views::modal::ActiveModal::RoutingPicker { .. } => "RoutingPicker",
         crate::views::modal::ActiveModal::EditConfirm { .. } => "EditConfirm",
         crate::views::modal::ActiveModal::CommandPalette { .. } => "CommandPalette",
         crate::views::modal::ActiveModal::ArgPicker { .. } => "ArgPicker",
