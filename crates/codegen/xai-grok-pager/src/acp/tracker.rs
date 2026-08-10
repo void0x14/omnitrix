@@ -1001,9 +1001,7 @@ impl AcpUpdateTracker {
     ) -> bool {
         // Task 1.3: stream tool calls into the omnitrix event sink. Replays of
         // an already-persisted session are skipped (they would duplicate rows).
-        if !is_replay
-            && let Some(sink) = crate::omni_bridge::event_sink()
-        {
+        if !is_replay && let Some(sink) = crate::omni_bridge::event_sink() {
             let name = if tc.title.is_empty() {
                 format!("{:?}", tc.kind)
             } else {

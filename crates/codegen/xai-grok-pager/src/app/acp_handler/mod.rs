@@ -152,9 +152,7 @@ fn acp_message_brief(msg: &AcpClientMessage) -> String {
             })
             .to_string()
         }
-        AcpClientMessage::RequestPermission(_) => {
-            r#"{"type":"request_permission"}"#.to_string()
-        }
+        AcpClientMessage::RequestPermission(_) => r#"{"type":"request_permission"}"#.to_string(),
         AcpClientMessage::ReadTextFile(_) => r#"{"type":"read_text_file"}"#.to_string(),
         AcpClientMessage::WriteTextFile(_) => r#"{"type":"write_text_file"}"#.to_string(),
         AcpClientMessage::CreateTerminal(_) => r#"{"type":"create_terminal"}"#.to_string(),

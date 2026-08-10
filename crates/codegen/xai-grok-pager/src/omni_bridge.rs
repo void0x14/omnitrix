@@ -115,7 +115,9 @@ pub fn install_interrupt(handler: Arc<dyn OmniInterrupt>) {
 /// `None` = cekirdek kesme yolunu kurmadi (warm-up bekleniyor ya da pager
 /// tek basina calisiyor).
 pub fn interrupt(agent_id: i64, reason: &str) -> Option<Result<(), String>> {
-    INTERRUPT_HANDLER.get().map(|h| h.interrupt(agent_id, reason))
+    INTERRUPT_HANDLER
+        .get()
+        .map(|h| h.interrupt(agent_id, reason))
 }
 
 // ---------------------------------------------------------------------------
@@ -253,7 +255,6 @@ pub fn install_router(r: Arc<dyn OmniRouter>) -> Result<(), ()> {
 pub fn router() -> Option<Arc<dyn OmniRouter>> {
     ROUTER.get().cloned()
 }
-
 
 /// Configured notify channels, as seen by the pager (Task 6.1).
 ///

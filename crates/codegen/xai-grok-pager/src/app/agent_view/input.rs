@@ -1237,8 +1237,7 @@ impl AgentView {
         if let Event::Key(key) = ev
             && key.kind != KeyEventKind::Release
             && key.code == KeyCode::Char('F')
-            && (key.modifiers.is_empty()
-                || key.modifiers == crossterm::event::KeyModifiers::SHIFT)
+            && (key.modifiers.is_empty() || key.modifiers == crossterm::event::KeyModifiers::SHIFT)
         {
             return InputOutcome::Action(Action::ToggleFlowDetail);
         }

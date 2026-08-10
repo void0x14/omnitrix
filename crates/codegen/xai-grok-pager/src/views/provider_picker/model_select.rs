@@ -15,8 +15,8 @@ use ratatui::text::{Line, Span};
 use xai_grok_shell::util::models_dev::ModelInfo;
 
 use crate::views::picker::{
-    PickerConfig, PickerEntry, PickerHitAreas, PickerOutcome, PickerRow,
-    handle_picker_input, render_picker_content_with_scrollbar_x,
+    PickerConfig, PickerEntry, PickerHitAreas, PickerOutcome, PickerRow, handle_picker_input,
+    render_picker_content_with_scrollbar_x,
 };
 
 use super::{ConnectOutcome, ConnectStep, ProviderConnectFlow};
@@ -53,9 +53,7 @@ pub(super) fn filtered_models(flow: &ProviderConnectFlow) -> Vec<ModelInfo> {
     }
     sel.models
         .iter()
-        .filter(|m| {
-            m.name.to_lowercase().contains(&q) || m.id.to_lowercase().contains(&q)
-        })
+        .filter(|m| m.name.to_lowercase().contains(&q) || m.id.to_lowercase().contains(&q))
         .cloned()
         .collect()
 }
@@ -369,7 +367,12 @@ pub(super) fn render_model_step(
         } else {
             Style::default().fg(theme.gray_dim).bg(theme.bg_base)
         };
-        buf.set_line(inner_x, bottom_y, &Line::from(Span::styled(hint, style)), inner_width);
+        buf.set_line(
+            inner_x,
+            bottom_y,
+            &Line::from(Span::styled(hint, style)),
+            inner_width,
+        );
     }
 }
 
@@ -377,9 +380,7 @@ pub(super) fn render_model_step(
 mod tests {
     use super::*;
     use crossterm::event::{KeyEvent, KeyModifiers};
-    use xai_grok_shell::util::models_dev::{
-        CacheSource, CatalogCache, ModelCost, ModelLimits,
-    };
+    use xai_grok_shell::util::models_dev::{CacheSource, CatalogCache, ModelCost, ModelLimits};
 
     fn press(key: KeyCode) -> Event {
         Event::Key(KeyEvent::new(key, KeyModifiers::NONE))
@@ -448,7 +449,8 @@ mod tests {
         assert_eq!(flow.step, ConnectStep::Key);
         let _ = super::super::key_input::handle_key_step_input(&mut flow, &press(KeyCode::Enter));
         for c in "sk-x".chars() {
-            let _ = super::super::key_input::handle_key_step_input(&mut flow, &press(KeyCode::Char(c)));
+            let _ =
+                super::super::key_input::handle_key_step_input(&mut flow, &press(KeyCode::Char(c)));
         }
         let _ = super::super::key_input::handle_key_step_input(&mut flow, &press(KeyCode::Enter));
         assert_eq!(flow.step, ConnectStep::Model);

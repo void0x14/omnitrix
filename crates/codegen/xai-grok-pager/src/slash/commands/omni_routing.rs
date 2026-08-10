@@ -39,9 +39,10 @@ fn parse_args(args: &str) -> Result<Parse, String> {
     match (first.is_empty(), second) {
         (true, _) => Ok(Parse::Summary),
         (false, None) if STRATEGIES.contains(&first) => Ok(Parse::Strategy(first.to_string())),
-        (false, Some(_)) if STRATEGIES.contains(&first) => {
-            Err("strateji argumani tek kelime olmali (rol atamasi icin: /omni-routing <rol> <model>)".into())
-        }
+        (false, Some(_)) if STRATEGIES.contains(&first) => Err(
+            "strateji argumani tek kelime olmali (rol atamasi icin: /omni-routing <rol> <model>)"
+                .into(),
+        ),
         (false, Some(model)) if ROLES.contains(&first) => {
             Ok(Parse::RoleModel(first.to_string(), model.to_string()))
         }
@@ -99,11 +100,7 @@ impl SlashCommand for OmniRoutingCommand {
         true
     }
 
-    fn run(
-        &self,
-        _ctx: &mut CommandExecCtx<'_>,
-        args: &str,
-    ) -> CommandResult {
+    fn run(&self, _ctx: &mut CommandExecCtx<'_>, args: &str) -> CommandResult {
         let Some(router) = crate::omni_bridge::router() else {
             return CommandResult::Message(
                 "yonlendirme koprusu kurulmamis (warmup bekleniyor)".into(),

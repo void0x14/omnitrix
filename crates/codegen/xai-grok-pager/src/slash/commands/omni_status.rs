@@ -41,9 +41,9 @@ impl SlashCommand for OmniStatusCommand {
                     healthy
                 ))
             }
-            None => CommandResult::Message(
-                "omnitrix core baslatilmadi (warmup bekleniyor)".to_string(),
-            ),
+            None => {
+                CommandResult::Message("omnitrix core baslatilmadi (warmup bekleniyor)".to_string())
+            }
         }
     }
 }

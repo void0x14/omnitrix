@@ -149,11 +149,7 @@ impl ProviderConnectFlow {
     /// Config `[model_providers.*]` kayıtları şimdilik boş geçilir (Task 8
     /// dispatch'ten gerçek config'i enjekte eder).
     pub fn new(catalog: CatalogCache, keychain_entries: Vec<KeyEntry>) -> Self {
-        let rows = provider_rows(
-            &catalog,
-            &keychain_entries,
-            &indexmap::IndexMap::new(),
-        );
+        let rows = provider_rows(&catalog, &keychain_entries, &indexmap::IndexMap::new());
         Self {
             step: ConnectStep::ModeSelect,
             catalog,
@@ -450,7 +446,12 @@ fn render_provider_step(
     let filtered = filter_provider_rows(&flow.rows, flow.picker.query());
     let badge_labels: Vec<String> = filtered
         .iter()
-        .map(|r| r.badge.as_ref().map(ProviderBadge::label).unwrap_or_default())
+        .map(|r| {
+            r.badge
+                .as_ref()
+                .map(ProviderBadge::label)
+                .unwrap_or_default()
+        })
         .collect();
     let badge_color_for: Vec<Option<Color>> = filtered
         .iter()

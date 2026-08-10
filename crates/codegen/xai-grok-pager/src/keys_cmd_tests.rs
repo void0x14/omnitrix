@@ -26,7 +26,14 @@ fn sample_entry(id: &str, category: &str, provider: &str) -> KeyEntry {
 #[test]
 fn header_contains_all_columns() {
     let header = format_list_header();
-    for column in ["KATEGORI", "PROVIDER", "MASKELI", "MODEL", "SON_KULLANIM", "ID"] {
+    for column in [
+        "KATEGORI",
+        "PROVIDER",
+        "MASKELI",
+        "MODEL",
+        "SON_KULLANIM",
+        "ID",
+    ] {
         assert!(header.contains(column), "header missing {column}: {header}");
     }
 }
@@ -38,7 +45,10 @@ fn row_contains_id_and_masked_never_full_key() {
     assert!(row.contains("sk-…a1b2"));
     // Maskeli form meşru olarak "sk-" ile başlar; gerçek invariant satıra
     // tam key'in gizli kısmının asla girmemesidir.
-    assert!(!row.contains("super-secret"), "row must never carry the full key secret");
+    assert!(
+        !row.contains("super-secret"),
+        "row must never carry the full key secret"
+    );
 }
 
 #[test]
@@ -48,8 +58,15 @@ fn row_uses_dash_for_missing_model_and_last_used() {
     e.last_used = None;
     let row = format_list_row(&e);
     // İki "-" beklenir: model ve son kullanım sütunları.
-    assert_eq!(row.matches('-').count() >= 2, true, "dashes for empty cells: {row}");
-    assert!(!row.contains("MODEL"), "row must not contain header text: {row}");
+    assert_eq!(
+        row.matches('-').count() >= 2,
+        true,
+        "dashes for empty cells: {row}"
+    );
+    assert!(
+        !row.contains("MODEL"),
+        "row must not contain header text: {row}"
+    );
 }
 
 #[test]

@@ -1038,9 +1038,9 @@ fn configured_report_reaches_pass_state_only_for_exact_managed_alias() {
 #[cfg(unix)]
 #[test]
 fn shell_aliases_expand_to_exact_argv_and_bypass_is_explicit() {
+    use portable_pty::PtySize;
     use std::time::Duration;
     use xai_grok_pager_pty_harness::pty::{PtyController, PtyExitPoll};
-    use portable_pty::PtySize;
 
     let temp = tempfile::tempdir().unwrap();
     let capture = temp.path().join("capture");
@@ -1110,9 +1110,7 @@ fn shell_aliases_expand_to_exact_argv_and_bypass_is_explicit() {
         )
         .expect("spawn zsh under pty");
         shell
-            .inject_keys(
-                format!("source '{}'\nssh -p 2222 host\nexit\n", rc.display()).as_bytes(),
-            )
+            .inject_keys(format!("source '{}'\nssh -p 2222 host\nexit\n", rc.display()).as_bytes())
             .expect("inject zsh commands");
         assert!(
             matches!(

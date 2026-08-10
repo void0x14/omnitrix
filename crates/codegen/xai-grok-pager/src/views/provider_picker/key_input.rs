@@ -60,10 +60,7 @@ pub fn validate_base_url(raw: &str) -> bool {
         .unwrap_or(false)
 }
 
-pub(super) fn handle_base_url_input(
-    flow: &mut ProviderConnectFlow,
-    ev: &Event,
-) -> ConnectOutcome {
+pub(super) fn handle_base_url_input(flow: &mut ProviderConnectFlow, ev: &Event) -> ConnectOutcome {
     match ev {
         Event::Key(key) if key.kind == KeyEventKind::Press => match key.code {
             KeyCode::Esc => {
@@ -202,10 +199,7 @@ pub(super) fn handle_key_step_input(flow: &mut ProviderConnectFlow, ev: &Event) 
     match ev {
         Event::Key(key) if key.kind == KeyEventKind::Press => match key.code {
             KeyCode::Esc => {
-                let custom = flow
-                    .selected_provider
-                    .as_ref()
-                    .is_some_and(|s| s.is_custom);
+                let custom = flow.selected_provider.as_ref().is_some_and(|s| s.is_custom);
                 flow.step = if custom {
                     ConnectStep::BaseUrl
                 } else {
@@ -248,8 +242,14 @@ fn key_row_count(flow: &ProviderConnectFlow) -> usize {
 }
 
 /// Fare: satıra tıkla → imleci oraya taşı + Enter davranışını uygula.
-fn handle_key_list_mouse(flow: &mut ProviderConnectFlow, mouse: &crossterm::event::MouseEvent) -> ConnectOutcome {
-    if !matches!(mouse.kind, MouseEventKind::Down(crossterm::event::MouseButton::Left)) {
+fn handle_key_list_mouse(
+    flow: &mut ProviderConnectFlow,
+    mouse: &crossterm::event::MouseEvent,
+) -> ConnectOutcome {
+    if !matches!(
+        mouse.kind,
+        MouseEventKind::Down(crossterm::event::MouseButton::Left)
+    ) {
         return ConnectOutcome::Nothing;
     }
     let pos = ratatui::layout::Position::new(mouse.column, mouse.row);
@@ -373,18 +373,14 @@ pub(super) fn render_key_step(
     let entries = provider_keychain_entries(flow);
     let selected_style = |sel: bool| {
         if sel {
-            Style::default()
-                .fg(theme.bg_base)
-                .bg(theme.text_primary)
+            Style::default().fg(theme.bg_base).bg(theme.text_primary)
         } else {
             Style::default().fg(theme.text_primary).bg(theme.bg_base)
         }
     };
     let row_style = |sel: bool| {
         if sel {
-            Style::default()
-                .fg(theme.bg_base)
-                .bg(theme.text_primary)
+            Style::default().fg(theme.bg_base).bg(theme.text_primary)
         } else {
             Style::default().fg(theme.text_secondary).bg(theme.bg_base)
         }
@@ -407,27 +403,26 @@ pub(super) fn render_key_step(
             if y >= content.y + content.height {
                 return;
             }
-            flow.key_row_rects.push(Rect::new(inner_x, y, inner_width, 1));
+            flow.key_row_rects
+                .push(Rect::new(inner_x, y, inner_width, 1));
             let label = format!("[key] {}", entry.masked);
             let cat = format!("  {}", entry.category);
             let line = Line::from(vec![
                 Span::styled(
                     label,
-                    row_style(flow.key_cursor == row_index)
-                        .fg(if flow.key_cursor == row_index {
-                            theme.bg_base
-                        } else {
-                            theme.accent_system
-                        }),
+                    row_style(flow.key_cursor == row_index).fg(if flow.key_cursor == row_index {
+                        theme.bg_base
+                    } else {
+                        theme.accent_system
+                    }),
                 ),
                 Span::styled(
                     cat,
-                    row_style(flow.key_cursor == row_index)
-                        .fg(if flow.key_cursor == row_index {
-                            theme.bg_base
-                        } else {
-                            theme.gray
-                        }),
+                    row_style(flow.key_cursor == row_index).fg(if flow.key_cursor == row_index {
+                        theme.bg_base
+                    } else {
+                        theme.gray
+                    }),
                 ),
             ]);
             buf.set_line(inner_x, y, &line, inner_width);
@@ -440,7 +435,8 @@ pub(super) fn render_key_step(
         return;
     }
     let new_idx = entries.len();
-    flow.key_row_rects.push(Rect::new(inner_x, y, inner_width, 1));
+    flow.key_row_rects
+        .push(Rect::new(inner_x, y, inner_width, 1));
     let new_label = if flow.key_edit_mode {
         "yeni key yazılıyor\u{2026}".to_string()
     } else {
@@ -526,20 +522,11 @@ pub(super) fn render_masked_editor(
 ) {
     let label_w = label.len() as u16;
     let input_width = width.saturating_sub(label_w) as usize;
-    let style = |s: Style| -> Style {
-        if let Some(c) = bg {
-            s.bg(c)
-        } else {
-            s
-        }
-    };
+    let style = |s: Style| -> Style { if let Some(c) = bg { s.bg(c) } else { s } };
     buf.set_line(
         x,
         y,
-        &Line::from(Span::styled(
-            label,
-            style(Style::default().fg(theme.gray)),
-        )),
+        &Line::from(Span::styled(label, style(Style::default().fg(theme.gray)))),
         width,
     );
     let input_x = x + label_w;
@@ -563,7 +550,9 @@ pub(super) fn render_masked_editor(
             shown.width() as u16,
         );
     }
-    let cursor_col = viewport.cursor_display_column.min(input_width.saturating_sub(1));
+    let cursor_col = viewport
+        .cursor_display_column
+        .min(input_width.saturating_sub(1));
     let cursor_x = input_x + cursor_col as u16;
     if cursor_x < x + width
         && let Some(cell) = buf.cell_mut((cursor_x, y))
@@ -827,15 +816,24 @@ mod tests {
         // Render satır rect'lerini doldurur (keychain satırı + yeni key).
         let mut buf = ratatui::buffer::Buffer::empty(ratatui::layout::Rect::new(0, 0, 80, 10));
         let theme = crate::theme::Theme::current();
-        render_key_step(&mut buf, ratatui::layout::Rect::new(0, 0, 80, 10), 2, 76, &theme, &mut flow);
+        render_key_step(
+            &mut buf,
+            ratatui::layout::Rect::new(0, 0, 80, 10),
+            2,
+            76,
+            &theme,
+            &mut flow,
+        );
         assert_eq!(flow.key_row_rects.len(), 2);
         let row0 = flow.key_row_rects[0];
-        let click = |row: ratatui::layout::Rect| Event::Mouse(MouseEvent {
-            kind: MouseEventKind::Down(MouseButton::Left),
-            column: row.x + 1,
-            row: row.y,
-            modifiers: KeyModifiers::NONE,
-        });
+        let click = |row: ratatui::layout::Rect| {
+            Event::Mouse(MouseEvent {
+                kind: MouseEventKind::Down(MouseButton::Left),
+                column: row.x + 1,
+                row: row.y,
+                modifiers: KeyModifiers::NONE,
+            })
+        };
         // Keychain satırına tıkla → Model adımına ilerler.
         let out = handle_key_step_input(&mut flow, &click(row0));
         assert_eq!(
@@ -851,17 +849,30 @@ mod tests {
         let mut flow = flow_at_key();
         let mut buf = ratatui::buffer::Buffer::empty(ratatui::layout::Rect::new(0, 0, 80, 10));
         let theme = crate::theme::Theme::current();
-        render_key_step(&mut buf, ratatui::layout::Rect::new(0, 0, 80, 10), 2, 76, &theme, &mut flow);
+        render_key_step(
+            &mut buf,
+            ratatui::layout::Rect::new(0, 0, 80, 10),
+            2,
+            76,
+            &theme,
+            &mut flow,
+        );
         // Keychain kaydı yok → "+ yeni key gir" satırı tek satır (index 0).
         let row0 = flow.key_row_rects[0];
-        let out = handle_key_step_input(&mut flow, &Event::Mouse(MouseEvent {
-            kind: MouseEventKind::Down(MouseButton::Left),
-            column: row0.x + 1,
-            row: row0.y,
-            modifiers: KeyModifiers::NONE,
-        }));
+        let out = handle_key_step_input(
+            &mut flow,
+            &Event::Mouse(MouseEvent {
+                kind: MouseEventKind::Down(MouseButton::Left),
+                column: row0.x + 1,
+                row: row0.y,
+                modifiers: KeyModifiers::NONE,
+            }),
+        );
         assert_eq!(out, ConnectOutcome::Nothing);
-        assert!(flow.key_edit_mode, "yeni key satırına tıklama yazım modu açar");
+        assert!(
+            flow.key_edit_mode,
+            "yeni key satırına tıklama yazım modu açar"
+        );
         assert_eq!(flow.step, ConnectStep::Key);
     }
 
@@ -881,7 +892,11 @@ mod tests {
         type_text(&mut flow, "sk-x");
         let out = handle_key_step_input(&mut flow, &press(KeyCode::Enter));
         assert_eq!(out, ConnectOutcome::PickKeyMode(KeyMode::New));
-        assert_eq!(flow.step, ConnectStep::Model, "kategori adımı yok — doğrudan Model");
+        assert_eq!(
+            flow.step,
+            ConnectStep::Model,
+            "kategori adımı yok — doğrudan Model"
+        );
     }
 
     #[test]

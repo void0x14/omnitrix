@@ -176,7 +176,10 @@ mod tests {
         let rows = provider_rows(&catalog, &[], &IndexMap::new());
         assert_eq!(rows.len(), 3); // openai + 2 custom
         assert_eq!(rows[0].provider_id, "openai");
-        assert_eq!(rows[0].badge, None, "keychain kaydı yoksa rozet gösterilmez");
+        assert_eq!(
+            rows[0].badge, None,
+            "keychain kaydı yoksa rozet gösterilmez"
+        );
         assert_eq!(
             rows[0].base_url.as_deref(),
             Some("https://api.openai.com/v1")

@@ -214,7 +214,8 @@ impl KeysManagerState {
         }
         if *filter == CategoryFilter::MultiKey {
             // ≥ 3 keyi olan sağlayıcıların tüm kayıtları.
-            let mut counts: std::collections::HashMap<&str, usize> = std::collections::HashMap::new();
+            let mut counts: std::collections::HashMap<&str, usize> =
+                std::collections::HashMap::new();
             for e in &self.entries {
                 *counts.entry(e.provider_id.as_str()).or_insert(0) += 1;
             }
@@ -706,9 +707,7 @@ fn enter_categories(state: &mut KeysManagerState) {
     let mut types: Vec<xai_omni_keychain::KeyType> = Vec::new();
     for e in &state.entries {
         *prov_counts.entry(e.provider_id.as_str()).or_insert(0) += 1;
-        if e.key_type != xai_omni_keychain::KeyType::Unknown
-            && !types.contains(&e.key_type)
-        {
+        if e.key_type != xai_omni_keychain::KeyType::Unknown && !types.contains(&e.key_type) {
             types.push(e.key_type.clone());
         }
     }
@@ -1832,13 +1831,8 @@ fn render_categories(
         } else {
             Style::default().fg(theme.text_secondary)
         };
-        let count = state
-            .visible_entries_for(filter)
-            .len();
-        let active = state
-            .category_filter
-            .as_ref()
-            .is_some_and(|f| f == filter);
+        let count = state.visible_entries_for(filter).len();
+        let active = state.category_filter.as_ref().is_some_and(|f| f == filter);
         let suffix = if active { " (aktif)" } else { "" };
         render_line(
             buf,

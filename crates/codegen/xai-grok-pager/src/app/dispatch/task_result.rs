@@ -1358,7 +1358,8 @@ pub(super) fn dispatch_task_result(result: TaskResult, app: &mut AppView) -> Vec
             }
             vec![]
         }
-        TaskResult::ProviderModelsFetched { base_url, result } => {            // Custom provider `/models` sonucu: hâlâ Model adımında ve aynı
+        TaskResult::ProviderModelsFetched { base_url, result } => {
+            // Custom provider `/models` sonucu: hâlâ Model adımında ve aynı
             // base URL'deyse listeyi doldur (Loaded) / hata satırını kur
             // (Failed — manuel ID girişi kullanılır).
             use crate::views::modal::ActiveModal;
@@ -1366,7 +1367,9 @@ pub(super) fn dispatch_task_result(result: TaskResult, app: &mut AppView) -> Vec
             use xai_grok_shell::util::models_dev::ModelInfo;
             for agent in app.agents.values_mut() {
                 if let Some(ActiveModal::ProviderConnect { flow, .. }) = &mut agent.active_modal {
-                    if flow.step != ConnectStep::Model || flow.models_fetch_state == ModelFetchState::Idle {
+                    if flow.step != ConnectStep::Model
+                        || flow.models_fetch_state == ModelFetchState::Idle
+                    {
                         continue;
                     }
                     let same_url = flow

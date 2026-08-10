@@ -87,9 +87,9 @@ impl crate::slash::command::SlashCommand for OmniAutonomousCommand {
 
         match engine.run(&problem) {
             Ok(summary) => crate::slash::command::CommandResult::Message(summary),
-            Err(err) => crate::slash::command::CommandResult::Message(format!(
-                "otonom dongu hatasi: {err}"
-            )),
+            Err(err) => {
+                crate::slash::command::CommandResult::Message(format!("otonom dongu hatasi: {err}"))
+            }
         }
     }
 }
@@ -108,12 +108,12 @@ pub fn initial_research_mode(prefer: Option<&str>) -> ResearchMode {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::Arc;
-    use crate::omni_bridge::{OmniAutonomous, OmniResearch, research};
-    use crate::slash::command::{CommandExecCtx, CommandResult, SlashCommand};
     use crate::acp::model_state::ModelState;
     use crate::app::bundle::BundleState;
+    use crate::omni_bridge::{OmniAutonomous, OmniResearch, research};
     use crate::settings::PagerLocalSnapshot;
+    use crate::slash::command::{CommandExecCtx, CommandResult, SlashCommand};
+    use std::sync::Arc;
 
     fn ctx<'a>(models: &'a ModelState, bundle: &'a BundleState) -> CommandExecCtx<'a> {
         CommandExecCtx {
@@ -139,7 +139,10 @@ mod tests {
         let mut c = ctx(&models, &bundle);
         match cmd.run(&mut c, "") {
             crate::slash::command::CommandResult::Message(m) => {
-                assert!(m.contains("kullanim"), "bos arguman kullanim gostermeli: {m}");
+                assert!(
+                    m.contains("kullanim"),
+                    "bos arguman kullanim gostermeli: {m}"
+                );
             }
             other => panic!("Message bekleniyordu: {other:?}"),
         }

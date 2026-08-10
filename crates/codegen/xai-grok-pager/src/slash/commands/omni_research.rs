@@ -166,10 +166,17 @@ mod tests {
             rounds_run: 1,
             findings: 1,
             truncated: false,
-            summary: (0..100).map(|i| format!("satir {i}")).collect::<Vec<_>>().join("\n"),
+            summary: (0..100)
+                .map(|i| format!("satir {i}"))
+                .collect::<Vec<_>>()
+                .join("\n"),
         };
         let out = render_summary(&report);
-        assert_eq!(out.lines().count(), SUMMARY_LINES + 2, "ipucu 2 satir ekler");
+        assert_eq!(
+            out.lines().count(),
+            SUMMARY_LINES + 2,
+            "ipucu 2 satir ekler"
+        );
         assert!(out.contains("kesildi"));
 
         report.truncated = true;

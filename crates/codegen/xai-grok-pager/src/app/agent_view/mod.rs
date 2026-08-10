@@ -911,7 +911,10 @@ pub struct AgentView {
     pub show_flow_detail: bool,
     /// flow_events.jsonl okuma önbelleği: (mtime, satırlar). Dosya değişmedikçe
     /// her karede tekrar okunmaz (TUI performansı).
-    pub flow_events_cache: Option<(std::time::SystemTime, Vec<crate::views::flow_detail::FlowEventLine>)>,
+    pub flow_events_cache: Option<(
+        std::time::SystemTime,
+        Vec<crate::views::flow_detail::FlowEventLine>,
+    )>,
     /// UTC ms when the current turn started (`turnStartMs` from notification meta).
     /// Used for turn elapsed display.
     pub turn_start_ms: Option<i64>,

@@ -123,9 +123,9 @@ fn auto_connect_error_msg(e: &AutoConnectError) -> String {
         AutoConnectError::NoDetectedProviders => {
             "auto-connect: API key'den provider tespit edilemedi (key formatı bilinmiyor)".into()
         }
-        AutoConnectError::MissingCatalogEntry { provider_id } => format!(
-            "auto-connect: '{provider_id}' katalogda bulunamadı veya base URL çözülemedi"
-        ),
+        AutoConnectError::MissingCatalogEntry { provider_id } => {
+            format!("auto-connect: '{provider_id}' katalogda bulunamadı veya base URL çözülemedi")
+        }
         AutoConnectError::NoProbeWinner => {
             "auto-connect: aday provider'lara canlı bağlantı kurulamadı (ağ/timeout)".into()
         }
@@ -198,11 +198,7 @@ async fn programmatic_connect(grok_home: &Path, args: &ConnectArgs) -> anyhow::R
         .base_url
         .clone()
         .or_else(|| entry.as_ref().and_then(|e| e.base_url.clone()))
-        .or_else(|| {
-            catalog_entry
-                .as_ref()
-                .and_then(base_url_for_provider)
-        })
+        .or_else(|| catalog_entry.as_ref().and_then(base_url_for_provider))
         .ok_or_else(|| {
             anyhow::anyhow!(
                 "base URL çözülemedi: --base-url verin (ör. https://api.example.com/v1)"
@@ -275,8 +271,15 @@ async fn finalize_connect(
     };
 
     // 9) Config yazımı: model_providers + model + models.default.
-    write_provider_config(grok_home, provider_id, base_url, api_backend, model_key, model)
-        .await?;
+    write_provider_config(
+        grok_home,
+        provider_id,
+        base_url,
+        api_backend,
+        model_key,
+        model,
+    )
+    .await?;
     xai_grok_shell::util::config::set_default_model(model_key.clone())
         .await
         .context("varsayılan model yazılamadı")?;
@@ -346,7 +349,9 @@ pub(crate) async fn resolve_catalog_for(
     match (cache.providers.get(provider_id), has_base_url_flag) {
         (Some(entry), _) => Ok((
             Some(entry.clone()),
-            provider_models(&cache, provider_id).cloned().unwrap_or_default(),
+            provider_models(&cache, provider_id)
+                .cloned()
+                .unwrap_or_default(),
         )),
         // Katalogda yok ama --base-url verildi → custom endpoint (kendi id'siyle).
         (None, true) => Ok((None, IndexMap::new())),
@@ -372,7 +377,9 @@ pub(crate) async fn catalog_for_provider(
     match cache.providers.get(provider_id) {
         Some(entry) => Ok((
             Some(entry.clone()),
-            provider_models(&cache, provider_id).cloned().unwrap_or_default(),
+            provider_models(&cache, provider_id)
+                .cloned()
+                .unwrap_or_default(),
         )),
         None => Ok((None, IndexMap::new())),
     }
@@ -391,9 +398,7 @@ pub(crate) fn resolve_model_id(
             if models.is_empty() || models.contains_key(m) {
                 Ok(m.to_string())
             } else {
-                anyhow::bail!(
-                    "'{m}' bu provider'ın kataloğunda yok; --model ile doğru id verin"
-                )
+                anyhow::bail!("'{m}' bu provider'ın kataloğunda yok; --model ile doğru id verin")
             }
         }
         None => {
@@ -404,7 +409,9 @@ pub(crate) fn resolve_model_id(
                 Ok(models.keys().next().expect("len==1").clone())
             } else {
                 let first = models.keys().next().expect("non-empty").clone();
-                eprintln!("model belirtilmedi; ilk model seçildi: {first} (--model ile değiştirin)");
+                eprintln!(
+                    "model belirtilmedi; ilk model seçildi: {first} (--model ile değiştirin)"
+                );
                 Ok(first)
             }
         }
@@ -469,14 +476,21 @@ pub(crate) async fn write_provider_config(
     model: &str,
 ) -> anyhow::Result<()> {
     let path = grok_home.join("config.toml");
-    let mut doc = crate::config_toml_edit::read_config_document_for_edit(&path)
-        .ok_or_else(|| {
+    let mut doc =
+        crate::config_toml_edit::read_config_document_for_edit(&path).ok_or_else(|| {
             anyhow::anyhow!(
                 "config.toml geçerli TOML değil; düzeltmeden yazılamaz: {}",
                 path.display()
             )
         })?;
-    apply_provider_config(&mut doc, provider_id, base_url, api_backend, model_key, model);
+    apply_provider_config(
+        &mut doc,
+        provider_id,
+        base_url,
+        api_backend,
+        model_key,
+        model,
+    );
     atomic_write_config(&path, &doc.to_string())
         .map_err(|e| anyhow::anyhow!("config.toml yazılamadı: {e}"))
 }

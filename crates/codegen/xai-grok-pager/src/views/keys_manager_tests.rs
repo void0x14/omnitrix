@@ -463,7 +463,10 @@ fn categories_render_lists_derived_groups() {
     let mut state = browse_state(vec![sample_entry("openai", "sk-…a1b2")]);
     let _ = handle_keys_manager_event(&mut state, &Event::Key(key_char('c')));
     let text = render_text(&mut state);
-    assert!(text.contains("otomatik"), "başlık türetilmiş kategorileri söyler");
+    assert!(
+        text.contains("otomatik"),
+        "başlık türetilmiş kategorileri söyler"
+    );
     assert!(text.contains("tümü"), "tümü satırı görünmeli");
     assert!(text.contains("openai"), "sağlayıcı kategorisi görünmeli");
 }

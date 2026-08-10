@@ -53,10 +53,7 @@ pub fn read_flow_events(path: &Path) -> Vec<FlowEventLine> {
                 .or_else(|| v.get("artifact").and_then(|a| a.as_str()))
                 .unwrap_or("flow.event")
                 .to_string();
-            let detail = v
-                .get("detail")
-                .map(|d| d.to_string())
-                .unwrap_or_default();
+            let detail = v.get("detail").map(|d| d.to_string()).unwrap_or_default();
             Some(FlowEventLine { event, detail })
         })
         .collect();

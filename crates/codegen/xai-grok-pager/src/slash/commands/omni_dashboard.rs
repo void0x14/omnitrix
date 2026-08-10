@@ -7,7 +7,7 @@
 //! started" message; an empty registry renders "no active agents".
 
 use crate::omni_bridge;
-use crate::slash::command::{ArgItem, AppCtx, CommandExecCtx, CommandResult, SlashCommand};
+use crate::slash::command::{AppCtx, ArgItem, CommandExecCtx, CommandResult, SlashCommand};
 
 /// Live scheduler agent table + interrupt.
 pub struct OmniDashboardCommand;
@@ -46,9 +46,9 @@ impl OmniDashboardCommand {
         match omni_bridge::interrupt(id, "TUI dashboard interrupt") {
             Some(Ok(())) => CommandResult::Message(format!("interrupt gonderildi: {id}")),
             Some(Err(e)) => CommandResult::Message(format!("interrupt hatasi: {e}")),
-            None => CommandResult::Message(
-                "omnitrix core baslatilmadi (warmup bekleniyor)".to_string(),
-            ),
+            None => {
+                CommandResult::Message("omnitrix core baslatilmadi (warmup bekleniyor)".to_string())
+            }
         }
     }
 }
@@ -88,13 +88,11 @@ impl SlashCommand for OmniDashboardCommand {
             return CommandResult::Error(format!("bilinmeyen alt komut: {trimmed}"));
         }
         match omni_bridge::snapshot() {
-            Some(s) if s.agents.is_empty() => {
-                CommandResult::Message("aktif ajan yok".to_string())
-            }
+            Some(s) if s.agents.is_empty() => CommandResult::Message("aktif ajan yok".to_string()),
             Some(s) => CommandResult::Message(Self::render_table(&s)),
-            None => CommandResult::Message(
-                "omnitrix core baslatilmadi (warmup bekleniyor)".to_string(),
-            ),
+            None => {
+                CommandResult::Message("omnitrix core baslatilmadi (warmup bekleniyor)".to_string())
+            }
         }
     }
 }
@@ -208,7 +206,10 @@ mod tests {
         assert!(bad.contains("gecersiz"), "expected parse error, got {bad}");
 
         let missing = error_for(&cmd, "interrupt");
-        assert!(missing.contains("kullanim"), "expected usage hint, got {missing}");
+        assert!(
+            missing.contains("kullanim"),
+            "expected usage hint, got {missing}"
+        );
 
         let unknown = error_for(&cmd, "durdur 1");
         assert!(

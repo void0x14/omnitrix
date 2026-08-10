@@ -46,15 +46,13 @@ impl SlashCommand for OmniKeysCommand {
 
     fn run(&self, _ctx: &mut CommandExecCtx, _args: &str) -> CommandResult {
         match omni_bridge::keys_summary() {
-            Some(summary) if !summary.is_empty() => {
-                CommandResult::Message(render(&summary))
+            Some(summary) if !summary.is_empty() => CommandResult::Message(render(&summary)),
+            Some(_) => {
+                CommandResult::Message("anahtar veritabani yok (beslenen anahtar yok)".to_string())
             }
-            Some(_) => CommandResult::Message(
-                "anahtar veritabani yok (beslenen anahtar yok)".to_string(),
-            ),
-            None => CommandResult::Message(
-                "omnitrix core baslatilmadi (warmup bekleniyor)".to_string(),
-            ),
+            None => {
+                CommandResult::Message("omnitrix core baslatilmadi (warmup bekleniyor)".to_string())
+            }
         }
     }
 }
@@ -117,10 +115,7 @@ mod tests {
                 crate::omni_bridge::KeysSummary {
                     live: 3,
                     dead: 2,
-                    by_provider: vec![
-                        ("Anthropic".to_string(), 2),
-                        ("OpenAI".to_string(), 1),
-                    ],
+                    by_provider: vec![("Anthropic".to_string(), 2), ("OpenAI".to_string(), 1)],
                 }
             }
         }

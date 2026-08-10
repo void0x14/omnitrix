@@ -13,7 +13,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::Context as _;
 use xai_omni_keychain::{
-    ExportScope, ImportSummary, Keychain, KeychainOptions, KeychainError, MasterKeyTtl,
+    ExportScope, ImportSummary, Keychain, KeychainError, KeychainOptions, MasterKeyTtl,
 };
 
 use crate::app::cli::{KeysArgs, KeysCommand};
@@ -88,10 +88,7 @@ fn cmd_show(grok_home: &Path, id: &str) -> anyhow::Result<()> {
         println!("Bakiye: ${b:.2}");
     }
     println!("API Key: {}", secret.as_str());
-    println!(
-        "Model: {}",
-        entry.model_id.as_deref().unwrap_or("-")
-    );
+    println!("Model: {}", entry.model_id.as_deref().unwrap_or("-"));
     println!("ID: {}", entry.id);
     Ok(())
 }
@@ -106,15 +103,19 @@ fn cmd_add(
     let mut kc = prompt_and_open_keychain(grok_home)?;
     let api_key = match api_key {
         Some(k) => k.to_string(),
-        None => read_secret("API key: ")
-            .context("API key okunamadı")?,
+        None => read_secret("API key: ").context("API key okunamadı")?,
     };
     if api_key.trim().is_empty() {
         anyhow::bail!("API key boş olamaz");
     }
     // Kategori otomatik: sağlayıcıya göre sistem belirler (kullanıcı seçmez).
     let category = xai_omni_keychain::auto_category(provider);
-    let id = kc.add_key_auto(provider, &api_key, model.map(str::to_string), base_url.map(str::to_string))?;
+    let id = kc.add_key_auto(
+        provider,
+        &api_key,
+        model.map(str::to_string),
+        base_url.map(str::to_string),
+    )?;
     kc.save()?;
     println!("keychain'e eklendi: {provider} ({category}) [{id}]");
     Ok(())
@@ -148,7 +149,11 @@ fn cmd_remove(grok_home: &Path, id: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn cmd_export(grok_home: &Path, path: Option<PathBuf>, categories: &[String]) -> anyhow::Result<()> {
+fn cmd_export(
+    grok_home: &Path,
+    path: Option<PathBuf>,
+    categories: &[String],
+) -> anyhow::Result<()> {
     let mut kc = prompt_and_open_keychain(grok_home)?;
     let scope = if categories.is_empty() {
         ExportScope::All
@@ -158,17 +163,15 @@ fn cmd_export(grok_home: &Path, path: Option<PathBuf>, categories: &[String]) ->
     let entries = kc.list_keys()?;
     let exported_count = entries
         .iter()
-        .filter(|e| {
-            categories.is_empty() || categories.iter().any(|c| c == &e.category)
-        })
+        .filter(|e| categories.is_empty() || categories.iter().any(|c| c == &e.category))
         .count();
     let path = match path {
         Some(p) => p,
         None => default_export_path(grok_home, unix_ts()),
     };
     let password = read_secret("export şifresi: ").context("export şifresi okunamadı")?;
-    let confirmation = read_secret("export şifresi (tekrar): ")
-        .context("export şifresi okunamadı")?;
+    let confirmation =
+        read_secret("export şifresi (tekrar): ").context("export şifresi okunamadı")?;
     if password.is_empty() || password != confirmation {
         anyhow::bail!("export şifreleri boş veya eşleşmiyor");
     }
@@ -326,7 +329,10 @@ pub fn format_list_row(entry: &xai_omni_keychain::KeyEntry) -> String {
     out.push_str("  ");
     out.push_str(&pad(entry.model_id.as_deref().unwrap_or("-"), 20));
     out.push_str("  ");
-    out.push_str(&pad(entry.last_used.as_deref().map(short_date).unwrap_or("-"), 12));
+    out.push_str(&pad(
+        entry.last_used.as_deref().map(short_date).unwrap_or("-"),
+        12,
+    ));
     out.push_str("  ");
     out.push_str(&entry.id);
     out

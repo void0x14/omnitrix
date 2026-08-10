@@ -74,7 +74,10 @@ fn models(ids: &[&str]) -> IndexMap<String, ModelInfo> {
 #[test]
 fn model_entry_key_slugs_and_prefixes() {
     assert_eq!(model_entry_key("openai", "gpt-4o"), "omni-openai-gpt-4o");
-    assert_eq!(model_entry_key("deepseek", "deepseek-chat"), "omni-deepseek-deepseek-chat");
+    assert_eq!(
+        model_entry_key("deepseek", "deepseek-chat"),
+        "omni-deepseek-deepseek-chat"
+    );
     // Boşluk ve özel karakterler '-' olur; nokta/çizgi korunur.
     assert_eq!(
         model_entry_key("my provider", "gpt 4o (beta)"),
@@ -92,10 +95,16 @@ fn resolve_model_id_explicit_wins_and_validates_against_catalog() {
 #[test]
 fn resolve_model_id_entry_fallback_and_empty_catalog_trust() {
     let m = models(&["claude-sonnet-4-5"]);
-    assert_eq!(resolve_model_id(None, Some("claude-sonnet-4-5"), &m).unwrap(), "claude-sonnet-4-5");
+    assert_eq!(
+        resolve_model_id(None, Some("claude-sonnet-4-5"), &m).unwrap(),
+        "claude-sonnet-4-5"
+    );
     // Boş katalog (custom endpoint): explicit mode her zaman güvenilir.
     let empty = IndexMap::new();
-    assert_eq!(resolve_model_id(Some("my-llm"), None, &empty).unwrap(), "my-llm");
+    assert_eq!(
+        resolve_model_id(Some("my-llm"), None, &empty).unwrap(),
+        "my-llm"
+    );
     // Boş katalog + explicit yok → hata.
     assert!(resolve_model_id(None, None, &empty).is_err());
 }
@@ -127,7 +136,10 @@ fn apply_provider_config_writes_sections_without_api_key() {
         doc["model_providers"]["openai"]["api_backend"].as_str(),
         Some("responses")
     );
-    assert_eq!(doc["model"]["omni-openai-gpt-4o"]["model"].as_str(), Some("gpt-4o"));
+    assert_eq!(
+        doc["model"]["omni-openai-gpt-4o"]["model"].as_str(),
+        Some("gpt-4o")
+    );
     assert_eq!(
         doc["model"]["omni-openai-gpt-4o"]["model_provider"].as_str(),
         Some("openai")
@@ -176,7 +188,10 @@ fn apply_provider_config_preserves_sibling_tables() {
 
 #[test]
 fn api_backend_str_round_trips_snake_case() {
-    assert_eq!(api_backend_str(&ApiBackend::ChatCompletions), "chat_completions");
+    assert_eq!(
+        api_backend_str(&ApiBackend::ChatCompletions),
+        "chat_completions"
+    );
     assert_eq!(api_backend_str(&ApiBackend::Responses), "responses");
     assert_eq!(api_backend_str(&ApiBackend::Messages), "messages");
 }
@@ -257,8 +272,8 @@ fn plan_from_auto_outcome_picks_single_or_first_model_when_unset() {
 #[test]
 fn plan_from_auto_outcome_config_write_never_contains_api_key() {
     let catalog = openai_catalog(models(&["gpt-4o"]));
-    let plan = plan_from_auto_outcome(&outcome_with(&["gpt-4o"]), &catalog, None)
-        .expect("plan resolves");
+    let plan =
+        plan_from_auto_outcome(&outcome_with(&["gpt-4o"]), &catalog, None).expect("plan resolves");
     let mut doc = DocumentMut::new();
     apply_provider_config(
         &mut doc,

@@ -29,7 +29,12 @@ pub(super) fn handle_apply_input(flow: &mut ProviderConnectFlow, ev: &Event) -> 
             _ => ConnectOutcome::Nothing,
         },
         // Fare: içerik alanına tıklamak Enter ile aynıdır.
-        Event::Mouse(mouse) if matches!(mouse.kind, MouseEventKind::Down(crossterm::event::MouseButton::Left)) => {
+        Event::Mouse(mouse)
+            if matches!(
+                mouse.kind,
+                MouseEventKind::Down(crossterm::event::MouseButton::Left)
+            ) =>
+        {
             ConnectOutcome::Apply
         }
         _ => ConnectOutcome::Nothing,
@@ -38,12 +43,18 @@ pub(super) fn handle_apply_input(flow: &mut ProviderConnectFlow, ev: &Event) -> 
 
 pub(super) fn handle_done_input(ev: &Event) -> ConnectOutcome {
     match ev {
-        Event::Key(key) if key.kind == KeyEventKind::Press
-            && (key.code == KeyCode::Enter || key.code == KeyCode::Esc) =>
+        Event::Key(key)
+            if key.kind == KeyEventKind::Press
+                && (key.code == KeyCode::Enter || key.code == KeyCode::Esc) =>
         {
             ConnectOutcome::Cancel
         }
-        Event::Mouse(mouse) if matches!(mouse.kind, MouseEventKind::Down(crossterm::event::MouseButton::Left)) => {
+        Event::Mouse(mouse)
+            if matches!(
+                mouse.kind,
+                MouseEventKind::Down(crossterm::event::MouseButton::Left)
+            ) =>
+        {
             ConnectOutcome::Cancel
         }
         _ => ConnectOutcome::Nothing,
@@ -84,10 +95,7 @@ pub(super) fn render_apply_step(
     if content.height == 0 || content.width == 0 {
         return;
     }
-    let text = format!(
-        "bağlanıyor: {} \u{2026}",
-        connection_label(flow)
-    );
+    let text = format!("bağlanıyor: {} \u{2026}", connection_label(flow));
     let style = Style::default().fg(theme.text_primary).bg(theme.bg_base);
     let line = Line::from(Span::styled(&text, style));
     let x = inner_x + inner_width.saturating_sub(text.width() as u16) / 2;
@@ -106,10 +114,7 @@ pub(super) fn render_done_step(
     if content.height == 0 || content.width == 0 {
         return;
     }
-    let text = format!(
-        "\u{2713} bağlandı: {}",
-        connection_label(flow)
-    );
+    let text = format!("\u{2713} bağlandı: {}", connection_label(flow));
     let line = Line::from(Span::styled(
         &text,
         Style::default().fg(theme.accent_success).bg(theme.bg_base),
@@ -155,15 +160,21 @@ mod tests {
         let _ = super::super::key_input::handle_base_url_input(&mut flow, &press(KeyCode::Enter));
         let _ = super::super::key_input::handle_key_step_input(&mut flow, &press(KeyCode::Enter));
         for c in "sk-x".chars() {
-            let _ = super::super::key_input::handle_key_step_input(&mut flow, &press(KeyCode::Char(c)));
+            let _ =
+                super::super::key_input::handle_key_step_input(&mut flow, &press(KeyCode::Char(c)));
         }
         let _ = super::super::key_input::handle_key_step_input(&mut flow, &press(KeyCode::Enter));
         // Model: boş liste → manuel ID moduna gir, ID yaz, onayla → Apply.
-        let _ = super::super::model_select::handle_model_step_input(&mut flow, &press(KeyCode::Enter));
+        let _ =
+            super::super::model_select::handle_model_step_input(&mut flow, &press(KeyCode::Enter));
         for c in "my-model".chars() {
-            let _ = super::super::model_select::handle_model_step_input(&mut flow, &press(KeyCode::Char(c)));
+            let _ = super::super::model_select::handle_model_step_input(
+                &mut flow,
+                &press(KeyCode::Char(c)),
+            );
         }
-        let _ = super::super::model_select::handle_model_step_input(&mut flow, &press(KeyCode::Enter));
+        let _ =
+            super::super::model_select::handle_model_step_input(&mut flow, &press(KeyCode::Enter));
         assert_eq!(flow.step, ConnectStep::Apply);
         flow
     }
@@ -205,7 +216,11 @@ mod tests {
     #[test]
     fn apply_result_failure_sets_error() {
         let mut flow = flow_at_apply();
-        apply_result(&mut flow, false, "config yazılamadı: disket dolu".to_string());
+        apply_result(
+            &mut flow,
+            false,
+            "config yazılamadı: disket dolu".to_string(),
+        );
         assert_eq!(
             flow.step,
             ConnectStep::Error("config yazılamadı: disket dolu".to_string())

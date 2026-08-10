@@ -4211,21 +4211,15 @@ impl AgentView {
         }
         if self.show_flow_detail {
             // flow_events.jsonl — mtime önbelleğiyle (her karede okuma yok).
-            let path = self
-                .session
-                .session_id
-                .as_ref()
-                .and_then(|id| {
-                    crate::views::flow_detail::flow_events_path(
-                        self.session.cwd.to_str().unwrap_or(""),
-                        &id.0,
-                    )
-                });
+            let path = self.session.session_id.as_ref().and_then(|id| {
+                crate::views::flow_detail::flow_events_path(
+                    self.session.cwd.to_str().unwrap_or(""),
+                    &id.0,
+                )
+            });
             let events = match path {
                 Some(p) => {
-                    let mtime = std::fs::metadata(&p)
-                        .and_then(|m| m.modified())
-                        .ok();
+                    let mtime = std::fs::metadata(&p).and_then(|m| m.modified()).ok();
                     let fresh = match (&self.flow_events_cache, mtime) {
                         (Some((t, lines)), Some(m)) if *t == m => Some(lines.clone()),
                         _ => None,
@@ -4244,12 +4238,7 @@ impl AgentView {
                 None => Vec::new(),
             };
             let overlay_rect = crate::views::flow_detail::flow_detail_area(area);
-            crate::views::flow_detail::render_flow_detail(
-                buf,
-                overlay_rect,
-                &events,
-                &theme,
-            );
+            crate::views::flow_detail::render_flow_detail(buf, overlay_rect, &events, &theme);
             self.frame_occluder_rects.push(overlay_rect);
         }
         if self.show_workflows {
