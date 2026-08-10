@@ -26,10 +26,9 @@
 # Gecerli rol anahtarlari (baskasi hata verir):
 #   judge · executor · planner · summary · web_search
 #
-# Kisa bicim : judge = "<model-id>"
-# Genis bicim: [roles.judge]
-#              model    = "<model-id>"
-#              provider = "<provider-adi>"
+# P1.4 kisa bicim : judge = "<model-id>"
+# Genis [roles.<role>] bicimi sonraki config okuyucusunun kapsamidir; P1.4
+# koprusu bunu kabul etmez ve typed TOML hatasi doner.
 # ---------------------------------------------------------------------------
 [roles]
 judge      = ""   # bos -> katalogdan cozulur
@@ -38,7 +37,7 @@ planner    = ""   # bos -> katalogdan cozulur
 summary    = ""   # bos -> katalogdan cozulur (JSON: session_summary)
 web_search = ""   # bos -> katalogdan cozulur (JSON: web_search)
 
-# Genis bicim ornegi (provider birlikte verilecekse):
+# Gelecek okuyucu icin genis bicim notu (P1.4'te etkin degil):
 # [roles.judge]
 # model    = "<model-id>"
 # provider = "<provider-adi>"

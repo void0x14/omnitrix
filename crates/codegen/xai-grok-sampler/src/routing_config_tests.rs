@@ -6,7 +6,7 @@
 //! `include_str!` ile gömülür (P1.2 katalog testleriyle aynı desen).
 
 use crate::routing_config::{
-    ConfigError, GroundingMode, LegacyStrategy, ModelsConfig, StrategyError,
+    ConfigError, GroundingMode, LegacyStrategy, StrategyError,
     StrategyResolution, VALID_ROLE_IDS, parse_models_config, parse_routing_config,
     resolve_strategy,
 };
@@ -279,6 +279,16 @@ fn models_config_rejects_unknown_role_key() {
         Err(ConfigError::InvalidRoleKey { key, .. }) => assert_eq!(key, "grok-4"),
         other => panic!("beklenen InvalidRoleKey, alınan: {other:?}"),
     }
+}
+
+/// P1.4 yalnızca düz rol -> string biçimini ayrıştırır; geniş tablo biçimi
+/// sonraki config okuyucusuna bırakılır ve sessizce yutulmaz.
+#[test]
+fn models_config_wide_role_form_is_typed_error_until_supported() {
+    assert!(matches!(
+        parse_models_config("[roles.judge]\nmodel = \"grok-4\"\n"),
+        Err(ConfigError::Toml { .. })
+    ));
 }
 
 /// Bozuk TOML türlü hata döner (sessiz geçiş yok).
