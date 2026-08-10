@@ -4,9 +4,11 @@
 # `xai-grok-models::DEFAULT_MODELS_JSON` icindeki gomulu varsayilanlardan
 # CALISMA ZAMANINDA cozulur. Plan/kod tarafinda hicbir literal model adi
 # ya da fiyati gomulu degildir (I5); burada yazan degerler yalnizca
-# `omni-router::catalog::ModelCatalog` tarafindan okunur.
+# asagidaki kopru tarafindan dogrulanir, cozum runtime katalogda kalir.
 #
-# Okuyucu: crates/omni/omni-router/src/catalog.rs
+# Okuyucu (P1.4 kopru): crates/codegen/xai-grok-sampler/src/routing_config.rs
+#   - parse_models_config: yalnizca [roles] anahtarlarini dogrular (rol kimligi olmayan
+#     anahtar hata verir); degerler string olarak tasinir ve YORUMLANMAZ (I5).
 # Cozum sirasi (rol R icin):
 #   1. [roles] R              (bu dosya)
 #   2. default                (bu dosya)

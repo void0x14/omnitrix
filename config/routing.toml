@@ -1,17 +1,23 @@
 # config/routing.toml — yonlendirme modlari + rol->model baglamalari
 # (MASTER-PLAN 10.1 / 10.2, AS7, I5)
 #
-# Semayi okuyan: crates/omni/omni-router/src/strategies.rs (RoutingConfig)
-# Rol->model cozucu:  crates/omni/omni-router/src/catalog.rs (ModelCatalog)
+# Semayi okuyan (P1.4 kopru): crates/codegen/xai-grok-sampler/src/routing_config.rs
+#   - parse_routing_config  : bu dosyayi ayristirir + [jep] rol degerlerini dogrular
+#   - resolve_strategy      : 'strategy' degerini canonical mod ID'ye cozer
+# Katalog: config/routing_modes.toml (xai-grok-shell::util::routing_catalog)
 #
 # MODEL ADI BURADA DA GOMULU DEGILDIR (I5): zincir girdileri model adi yerine
 # ROL verir; rol calisma zamaninda `config/models.toml` + gomulu katalog
 # (`xai-grok-models::DEFAULT_MODELS_JSON`) uzerinden cozulur.
 
-# Varsayilan mod: round_robin | weighted | fallback | jep  (10.1)
-#   round_robin / weighted -> yuk tum canli anahtarlara dagitilir
-#   fallback               -> hata/bakiye-bitti olunca zincirde bir alta gecilir
-#   jep                    -> Judge-Executor-Planner rolleri asagidaki [jep]'ten
+# Varsayilan mod (P1.4): canonical mod ID (katalogdaki id) veya legacy alias.
+#   Canonical ornekler: fallback-strict | rr | wrr | jep-classic (10.1)
+#   Legacy alias tablosu (bilinen eski degerler, kopru tarafindan cozulur):
+#     fallback    -> fallback-strict   (katli zincir; hata/bakiye-bitti olunca bir alta gecilir)
+#     round_robin -> rr                (yuk canli anahtarlara esit dagitilir)
+#     weighted    -> wrr               (yuk agirlikli dagitilir)
+#     jep         -> jep-classic       (Judge-Executor-Planner rolleri asagidaki [jep]'ten)
+#   Bilinmeyen/boş deger sessiz fallback DEGIL — kopru turlu hata doner.
 strategy = "fallback"
 
 # Kanit kipi (10.3): required | preferred | off

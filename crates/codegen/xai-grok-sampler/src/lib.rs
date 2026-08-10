@@ -28,6 +28,9 @@ pub mod handle;
 pub mod metrics;
 pub mod retry;
 pub mod router_engine;
+pub mod routing_config;
+#[cfg(test)]
+mod routing_config_tests;
 pub mod sampling_log;
 mod shared_http;
 pub mod stream;
@@ -59,6 +62,11 @@ pub use retry::{
 pub use router_engine::{
     AttemptResult, BudgetSnapshot, Endpoint, EndpointHealth, EngineSnapshot, JEP_ROLE_ORDER,
     RouteContext, RouteError, RouterEngine, SUPPORTED_MODES,
+};
+pub use routing_config::{
+    ConfigError, GroundingMode, JepRoles, LegacyStrategy, ModelsConfig, RoutingConfig,
+    StrategyError, StrategyResolution, VALID_ROLE_IDS, parse_models_config,
+    parse_routing_config, resolve_strategy,
 };
 pub use sampling_log::AuthInfo;
 pub use stream::{collect_response, stream_chat_completions, stream_messages, stream_responses};
