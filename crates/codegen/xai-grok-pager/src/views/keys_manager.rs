@@ -2,7 +2,7 @@
 //!
 //! Tablo görünümü: `Kategori | Provider | Maskeli | Model | Son Kullanım`.
 //! Alt action çubuğu: `r` reveal, `a` add, `e` edit, `x` remove, `X` remove
-//! category, `c` categories, `E` export, `I` import, `Esc` kapat.
+//! category, `c` categories, `E` export, `I` import, `S` stack sync, `Esc` kapat.
 //!
 //! Güvenlik kuralı: satırlar her zaman `KeyEntry.masked` gösterir; ham key
 //! yalnızca `Reveal` modunda RAM'e çözülür (`Zeroizing`) ve `Esc` ile
@@ -112,6 +112,20 @@ pub enum KeysManagerMode {
     ImportPassword { path: String },
     /// Import özeti (toast benzeri ekran).
     ImportDone { summary: ImportSummary },
+    /// Harici stack seçimi (tespit edilenler).
+    StackPick,
+    /// Seçilen stack yönü: scope_cursor 0=from stack, 1=to stack.
+    StackDirection { stack_id: String, stack_label: String },
+    /// Önizleme + Enter onay.
+    StackConfirm {
+        stack_id: String,
+        stack_label: String,
+        into_omnitrix: bool,
+        lines: Vec<String>,
+        conflict_count: usize,
+    },
+    /// Stack sync sonucu.
+    StackDone { message: String },
 }
 
 // ---------------------------------------------------------------------------
@@ -148,6 +162,8 @@ pub struct KeysManagerState {
     pub form_field: usize,
     pub category_cursor: usize,
     pub scope_cursor: usize,
+    /// Stack pick satırları: (id, label, path_display).
+    pub stack_rows: Vec<(String, String, String)>,
     pub error: Option<String>,
     // ── mouse hit rects (render'da doldurulur) ──
     pub list_rect: Rect,
@@ -183,6 +199,7 @@ impl KeysManagerState {
             form_field: 0,
             category_cursor: 0,
             scope_cursor: 0,
+            stack_rows: Vec::new(),
             error: None,
             list_rect: Rect::default(),
             row_rects: Vec::new(),
@@ -455,6 +472,33 @@ fn handle_keys_manager_key(state: &mut KeysManagerState, key: &KeyEvent) -> Keys
             }
             _ => KeysManagerOutcome::Unchanged,
         },
+        KeysManagerMode::StackPick => handle_stack_pick(state, key),
+        KeysManagerMode::StackDirection {
+            stack_id,
+            stack_label,
+        } => handle_stack_direction(state, key, stack_id, stack_label),
+        KeysManagerMode::StackConfirm {
+            stack_id,
+            into_omnitrix,
+            ..
+        } => match key.code {
+            KeyCode::Esc => {
+                state.mode = KeysManagerMode::StackPick;
+                KeysManagerOutcome::Changed
+            }
+            KeyCode::Enter => KeysManagerOutcome::Action(Action::KeychainStackSync {
+                stack_id,
+                into_omnitrix,
+            }),
+            _ => KeysManagerOutcome::Unchanged,
+        },
+        KeysManagerMode::StackDone { .. } => match key.code {
+            KeyCode::Esc | KeyCode::Enter => {
+                state.mode = KeysManagerMode::Browse;
+                KeysManagerOutcome::Changed
+            }
+            _ => KeysManagerOutcome::Unchanged,
+        },
     }
 }
 
@@ -578,6 +622,13 @@ fn handle_browse(state: &mut KeysManagerState, key: &KeyEvent) -> KeysManagerOut
             state.error = None;
             KeysManagerOutcome::Changed
         }
+        KeyCode::Char('S') => {
+            enter_stack_pick(state);
+            state.mode = KeysManagerMode::StackPick;
+            state.scope_cursor = 0;
+            state.error = None;
+            KeysManagerOutcome::Changed
+        }
         _ => KeysManagerOutcome::Unchanged,
     }
 }
@@ -695,6 +746,112 @@ fn handle_edit_form(
             state.error = None;
             KeysManagerOutcome::Changed
         }
+    }
+}
+
+fn enter_stack_pick(state: &mut KeysManagerState) {
+    let mut rows = Vec::new();
+    for p in xai_omni_keychain::detect_stacks() {
+        let path = p
+            .path
+            .as_ref()
+            .map(|x| x.display().to_string())
+            .unwrap_or_else(|| "-".into());
+        rows.push((p.def.id.to_string(), p.def.label.to_string(), path));
+    }
+    if rows.is_empty() {
+        for def in xai_omni_keychain::all_stack_defs() {
+            if def.id == "json-scan" || def.id == "env" {
+                continue;
+            }
+            rows.push((
+                def.id.to_string(),
+                def.label.to_string(),
+                "(path yok)".into(),
+            ));
+        }
+    }
+    state.stack_rows = rows;
+    state.scope_cursor = 0;
+}
+
+fn handle_stack_pick(state: &mut KeysManagerState, key: &KeyEvent) -> KeysManagerOutcome {
+    match key.code {
+        KeyCode::Esc => {
+            state.mode = KeysManagerMode::Browse;
+            KeysManagerOutcome::Changed
+        }
+        KeyCode::Up | KeyCode::Char('k') => {
+            if state.stack_rows.is_empty() {
+                return KeysManagerOutcome::Unchanged;
+            }
+            let len = state.stack_rows.len();
+            state.scope_cursor = (state.scope_cursor + len - 1) % len;
+            KeysManagerOutcome::Changed
+        }
+        KeyCode::Down | KeyCode::Char('j') => {
+            if state.stack_rows.is_empty() {
+                return KeysManagerOutcome::Unchanged;
+            }
+            let len = state.stack_rows.len();
+            state.scope_cursor = (state.scope_cursor + 1) % len;
+            KeysManagerOutcome::Changed
+        }
+        KeyCode::Enter => {
+            let Some((id, label, _)) = state.stack_rows.get(state.scope_cursor).cloned() else {
+                return KeysManagerOutcome::Unchanged;
+            };
+            state.mode = KeysManagerMode::StackDirection {
+                stack_id: id,
+                stack_label: label,
+            };
+            state.scope_cursor = 0;
+            state.error = None;
+            KeysManagerOutcome::Changed
+        }
+        _ => KeysManagerOutcome::Unchanged,
+    }
+}
+
+fn handle_stack_direction(
+    state: &mut KeysManagerState,
+    key: &KeyEvent,
+    stack_id: String,
+    stack_label: String,
+) -> KeysManagerOutcome {
+    match key.code {
+        KeyCode::Esc => {
+            state.mode = KeysManagerMode::StackPick;
+            KeysManagerOutcome::Changed
+        }
+        KeyCode::Up | KeyCode::Down | KeyCode::Char('j') | KeyCode::Char('k') => {
+            state.scope_cursor = 1 - state.scope_cursor.min(1);
+            KeysManagerOutcome::Changed
+        }
+        KeyCode::Enter => {
+            let into = state.scope_cursor == 0;
+            let dir = if into {
+                "stack → omnitrix (import)"
+            } else {
+                "omnitrix → stack (export)"
+            };
+            state.mode = KeysManagerMode::StackConfirm {
+                stack_id: stack_id.clone(),
+                stack_label: stack_label.clone(),
+                into_omnitrix: into,
+                lines: vec![
+                    format!("{stack_label}  ·  {dir}"),
+                    "Enter: çalıştır (merge, conflict skip)".into(),
+                    "Esc: geri".into(),
+                ],
+                conflict_count: 0,
+            };
+            KeysManagerOutcome::Action(Action::KeychainStackPreview {
+                stack_id,
+                into_omnitrix: into,
+            })
+        }
+        _ => KeysManagerOutcome::Unchanged,
     }
 }
 
@@ -985,6 +1142,11 @@ pub fn render_keys_manager(
                 clickable: false,
                 id: 0,
             },
+            Shortcut {
+                label: "S stack",
+                clickable: false,
+                id: 0,
+            },
         ],
         KeysManagerMode::Reveal { .. } => vec![Shortcut {
             label: "Esc hide",
@@ -1073,7 +1235,9 @@ pub fn render_keys_manager(
                 id: 0,
             },
         ],
-        KeysManagerMode::ExportDone { .. } | KeysManagerMode::ImportDone { .. } => vec![Shortcut {
+        KeysManagerMode::ExportDone { .. }
+        | KeysManagerMode::ImportDone { .. }
+        | KeysManagerMode::StackDone { .. } => vec![Shortcut {
             label: "Enter/Esc ok",
             clickable: false,
             id: 0,
@@ -1081,6 +1245,20 @@ pub fn render_keys_manager(
         KeysManagerMode::ImportPath => vec![
             Shortcut {
                 label: "Enter next",
+                clickable: false,
+                id: 0,
+            },
+            Shortcut {
+                label: "Esc back",
+                clickable: false,
+                id: 0,
+            },
+        ],
+        KeysManagerMode::StackPick
+        | KeysManagerMode::StackDirection { .. }
+        | KeysManagerMode::StackConfirm { .. } => vec![
+            Shortcut {
+                label: "Enter",
                 clickable: false,
                 id: 0,
             },
@@ -1258,7 +1436,53 @@ pub fn render_keys_manager(
                 &theme,
             );
         }
-    }
+        KeysManagerMode::StackPick => {
+            render_stack_pick(
+                buf,
+                mca.content,
+                mca.inner_x,
+                mca.inner_width,
+                state,
+                &theme,
+            );
+        }
+        KeysManagerMode::StackDirection {
+            stack_label,
+            ..
+        } => {
+            render_stack_direction(
+                buf,
+                mca.content,
+                mca.inner_x,
+                mca.inner_width,
+                state,
+                &stack_label,
+                &theme,
+            );
+        }
+        KeysManagerMode::StackConfirm { lines, .. } => {
+            render_stack_lines(
+                buf,
+                mca.content,
+                mca.inner_x,
+                mca.inner_width,
+                state,
+                &lines,
+                &theme,
+            );
+        }
+        KeysManagerMode::StackDone { message } => {
+            render_done(
+                buf,
+                mca.content,
+                mca.inner_x,
+                mca.inner_width,
+                state,
+                &theme,
+                &message,
+            );
+        }
+}
 }
 
 fn render_line(buf: &mut Buffer, x: u16, y: u16, width: u16, text: &str, style: Style) {
@@ -1501,7 +1725,7 @@ fn render_browse(
     let action_bar = match &state.error {
         Some(err) => format!("\u{2717} {err}"),
         None => {
-            "r reveal · a add · e edit · x remove · X kategori · c kategoriler · E export · I import"
+            "r reveal · a add · e edit · x remove · X kategori · c kategoriler · E export · I import · S stack"
                 .to_string()
         }
     };
@@ -2045,6 +2269,134 @@ fn render_done(
         state,
         theme,
         content.y + content.height - 1,
+    );
+}
+
+fn render_stack_pick(
+    buf: &mut Buffer,
+    content: Rect,
+    inner_x: u16,
+    inner_width: u16,
+    state: &KeysManagerState,
+    theme: &Theme,
+) {
+    let mut y = content.y;
+    render_line(
+        buf,
+        inner_x,
+        y,
+        inner_width,
+        "Harici stack seç (tespit edilenler)",
+        Style::default()
+            .fg(theme.text_primary)
+            .add_modifier(Modifier::BOLD),
+    );
+    y += 1;
+    if state.stack_rows.is_empty() {
+        render_line(
+            buf,
+            inner_x,
+            y,
+            inner_width,
+            "stack bulunamadı",
+            Style::default().fg(theme.accent_error),
+        );
+        return;
+    }
+    for (i, (id, label, path)) in state.stack_rows.iter().enumerate() {
+        if y >= content.y + content.height {
+            break;
+        }
+        let selected = i == state.scope_cursor;
+        let style = if selected {
+            Style::default()
+                .fg(theme.text_primary)
+                .add_modifier(Modifier::REVERSED)
+        } else {
+            Style::default().fg(theme.text_secondary)
+        };
+        render_line(
+            buf,
+            inner_x,
+            y,
+            inner_width,
+            &format!("{id:<14}  {label:<18}  {path}"),
+            style,
+        );
+        y += 1;
+    }
+}
+
+fn render_stack_direction(
+    buf: &mut Buffer,
+    content: Rect,
+    inner_x: u16,
+    inner_width: u16,
+    state: &KeysManagerState,
+    stack_label: &str,
+    theme: &Theme,
+) {
+    let mut y = content.y;
+    render_line(
+        buf,
+        inner_x,
+        y,
+        inner_width,
+        &format!("{stack_label} — yön seç"),
+        Style::default()
+            .fg(theme.text_primary)
+            .add_modifier(Modifier::BOLD),
+    );
+    y += 1;
+    let opts = [
+        "stack → omnitrix (import, merge)",
+        "omnitrix → stack (export, merge)",
+    ];
+    for (i, label) in opts.iter().enumerate() {
+        let selected = i == state.scope_cursor.min(1);
+        let style = if selected {
+            Style::default()
+                .fg(theme.text_primary)
+                .add_modifier(Modifier::REVERSED)
+        } else {
+            Style::default().fg(theme.text_secondary)
+        };
+        render_line(buf, inner_x, y, inner_width, label, style);
+        y += 1;
+    }
+}
+
+fn render_stack_lines(
+    buf: &mut Buffer,
+    content: Rect,
+    inner_x: u16,
+    inner_width: u16,
+    state: &KeysManagerState,
+    lines: &[String],
+    theme: &Theme,
+) {
+    let mut y = content.y;
+    for (i, line) in lines.iter().enumerate() {
+        if y >= content.y + content.height {
+            break;
+        }
+        let style = if i == 0 {
+            Style::default()
+                .fg(theme.text_primary)
+                .add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(theme.text_secondary)
+        };
+        render_line(buf, inner_x, y, inner_width, line, style);
+        y += 1;
+    }
+    render_error_line(
+        buf,
+        inner_x,
+        inner_width,
+        state,
+        theme,
+        content.y + content.height.saturating_sub(1),
     );
 }
 

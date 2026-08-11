@@ -8,8 +8,9 @@ use super::connect::{
     dispatch_auto_connect, dispatch_connect_provider, dispatch_fetch_provider_models,
     dispatch_keychain_add, dispatch_keychain_borrow, dispatch_keychain_export,
     dispatch_keychain_import, dispatch_keychain_remove, dispatch_keychain_remove_category,
-    dispatch_keychain_reveal, dispatch_keychain_unlock, dispatch_keychain_update,
-    dispatch_open_connect_picker, dispatch_open_keys_manager, dispatch_open_routing_picker,
+    dispatch_keychain_reveal, dispatch_keychain_stack_preview, dispatch_keychain_stack_sync,
+    dispatch_keychain_unlock, dispatch_keychain_update, dispatch_open_connect_picker,
+    dispatch_open_keys_manager, dispatch_open_routing_picker,
 };
 use super::ctx::{
     active_agent_session_id, get_active_agent_mut, navigate_clearing_selection, open_url_or_show,
@@ -889,6 +890,14 @@ pub(crate) fn dispatch(action: Action, app: &mut AppView) -> Vec<Effect> {
             dispatch_keychain_export(app, scope, password)
         }
         Action::KeychainImport { path, password } => dispatch_keychain_import(app, path, password),
+        Action::KeychainStackPreview {
+            stack_id,
+            into_omnitrix,
+        } => dispatch_keychain_stack_preview(app, stack_id, into_omnitrix),
+        Action::KeychainStackSync {
+            stack_id,
+            into_omnitrix,
+        } => dispatch_keychain_stack_sync(app, stack_id, into_omnitrix),
         Action::SwitchModel { model_id, effort } => {
             let ActiveView::Agent(id) = app.active_view else {
                 return vec![];

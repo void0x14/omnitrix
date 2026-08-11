@@ -911,7 +911,7 @@ fn encrypt_payload(key: &[u8; 32], payload: &Payload) -> Result<String> {
 }
 
 /// Temp + rename ile atomik yazım (auth.json pattern'i). Dosya 0o600 olur.
-fn atomic_write(path: &Path, contents: &[u8]) -> std::io::Result<()> {
+pub(crate) fn atomic_write(path: &Path, contents: &[u8]) -> std::io::Result<()> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
     }

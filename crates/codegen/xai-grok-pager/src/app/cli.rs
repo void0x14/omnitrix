@@ -377,6 +377,40 @@ pub enum KeysCommand {
     },
     /// List keychain categories
     Categories,
+    /// List known external coding stacks (and detected ones)
+    Stacks {
+        /// Only show stacks detected on this machine
+        #[arg(long)]
+        detected: bool,
+    },
+    /// Import API keys FROM an external stack into Omnitrix keychain (merge; no overwrite by default)
+    SyncFrom {
+        /// Stack id (opencode, codex, claude-code, aider, …) — `grok keys stacks`
+        stack: String,
+        /// Override credential path
+        #[arg(long)]
+        path: Option<PathBuf>,
+        /// Dry-run: preview only
+        #[arg(long)]
+        dry_run: bool,
+        /// Overwrite conflicting providers (default: skip / never clobber)
+        #[arg(long)]
+        overwrite: bool,
+    },
+    /// Export API keys FROM Omnitrix keychain INTO an external stack (merge; no overwrite by default)
+    SyncTo {
+        /// Stack id (opencode, codex, claude-code, aider, …)
+        stack: String,
+        /// Override credential path
+        #[arg(long)]
+        path: Option<PathBuf>,
+        /// Dry-run: preview only
+        #[arg(long)]
+        dry_run: bool,
+        /// Overwrite conflicting providers (default: skip / never clobber)
+        #[arg(long)]
+        overwrite: bool,
+    },
 }
 /// Arguments for the `agent` subcommand.
 #[derive(Debug, clap::Args, Clone)]

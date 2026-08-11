@@ -585,6 +585,124 @@ pub(super) fn dispatch_keychain_import(
     vec![]
 }
 
+/// Harici stack önizlemesi → StackConfirm satırları.
+pub(super) fn dispatch_keychain_stack_preview(
+    app: &mut AppView,
+    stack_id: String,
+    into_omnitrix: bool,
+) -> Vec<Effect> {
+    let result: Result<(String, String, Vec<String>, usize), String> = (|| {
+        let def = xai_omni_keychain::find_stack_def(&stack_id)
+            .ok_or_else(|| format!("bilinmeyen stack: {stack_id}"))?;
+        let kc = app
+            .keychain
+            .as_ref()
+            .ok_or_else(|| KEYCHAIN_LOCKED_MSG.to_string())?;
+        let preview = if into_omnitrix {
+            xai_omni_keychain::preview_import(def, None, kc)
+        } else {
+            xai_omni_keychain::preview_export(def, None, kc)
+        }
+        .map_err(|e| format!("önizleme: {e}"))?;
+        let mut lines = vec![
+            format!(
+                "{}  ·  {}  ·  {}",
+                preview.stack_label,
+                preview.direction.label(),
+                preview.path.display()
+            ),
+            format!(
+                "aday: {}  ·  conflict: {}",
+                preview.candidates.len(),
+                preview.conflict_count
+            ),
+        ];
+        for c in preview.candidates.iter().take(12) {
+            let mark = if c.conflict { "CONFLICT" } else { "yeni" };
+            lines.push(format!("  [{mark}] {}  {}", c.provider_id, c.masked));
+        }
+        if preview.candidates.len() > 12 {
+            lines.push(format!(
+                "  … +{} daha",
+                preview.candidates.len() - 12
+            ));
+        }
+        lines.push("Enter: çalıştır (merge, conflict skip)  ·  Esc: geri".into());
+        Ok((
+            preview.stack_id,
+            preview.stack_label,
+            lines,
+            preview.conflict_count,
+        ))
+    })();
+    match result {
+        Ok((sid, label, lines, conflict_count)) => {
+            with_keys_manager(app, |state| {
+                state.mode = KeysManagerMode::StackConfirm {
+                    stack_id: sid,
+                    stack_label: label,
+                    into_omnitrix,
+                    lines,
+                    conflict_count,
+                };
+                state.error = None;
+            });
+        }
+        Err(msg) => {
+            with_keys_manager(app, |state| state.apply_error_and_browse(msg));
+        }
+    }
+    vec![]
+}
+
+/// Harici stack senkronu (merge-only).
+pub(super) fn dispatch_keychain_stack_sync(
+    app: &mut AppView,
+    stack_id: String,
+    into_omnitrix: bool,
+) -> Vec<Effect> {
+    let result: Result<String, String> = (|| {
+        let def = xai_omni_keychain::find_stack_def(&stack_id)
+            .ok_or_else(|| format!("bilinmeyen stack: {stack_id}"))?;
+        let policy = xai_omni_keychain::MergePolicy::SkipConflicts;
+        if into_omnitrix {
+            let kc = app
+                .keychain
+                .as_mut()
+                .ok_or_else(|| KEYCHAIN_LOCKED_MSG.to_string())?;
+            let summary = xai_omni_keychain::import_from_stack(def, None, kc, policy)
+                .map_err(|e| format!("sync-from: {e}"))?;
+            if let Err(e) = kc.save() {
+                tracing::warn!(target: "keys", error = %e, "keychain save failed after stack sync");
+            }
+            Ok(summary.format_tr())
+        } else {
+            let kc = app
+                .keychain
+                .as_ref()
+                .ok_or_else(|| KEYCHAIN_LOCKED_MSG.to_string())?;
+            let summary = xai_omni_keychain::export_to_stack(def, None, kc, policy)
+                .map_err(|e| format!("sync-to: {e}"))?;
+            Ok(summary.format_tr())
+        }
+    })();
+    match result {
+        Ok(message) => {
+            if into_omnitrix {
+                reload_keys_manager_entries(app);
+            }
+            with_keys_manager(app, |state| {
+                state.mode = KeysManagerMode::StackDone { message };
+                state.error = None;
+            });
+        }
+        Err(msg) => {
+            with_keys_manager(app, |state| state.apply_error_and_browse(msg));
+        }
+    }
+    vec![]
+}
+
 // ---------------------------------------------------------------------------
 // ConnectProvider
 // ---------------------------------------------------------------------------

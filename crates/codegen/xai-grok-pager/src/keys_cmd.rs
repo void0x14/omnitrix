@@ -13,7 +13,9 @@ use std::path::{Path, PathBuf};
 
 use anyhow::Context as _;
 use xai_omni_keychain::{
-    ExportScope, ImportSummary, Keychain, KeychainError, KeychainOptions, MasterKeyTtl,
+    detect_stacks, export_to_stack, find_stack_def, import_from_stack, preview_export,
+    preview_import, all_stack_defs, ExportScope, ImportSummary, Keychain, KeychainError,
+    KeychainOptions, MasterKeyTtl, MergePolicy,
 };
 
 use crate::app::cli::{KeysArgs, KeysCommand};
@@ -54,6 +56,19 @@ pub async fn run(keys_args: KeysArgs, grok_home: PathBuf) -> anyhow::Result<()> 
         KeysCommand::Export { path, category } => cmd_export(&grok_home, path, &category),
         KeysCommand::Import { path, overwrite } => cmd_import(&grok_home, &path, overwrite),
         KeysCommand::Categories => cmd_categories(&grok_home),
+        KeysCommand::Stacks { detected } => cmd_stacks(detected),
+        KeysCommand::SyncFrom {
+            stack,
+            path,
+            dry_run,
+            overwrite,
+        } => cmd_sync_from(&grok_home, &stack, path.as_deref(), dry_run, overwrite),
+        KeysCommand::SyncTo {
+            stack,
+            path,
+            dry_run,
+            overwrite,
+        } => cmd_sync_to(&grok_home, &stack, path.as_deref(), dry_run, overwrite),
     }
 }
 
@@ -205,6 +220,142 @@ fn cmd_categories(grok_home: &Path) -> anyhow::Result<()> {
         } else {
             println!("{category}");
         }
+    }
+    Ok(())
+}
+
+fn cmd_stacks(detected_only: bool) -> anyhow::Result<()> {
+    if detected_only {
+        let found = detect_stacks();
+        if found.is_empty() {
+            println!("tespit edilen stack yok");
+            return Ok(());
+        }
+        println!("{:<16}  {:<22}  {}", "ID", "LABEL", "PATH");
+        for p in found {
+            let path = p
+                .path
+                .as_ref()
+                .map(|x| x.display().to_string())
+                .unwrap_or_else(|| "-".into());
+            println!("{:<16}  {:<22}  {}", p.def.id, p.def.label, path);
+        }
+        return Ok(());
+    }
+    println!("{:<16}  {:<6}  {:<6}  {:<22}  {}", "ID", "IMP", "EXP", "LABEL", "AÇIKLAMA");
+    for def in all_stack_defs() {
+        let imp = if def.capability.import { "evet" } else { "hayır" };
+        let exp = if def.capability.export { "evet" } else { "hayır" };
+        println!(
+            "{:<16}  {:<6}  {:<6}  {:<22}  {}",
+            def.id, imp, exp, def.label, def.description
+        );
+    }
+    println!();
+    println!("kullanım:");
+    println!("  grok keys sync-from <stack> [--path PATH] [--dry-run] [--overwrite]");
+    println!("  grok keys sync-to   <stack> [--path PATH] [--dry-run] [--overwrite]");
+    println!("  grok keys stacks --detected");
+    Ok(())
+}
+
+fn cmd_sync_from(
+    grok_home: &Path,
+    stack: &str,
+    path: Option<&Path>,
+    dry_run: bool,
+    overwrite: bool,
+) -> anyhow::Result<()> {
+    let def = find_stack_def(stack).ok_or_else(|| {
+        anyhow::anyhow!("bilinmeyen stack: {stack} (grok keys stacks)")
+    })?;
+    if !def.capability.import {
+        anyhow::bail!("{} import desteklemiyor", def.id);
+    }
+    let policy = if overwrite {
+        MergePolicy::Overwrite
+    } else {
+        MergePolicy::SkipConflicts
+    };
+    let mut kc = prompt_and_open_keychain(grok_home)?;
+    if dry_run {
+        let preview = preview_import(def, path, &kc)
+            .map_err(|e| anyhow::anyhow!("önizleme başarısız: {e}"))?;
+        println!(
+            "önizleme {} → omnitrix  ({})",
+            preview.stack_label,
+            preview.path.display()
+        );
+        println!(
+            "aday: {}  conflict: {}",
+            preview.candidates.len(),
+            preview.conflict_count
+        );
+        for c in &preview.candidates {
+            let mark = if c.conflict { "CONFLICT" } else { "yeni" };
+            println!("  [{mark}] {}  {}  ({})", c.provider_id, c.masked, c.source_field);
+        }
+        if !overwrite && preview.conflict_count > 0 {
+            println!("not: conflict'ler atlanacak (varsayılan merge); --overwrite ile üzerine yazılır");
+        }
+        return Ok(());
+    }
+    let summary = import_from_stack(def, path, &mut kc, policy)
+        .map_err(|e| anyhow::anyhow!("sync-from başarısız: {e}"))?;
+    kc.save()?;
+    println!("{}", summary.format_tr());
+    if !summary.skipped_conflicts.is_empty() {
+        println!("atlanan conflict: {}", summary.skipped_conflicts.join(", "));
+    }
+    Ok(())
+}
+
+fn cmd_sync_to(
+    grok_home: &Path,
+    stack: &str,
+    path: Option<&Path>,
+    dry_run: bool,
+    overwrite: bool,
+) -> anyhow::Result<()> {
+    let def = find_stack_def(stack).ok_or_else(|| {
+        anyhow::anyhow!("bilinmeyen stack: {stack} (grok keys stacks)")
+    })?;
+    if !def.capability.export {
+        anyhow::bail!("{} export desteklemiyor", def.id);
+    }
+    let policy = if overwrite {
+        MergePolicy::Overwrite
+    } else {
+        MergePolicy::SkipConflicts
+    };
+    let kc = prompt_and_open_keychain(grok_home)?;
+    if dry_run {
+        let preview = preview_export(def, path, &kc)
+            .map_err(|e| anyhow::anyhow!("önizleme başarısız: {e}"))?;
+        println!(
+            "önizleme omnitrix → {}  ({})",
+            preview.stack_label,
+            preview.path.display()
+        );
+        println!(
+            "aday: {}  conflict: {}",
+            preview.candidates.len(),
+            preview.conflict_count
+        );
+        for c in &preview.candidates {
+            let mark = if c.conflict { "CONFLICT" } else { "yeni" };
+            println!("  [{mark}] {}  {}", c.provider_id, c.masked);
+        }
+        if !overwrite && preview.conflict_count > 0 {
+            println!("not: conflict'ler atlanacak; hedef kayıtlar ezilmez");
+        }
+        return Ok(());
+    }
+    let summary = export_to_stack(def, path, &kc, policy)
+        .map_err(|e| anyhow::anyhow!("sync-to başarısız: {e}"))?;
+    println!("{}", summary.format_tr());
+    if !summary.skipped_conflicts.is_empty() {
+        println!("atlanan conflict: {}", summary.skipped_conflicts.join(", "));
     }
     Ok(())
 }

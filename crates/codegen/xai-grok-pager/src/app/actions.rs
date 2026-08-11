@@ -510,6 +510,16 @@ pub enum Action {
         path: String,
         password: zeroize::Zeroizing<String>,
     },
+    /// Keys manager: harici stack önizlemesi.
+    KeychainStackPreview {
+        stack_id: String,
+        into_omnitrix: bool,
+    },
+    /// Keys manager: harici stack senkronu (merge; conflict skip).
+    KeychainStackSync {
+        stack_id: String,
+        into_omnitrix: bool,
+    },
     /// Fetch a custom provider's `/models` list for the connect wizard's
     /// Model step (offline/custom fallback: Model adımına boş liste
     /// girildiğinde bir kez tetiklenir). Dispatch resolves the optional key
