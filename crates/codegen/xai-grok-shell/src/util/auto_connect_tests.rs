@@ -2,9 +2,9 @@
 //! Gerçek internet'e bağlanmaz: probe adımı production akışının
 //! probe-injectable helper'ına enjekte edilen mock closure ile çalışır.
 
-use super::*;
 use super::super::models_dev::{CacheSource, CatalogCache, ModelInfo, ProviderCatalog};
 use super::super::provider_probe::{DEFAULT_TIMEOUT, ProbeRequest, ProbeResult};
+use super::*;
 use indexmap::IndexMap;
 use std::time::Duration;
 use xai_omni_keychain::DetectCandidate;
@@ -59,9 +59,7 @@ fn candidate(provider: &str, confidence: u8) -> DetectCandidate {
 
 /// Mock probe: her ProbeRequest için kendi base_url'ini (ilk giriş) yansıtan
 /// başarılı result üretir; `fail` true ise tümünü `ok = false` yapar.
-fn mock_probe(
-    ok: bool,
-) -> impl FnOnce(Vec<ProbeRequest>) -> std::future::Ready<Vec<ProbeResult>> {
+fn mock_probe(ok: bool) -> impl FnOnce(Vec<ProbeRequest>) -> std::future::Ready<Vec<ProbeResult>> {
     move |reqs: Vec<ProbeRequest>| {
         std::future::ready(
             reqs.into_iter()
@@ -81,8 +79,7 @@ fn mock_probe(
 
 /// Mock probe: tüm sonuçlara eşit (ok/auth/latency) başarı üretir — tie
 /// senaryoları için sıralama anahtarlarını eşitler.
-fn mock_probe_tie(
-) -> impl FnOnce(Vec<ProbeRequest>) -> std::future::Ready<Vec<ProbeResult>> {
+fn mock_probe_tie() -> impl FnOnce(Vec<ProbeRequest>) -> std::future::Ready<Vec<ProbeResult>> {
     move |reqs: Vec<ProbeRequest>| {
         std::future::ready(
             reqs.into_iter()
@@ -197,7 +194,13 @@ async fn auto_connect_no_winner_when_all_probes_fail() {
     providers.insert("openai".to_string(), openai_catalog(models));
     let catalog = catalog_with(providers);
 
-    let outcome = auto_connect_with(TEST_KEY, vec![candidate("openai", 100)], &catalog, mock_probe(false)).await;
+    let outcome = auto_connect_with(
+        TEST_KEY,
+        vec![candidate("openai", 100)],
+        &catalog,
+        mock_probe(false),
+    )
+    .await;
     let err = outcome.expect_err("no live winner must error");
     assert!(matches!(err, AutoConnectError::NoProbeWinner));
 }

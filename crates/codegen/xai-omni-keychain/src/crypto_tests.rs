@@ -69,5 +69,8 @@ fn decrypt_rejects_invalid_base64() {
 fn decrypt_rejects_short_ciphertext() {
     let salt = random_salt();
     let key = derive_key("pw", &salt, &KdfParams::default());
-    assert!(decrypt(&key, "aGk").is_err(), "shorter than a nonce must fail");
+    assert!(
+        decrypt(&key, "aGk").is_err(),
+        "shorter than a nonce must fail"
+    );
 }

@@ -25,8 +25,8 @@
 
 pub mod backend;
 pub mod coordinator;
-pub mod omni_scheduler_backend;
 mod coordinator_state;
+pub mod omni_scheduler_backend;
 pub use coordinator_state::{cap_completion_output, completion_summary};
 pub mod types;
 

@@ -20,8 +20,8 @@ pub fn tool_group_of(tool_id: &str) -> Option<ToolGroup> {
         // "grep"/"list_dir" yukarıda Read'e düşer (ilk kol kazanır) — burada
         // tekrar edilmez (unreachable_pattern uyarısı).
         "search_tool" => ToolGroup::Search,
-        "search_replace" | "apply_patch" | "opencode_edit" | "opencode_write"
-        | "hashline_edit" | "image_gen" | "image_edit" => ToolGroup::Write,
+        "search_replace" | "apply_patch" | "opencode_edit" | "opencode_write" | "hashline_edit"
+        | "image_gen" | "image_edit" => ToolGroup::Write,
         "bash" | "opencode_bash" => ToolGroup::Bash,
         "web_search" | "web_fetch" => ToolGroup::Web,
         "grok_research" => ToolGroup::Research,
@@ -64,16 +64,46 @@ impl FlowGate {
         // bash ile "tembellik" yolları yasak (kullanıcı direktifi).
         let lower = command.to_lowercase();
         let builtin_tool_deny: &[(&str, &str)] = &[
-            ("cat ", "cat yasak: dosya okuma için read_file aracını kullan"),
-            ("less ", "less yasak: dosya okuma için read_file aracını kullan"),
-            ("more ", "more yasak: dosya okuma için read_file aracını kullan"),
-            ("head ", "head yasak: dosya okuma için read_file aracını kullan"),
-            ("tail ", "tail yasak: dosya okuma için read_file aracını kullan"),
-            ("grep ", "grep yasak: arama için yerleşik grep/search araçlarını kullan"),
-            ("sed ", "sed yasak: düzenleme için search_replace aracını kullan"),
-            ("awk ", "awk yasak: düzenleme/okuma için yerleşik araçları kullan"),
-            ("echo >", "echo yönlendirme yasak: yazma için write/search_replace aracını kullan"),
-            (">>", "yönlendirme yasak: yazma için write/search_replace aracını kullan"),
+            (
+                "cat ",
+                "cat yasak: dosya okuma için read_file aracını kullan",
+            ),
+            (
+                "less ",
+                "less yasak: dosya okuma için read_file aracını kullan",
+            ),
+            (
+                "more ",
+                "more yasak: dosya okuma için read_file aracını kullan",
+            ),
+            (
+                "head ",
+                "head yasak: dosya okuma için read_file aracını kullan",
+            ),
+            (
+                "tail ",
+                "tail yasak: dosya okuma için read_file aracını kullan",
+            ),
+            (
+                "grep ",
+                "grep yasak: arama için yerleşik grep/search araçlarını kullan",
+            ),
+            (
+                "sed ",
+                "sed yasak: düzenleme için search_replace aracını kullan",
+            ),
+            (
+                "awk ",
+                "awk yasak: düzenleme/okuma için yerleşik araçları kullan",
+            ),
+            (
+                "echo >",
+                "echo yönlendirme yasak: yazma için write/search_replace aracını kullan",
+            ),
+            (
+                ">>",
+                "yönlendirme yasak: yazma için write/search_replace aracını kullan",
+            ),
             ("rm ", "rm yasak: silme yerleşik dosya araçlarıyla yapılır"),
         ];
         for (pat, reason) in builtin_tool_deny {
@@ -105,16 +135,36 @@ impl FlowGate {
         // Aşama kuralı: status/verify aşamasında yalnızca salt-okunur git komutları
         match stage {
             StageId::Status | StageId::CommitVerify => {
-                let readonly = ["git status", "git diff", "git log", "git show", "git stash list",
-                    "git branch", "git remote", "git config", "git rev-parse", "git ls-files"];
+                let readonly = [
+                    "git status",
+                    "git diff",
+                    "git log",
+                    "git show",
+                    "git stash list",
+                    "git branch",
+                    "git remote",
+                    "git config",
+                    "git rev-parse",
+                    "git ls-files",
+                ];
                 if lower.starts_with("git") && !readonly.iter().any(|c| lower.starts_with(c)) {
-                    return BashVerdict::Deny("bu aşamada yalnızca salt-okunur git komutlarına izin var");
+                    return BashVerdict::Deny(
+                        "bu aşamada yalnızca salt-okunur git komutlarına izin var",
+                    );
                 }
             }
             StageId::Stage => {
-                let allowed = ["git add", "git rm", "git status", "git diff", "git ls-files"];
+                let allowed = [
+                    "git add",
+                    "git rm",
+                    "git status",
+                    "git diff",
+                    "git ls-files",
+                ];
                 if lower.starts_with("git") && !allowed.iter().any(|c| lower.starts_with(c)) {
-                    return BashVerdict::Deny("stage aşamasında yalnızca git add/rm/status/diff/ls-files");
+                    return BashVerdict::Deny(
+                        "stage aşamasında yalnızca git add/rm/status/diff/ls-files",
+                    );
                 }
             }
             StageId::Commit => {
@@ -131,7 +181,7 @@ impl FlowGate {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::session::flow::definition::{default_flows, StageId, ToolGroup};
+    use crate::session::flow::definition::{StageId, ToolGroup, default_flows};
     use crate::session::flow::state::FlowStateMachine;
 
     fn commit_sm() -> FlowStateMachine {
@@ -170,6 +220,9 @@ mod tests {
             FlowGate::bash_command_allowed("git commit -m x", &sm),
             BashVerdict::Deny("bu aşamada yalnızca salt-okunur git komutlarına izin var")
         );
-        assert_eq!(FlowGate::bash_command_allowed("git status", &sm), BashVerdict::Allow);
+        assert_eq!(
+            FlowGate::bash_command_allowed("git status", &sm),
+            BashVerdict::Allow
+        );
     }
 }

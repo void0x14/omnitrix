@@ -2667,13 +2667,13 @@ fn picker_highlights_current_choice() {
     };
     assert_eq!(
         bg_at(4),
-        Some(theme.bg_visual),
-        "focused row must have bg_visual background"
+        Some(settings_list_row_bg(&theme, true, false)),
+        "focused row must use the effective selected-row background"
     );
     assert_eq!(
         bg_at(3),
-        Some(theme.bg_base),
-        "unfocused row must have bg_base background"
+        Some(settings_list_row_bg(&theme, false, false)),
+        "unfocused row must use the effective base background"
     );
 
     // Display text on focused row carries BOLD modifier

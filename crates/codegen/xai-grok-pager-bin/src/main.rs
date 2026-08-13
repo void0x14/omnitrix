@@ -1734,6 +1734,8 @@ fn main() {
 async fn async_main(args: PagerArgs) -> Result<()> {
     let _ = rustls::crypto::ring::default_provider().install_default();
     let mut args = args.apply_cwd()?;
+    // Runtime discovery must observe the project selected by `--cwd`.
+    xai_grok_pager::omni_runtime::start_async();
     if let Some(ref mode) = args.compaction_mode {
         unsafe { std::env::set_var("GROK_COMPACTION_MODE", mode) };
     }

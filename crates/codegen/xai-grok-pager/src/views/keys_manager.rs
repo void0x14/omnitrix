@@ -73,7 +73,7 @@ impl CategoryFilter {
             Self::HighBalance => entry.balance.is_some_and(|b| b >= 10.0),
             Self::MultiKey => false, // giriş sayısına bağlı; aşağıda hesaplanır
             Self::KeyType(t) => entry.key_type == *t,
-            Self::Provider(p) => entry.category == *p,
+            Self::Provider(p) => entry.provider_id == *p,
         }
     }
 }
@@ -115,7 +115,10 @@ pub enum KeysManagerMode {
     /// Harici stack seçimi (tespit edilenler).
     StackPick,
     /// Seçilen stack yönü: scope_cursor 0=from stack, 1=to stack.
-    StackDirection { stack_id: String, stack_label: String },
+    StackDirection {
+        stack_id: String,
+        stack_label: String,
+    },
     /// Önizleme + Enter onay.
     StackConfirm {
         stack_id: String,
@@ -150,6 +153,21 @@ pub struct KeysManagerState {
     pub keychain_path: Option<PathBuf>,
     /// Export varsayılan dizini. `None` → `grok_home()`.
     pub export_dir: Option<PathBuf>,
+    /// OpenCode auth.json override. `None` olduğunda kurulu OpenCode yolu
+    /// katalogdan çözülür. Testler ve taşınabilir kurulumlar kullanır.
+    pub opencode_auth_path: Option<PathBuf>,
+    /// OpenCode key'leri içe alındıktan sonra models.dev sonucu geldiğinde
+    /// kullanılabilir provider/model'i bağlama isteği.
+    pub auto_activate_opencode: bool,
+    /// OpenCode config'indeki tercih sırası (`provider/model`).
+    pub opencode_preferred_models: Vec<String>,
+    /// OpenCode config'indeki özel/local provider model kayıtları.
+    pub opencode_provider_models: Vec<crate::app::actions::OpenCodeProviderModel>,
+    /// Bu taramada OpenCode auth.json içinden gelen provider kimlikleri.
+    /// Otomatik etkinleştirme keychain'deki ilgisiz kayıtları kullanmaz.
+    pub opencode_provider_ids: Vec<String>,
+    /// Başarılı otomatik işlem bilgisi; hata değildir ve tabloyu kapatmaz.
+    pub notice: Option<String>,
     // ── giriş editörleri (formlar / şifreler) ──
     pub master_editor: LineEditor,
     pub show_master: bool,
@@ -189,6 +207,12 @@ impl KeysManagerState {
             },
             keychain_path: None,
             export_dir: None,
+            opencode_auth_path: None,
+            auto_activate_opencode: false,
+            opencode_preferred_models: Vec::new(),
+            opencode_provider_models: Vec::new(),
+            opencode_provider_ids: Vec::new(),
+            notice: None,
             master_editor: LineEditor::default(),
             show_master: false,
             path_editor: LineEditor::default(),
@@ -1042,6 +1066,48 @@ fn handle_import_password(
 // Mouse (minimal): satır tıklama = seçim.
 // ---------------------------------------------------------------------------
 
+const SHORTCUT_ENTER: usize = 1;
+const SHORTCUT_ESCAPE: usize = 2;
+const SHORTCUT_TAB: usize = 3;
+const SHORTCUT_TOGGLE_SHOW: usize = 4;
+const SHORTCUT_CONFIRM: usize = 5;
+const SHORTCUT_UP: usize = 6;
+const SHORTCUT_DOWN: usize = 7;
+const SHORTCUT_REVEAL: usize = 10;
+const SHORTCUT_ADD: usize = 11;
+const SHORTCUT_EDIT: usize = 12;
+const SHORTCUT_REMOVE: usize = 13;
+const SHORTCUT_REMOVE_CATEGORY: usize = 14;
+const SHORTCUT_CATEGORIES: usize = 15;
+const SHORTCUT_EXPORT: usize = 16;
+const SHORTCUT_IMPORT: usize = 17;
+const SHORTCUT_STACK: usize = 18;
+
+/// Translate a footer click into the exact key event used by keyboard input.
+/// This keeps mouse and keyboard semantics on one state-machine path.
+pub fn handle_keys_manager_shortcut(state: &mut KeysManagerState, id: usize) -> KeysManagerOutcome {
+    let (code, modifiers) = match id {
+        SHORTCUT_ENTER => (KeyCode::Enter, KeyModifiers::NONE),
+        SHORTCUT_ESCAPE => (KeyCode::Esc, KeyModifiers::NONE),
+        SHORTCUT_TAB => (KeyCode::Tab, KeyModifiers::NONE),
+        SHORTCUT_TOGGLE_SHOW => (KeyCode::Char('t'), KeyModifiers::CONTROL),
+        SHORTCUT_CONFIRM => (KeyCode::Char('y'), KeyModifiers::NONE),
+        SHORTCUT_UP => (KeyCode::Up, KeyModifiers::NONE),
+        SHORTCUT_DOWN => (KeyCode::Down, KeyModifiers::NONE),
+        SHORTCUT_REVEAL => (KeyCode::Char('r'), KeyModifiers::NONE),
+        SHORTCUT_ADD => (KeyCode::Char('a'), KeyModifiers::NONE),
+        SHORTCUT_EDIT => (KeyCode::Char('e'), KeyModifiers::NONE),
+        SHORTCUT_REMOVE => (KeyCode::Char('x'), KeyModifiers::NONE),
+        SHORTCUT_REMOVE_CATEGORY => (KeyCode::Char('X'), KeyModifiers::SHIFT),
+        SHORTCUT_CATEGORIES => (KeyCode::Char('c'), KeyModifiers::NONE),
+        SHORTCUT_EXPORT => (KeyCode::Char('E'), KeyModifiers::SHIFT),
+        SHORTCUT_IMPORT => (KeyCode::Char('I'), KeyModifiers::SHIFT),
+        SHORTCUT_STACK => (KeyCode::Char('S'), KeyModifiers::SHIFT),
+        _ => return KeysManagerOutcome::Unchanged,
+    };
+    handle_keys_manager_key(state, &KeyEvent::new(code, modifiers))
+}
+
 pub fn handle_keys_manager_mouse(
     state: &mut KeysManagerState,
     kind: MouseEventKind,
@@ -1077,6 +1143,63 @@ pub fn handle_keys_manager_mouse(
 // Render
 // ---------------------------------------------------------------------------
 
+fn centered_vertical_margin(area_height: u16, desired_height: u16) -> u16 {
+    let spare = area_height.saturating_sub(desired_height);
+    spare.saturating_add(1).saturating_div(2)
+}
+
+/// Keep short key lists and small forms compact while allowing long lists to
+/// grow to a useful (but bounded) viewport.  `ModalSizing` derives height from
+/// the vertical margin, so this is the single source of truth for every mode.
+fn keys_modal_sizing(area: Rect, state: &KeysManagerState, compact: bool) -> ModalSizing {
+    let (desired_height, footer_lines) = match &state.mode {
+        KeysManagerMode::Browse => {
+            let visible_rows = state.visible_entries().len().clamp(1, 10) as u16;
+            (visible_rows + 15, 3)
+        }
+        KeysManagerMode::Unlock { .. } => (12, 2),
+        KeysManagerMode::Reveal { .. } => (14, 2),
+        KeysManagerMode::ConfirmRemove { .. } | KeysManagerMode::ConfirmRemoveCategory { .. } => {
+            (10, 2)
+        }
+        KeysManagerMode::Add | KeysManagerMode::Edit { .. } => (17, 2),
+        KeysManagerMode::Categories => {
+            let rows = state.category_rows.len().clamp(1, 10) as u16;
+            (rows + 11, 2)
+        }
+        KeysManagerMode::ExportScope => {
+            let rows = (state.categories.len() + 1).clamp(1, 10) as u16;
+            (rows + 11, 2)
+        }
+        KeysManagerMode::StackPick => {
+            let rows = state.stack_rows.len().clamp(1, 10) as u16;
+            (rows + 11, 2)
+        }
+        KeysManagerMode::StackConfirm { lines, .. } => {
+            let rows = lines.len().clamp(1, 10) as u16;
+            (rows + 12, 2)
+        }
+        KeysManagerMode::ExportPassword { .. }
+        | KeysManagerMode::ImportPassword { .. }
+        | KeysManagerMode::ImportPath
+        | KeysManagerMode::StackDirection { .. } => (13, 2),
+        KeysManagerMode::ExportDone { .. }
+        | KeysManagerMode::ImportDone { .. }
+        | KeysManagerMode::StackDone { .. } => (12, 2),
+    };
+
+    ModalSizing {
+        width_pct: 0.70,
+        max_width: 100,
+        min_width: 60,
+        v_margin: centered_vertical_margin(area.height, desired_height),
+        h_pad: 2,
+        v_pad: 1,
+        footer_lines,
+    }
+    .with_compact(compact)
+}
+
 pub fn render_keys_manager(
     buf: &mut Buffer,
     area: Rect,
@@ -1087,185 +1210,225 @@ pub fn render_keys_manager(
         KeysManagerMode::Unlock { .. } => vec![
             Shortcut {
                 label: "Enter unlock",
-                clickable: false,
-                id: 0,
+                clickable: true,
+                id: SHORTCUT_ENTER,
             },
             Shortcut {
                 label: "ctrl+t show",
-                clickable: false,
-                id: 0,
+                clickable: true,
+                id: SHORTCUT_TOGGLE_SHOW,
             },
             Shortcut {
                 label: "Esc close",
-                clickable: false,
-                id: 0,
+                clickable: true,
+                id: SHORTCUT_ESCAPE,
             },
         ],
         KeysManagerMode::Browse => vec![
             Shortcut {
-                label: "\u{2191}/\u{2193} nav",
-                clickable: false,
-                id: 0,
+                label: "\u{2191} up",
+                clickable: true,
+                id: SHORTCUT_UP,
+            },
+            Shortcut {
+                label: "\u{2193} down",
+                clickable: true,
+                id: SHORTCUT_DOWN,
             },
             Shortcut {
                 label: "r reveal",
-                clickable: false,
-                id: 0,
+                clickable: true,
+                id: SHORTCUT_REVEAL,
             },
             Shortcut {
                 label: "a add",
-                clickable: false,
-                id: 0,
+                clickable: true,
+                id: SHORTCUT_ADD,
             },
             Shortcut {
                 label: "e edit",
-                clickable: false,
-                id: 0,
+                clickable: true,
+                id: SHORTCUT_EDIT,
             },
             Shortcut {
-                label: "x/X remove",
-                clickable: false,
-                id: 0,
+                label: "x remove",
+                clickable: true,
+                id: SHORTCUT_REMOVE,
+            },
+            Shortcut {
+                label: "X remove group",
+                clickable: true,
+                id: SHORTCUT_REMOVE_CATEGORY,
             },
             Shortcut {
                 label: "c categories",
-                clickable: false,
-                id: 0,
+                clickable: true,
+                id: SHORTCUT_CATEGORIES,
             },
             Shortcut {
                 label: "E export",
-                clickable: false,
-                id: 0,
+                clickable: true,
+                id: SHORTCUT_EXPORT,
             },
             Shortcut {
                 label: "I import",
-                clickable: false,
-                id: 0,
+                clickable: true,
+                id: SHORTCUT_IMPORT,
             },
             Shortcut {
                 label: "S stack",
-                clickable: false,
-                id: 0,
+                clickable: true,
+                id: SHORTCUT_STACK,
             },
         ],
         KeysManagerMode::Reveal { .. } => vec![Shortcut {
             label: "Esc hide",
-            clickable: false,
-            id: 0,
+            clickable: true,
+            id: SHORTCUT_ESCAPE,
         }],
         KeysManagerMode::ConfirmRemove { .. } | KeysManagerMode::ConfirmRemoveCategory { .. } => {
             vec![Shortcut {
                 label: "y confirm",
-                clickable: false,
-                id: 0,
+                clickable: true,
+                id: SHORTCUT_CONFIRM,
             }]
         }
         KeysManagerMode::Add { .. } => vec![
             Shortcut {
                 label: "Tab field",
-                clickable: false,
-                id: 0,
+                clickable: true,
+                id: SHORTCUT_TAB,
             },
             Shortcut {
                 label: "Enter save",
-                clickable: false,
-                id: 0,
+                clickable: true,
+                id: SHORTCUT_ENTER,
             },
             Shortcut {
                 label: "Esc cancel",
-                clickable: false,
-                id: 0,
+                clickable: true,
+                id: SHORTCUT_ESCAPE,
             },
         ],
         KeysManagerMode::Edit { .. } => vec![
             Shortcut {
                 label: "Tab field",
-                clickable: false,
-                id: 0,
+                clickable: true,
+                id: SHORTCUT_TAB,
             },
             Shortcut {
                 label: "Enter save",
-                clickable: false,
-                id: 0,
+                clickable: true,
+                id: SHORTCUT_ENTER,
             },
             Shortcut {
                 label: "Esc cancel",
-                clickable: false,
-                id: 0,
+                clickable: true,
+                id: SHORTCUT_ESCAPE,
             },
         ],
         KeysManagerMode::Categories => vec![
             Shortcut {
+                label: "\u{2191} up",
+                clickable: true,
+                id: SHORTCUT_UP,
+            },
+            Shortcut {
+                label: "\u{2193} down",
+                clickable: true,
+                id: SHORTCUT_DOWN,
+            },
+            Shortcut {
                 label: "Enter set default",
-                clickable: false,
-                id: 0,
+                clickable: true,
+                id: SHORTCUT_ENTER,
             },
             Shortcut {
                 label: "Esc back",
-                clickable: false,
-                id: 0,
+                clickable: true,
+                id: SHORTCUT_ESCAPE,
             },
         ],
         KeysManagerMode::ExportScope => vec![
             Shortcut {
+                label: "\u{2191} up",
+                clickable: true,
+                id: SHORTCUT_UP,
+            },
+            Shortcut {
+                label: "\u{2193} down",
+                clickable: true,
+                id: SHORTCUT_DOWN,
+            },
+            Shortcut {
                 label: "Enter select scope",
-                clickable: false,
-                id: 0,
+                clickable: true,
+                id: SHORTCUT_ENTER,
             },
             Shortcut {
                 label: "Esc back",
-                clickable: false,
-                id: 0,
+                clickable: true,
+                id: SHORTCUT_ESCAPE,
             },
         ],
         KeysManagerMode::ExportPassword { .. } | KeysManagerMode::ImportPassword { .. } => vec![
             Shortcut {
                 label: "Enter submit",
-                clickable: false,
-                id: 0,
+                clickable: true,
+                id: SHORTCUT_ENTER,
             },
             Shortcut {
                 label: "ctrl+t show",
-                clickable: false,
-                id: 0,
+                clickable: true,
+                id: SHORTCUT_TOGGLE_SHOW,
             },
             Shortcut {
                 label: "Esc back",
-                clickable: false,
-                id: 0,
+                clickable: true,
+                id: SHORTCUT_ESCAPE,
             },
         ],
         KeysManagerMode::ExportDone { .. }
         | KeysManagerMode::ImportDone { .. }
         | KeysManagerMode::StackDone { .. } => vec![Shortcut {
             label: "Enter/Esc ok",
-            clickable: false,
-            id: 0,
+            clickable: true,
+            id: SHORTCUT_ENTER,
         }],
         KeysManagerMode::ImportPath => vec![
             Shortcut {
                 label: "Enter next",
-                clickable: false,
-                id: 0,
+                clickable: true,
+                id: SHORTCUT_ENTER,
             },
             Shortcut {
                 label: "Esc back",
-                clickable: false,
-                id: 0,
+                clickable: true,
+                id: SHORTCUT_ESCAPE,
             },
         ],
         KeysManagerMode::StackPick
         | KeysManagerMode::StackDirection { .. }
         | KeysManagerMode::StackConfirm { .. } => vec![
             Shortcut {
+                label: "\u{2191} up",
+                clickable: true,
+                id: SHORTCUT_UP,
+            },
+            Shortcut {
+                label: "\u{2193} down",
+                clickable: true,
+                id: SHORTCUT_DOWN,
+            },
+            Shortcut {
                 label: "Enter",
-                clickable: false,
-                id: 0,
+                clickable: true,
+                id: SHORTCUT_ENTER,
             },
             Shortcut {
                 label: "Esc back",
-                clickable: false,
-                id: 0,
+                clickable: true,
+                id: SHORTCUT_ESCAPE,
             },
         ],
     };
@@ -1273,16 +1436,7 @@ pub fn render_keys_manager(
         title: "API Keys (Keychain)",
         tabs: None,
         shortcuts: &shortcuts,
-        sizing: ModalSizing {
-            width_pct: 0.70,
-            max_width: 100,
-            min_width: 60,
-            v_margin: 4,
-            h_pad: 2,
-            v_pad: 1,
-            footer_lines: 2,
-        }
-        .with_compact(compact),
+        sizing: keys_modal_sizing(area, state, compact),
         fold_info: None,
     };
     let theme = Theme::current();
@@ -1446,10 +1600,7 @@ pub fn render_keys_manager(
                 &theme,
             );
         }
-        KeysManagerMode::StackDirection {
-            stack_label,
-            ..
-        } => {
+        KeysManagerMode::StackDirection { stack_label, .. } => {
             render_stack_direction(
                 buf,
                 mca.content,
@@ -1482,7 +1633,7 @@ pub fn render_keys_manager(
                 &message,
             );
         }
-}
+    }
 }
 
 fn render_line(buf: &mut Buffer, x: u16, y: u16, width: u16, text: &str, style: Style) {
@@ -1724,6 +1875,7 @@ fn render_browse(
     // Action çubuğu (altta); hata varsa onun yerine hata gösterilir.
     let action_bar = match &state.error {
         Some(err) => format!("\u{2717} {err}"),
+        None if state.notice.is_some() => state.notice.clone().unwrap_or_default(),
         None => {
             "r reveal · a add · e edit · x remove · X kategori · c kategoriler · E export · I import · S stack"
                 .to_string()

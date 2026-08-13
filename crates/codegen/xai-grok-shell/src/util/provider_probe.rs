@@ -185,8 +185,22 @@ fn region_from_url(url: &str) -> Option<String> {
 
 /// Bilinen geo prefix'leri (AWS bölge kısaltmaları + GCP bölge adları).
 const REGION_PREFIXES: &[&str] = &[
-    "us", "eu", "ap", "sa", "ca", "me", "af", "il", "mx", "gb", "asia", "europe",
-    "northamerica", "southamerica", "australia", "africa",
+    "us",
+    "eu",
+    "ap",
+    "sa",
+    "ca",
+    "me",
+    "af",
+    "il",
+    "mx",
+    "gb",
+    "asia",
+    "europe",
+    "northamerica",
+    "southamerica",
+    "australia",
+    "africa",
 ];
 
 /// `us-west-2` / `europe-west4` gibi bir region etiketi mi?

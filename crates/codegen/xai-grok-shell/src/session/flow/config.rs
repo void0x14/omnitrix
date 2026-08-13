@@ -52,16 +52,27 @@ impl FlowConfig {
         let dir = config_flow_dir();
         Self {
             rules: dir.as_ref().and_then(|d| load_rules(&d.join("rules.toml"))),
-            notify: dir.as_ref().and_then(|d| load_notify(&d.join("notify.toml"))),
-            overrides: dir.as_ref().and_then(|d| load_overrides(&d.join("flows.toml"))),
+            notify: dir
+                .as_ref()
+                .and_then(|d| load_notify(&d.join("notify.toml"))),
+            overrides: dir
+                .as_ref()
+                .and_then(|d| load_overrides(&d.join("flows.toml"))),
         }
     }
 
     /// Yapılandırma dosyalarının son değişme zamanı (reload kararı için).
     pub fn fingerprint(&self) -> (u64, u64, u64) {
-        let m = |p: &Path| std::fs::metadata(p).and_then(|m| m.modified()).map(|t| {
-            t.duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)
-        }).unwrap_or(0);
+        let m = |p: &Path| {
+            std::fs::metadata(p)
+                .and_then(|m| m.modified())
+                .map(|t| {
+                    t.duration_since(std::time::UNIX_EPOCH)
+                        .map(|d| d.as_secs())
+                        .unwrap_or(0)
+                })
+                .unwrap_or(0)
+        };
         let dir = config_flow_dir();
         (
             dir.as_ref().map(|d| m(&d.join("rules.toml"))).unwrap_or(0),
@@ -96,13 +107,22 @@ fn load_rules(path: &Path) -> Option<FlowRules> {
     let table = raw.get("rules")?;
     let mut rules = FlowRules::default();
     if let Some(v) = table.get("commit_keywords").and_then(|v| v.as_array()) {
-        rules.commit_keywords = v.iter().filter_map(|s| s.as_str().map(str::to_string)).collect();
+        rules.commit_keywords = v
+            .iter()
+            .filter_map(|s| s.as_str().map(str::to_string))
+            .collect();
     }
     if let Some(v) = table.get("research_keywords").and_then(|v| v.as_array()) {
-        rules.research_keywords = v.iter().filter_map(|s| s.as_str().map(str::to_string)).collect();
+        rules.research_keywords = v
+            .iter()
+            .filter_map(|s| s.as_str().map(str::to_string))
+            .collect();
     }
     if let Some(v) = table.get("write_keywords").and_then(|v| v.as_array()) {
-        rules.write_keywords = v.iter().filter_map(|s| s.as_str().map(str::to_string)).collect();
+        rules.write_keywords = v
+            .iter()
+            .filter_map(|s| s.as_str().map(str::to_string))
+            .collect();
     }
     if let Some(v) = table.get("direct_max_len").and_then(|v| v.as_integer()) {
         rules.direct_max_len = v.max(0) as usize;
@@ -113,7 +133,10 @@ fn load_rules(path: &Path) -> Option<FlowRules> {
     if let Some(v) = table.get("mvp_max_len").and_then(|v| v.as_integer()) {
         rules.mvp_max_len = v.max(0) as usize;
     }
-    if let Some(v) = table.get("max_redirects_per_stage").and_then(|v| v.as_integer()) {
+    if let Some(v) = table
+        .get("max_redirects_per_stage")
+        .and_then(|v| v.as_integer())
+    {
         rules.max_redirects_per_stage = v.max(1) as u32;
     }
     Some(rules)
@@ -145,8 +168,16 @@ fn load_notify(path: &Path) -> Option<NotifyConfig> {
                 }
             }
         }
-        let label = params.get("label").cloned().unwrap_or_else(|| key.to_string());
-        config.channels.push(NotifyChannel { kind, enabled, label, params });
+        let label = params
+            .get("label")
+            .cloned()
+            .unwrap_or_else(|| key.to_string());
+        config.channels.push(NotifyChannel {
+            kind,
+            enabled,
+            label,
+            params,
+        });
     }
     Some(config)
 }
@@ -164,7 +195,9 @@ fn load_overrides(path: &Path) -> Option<FlowOverrides> {
                 continue;
             };
             if let Some(d) = stage.get("directive").and_then(|v| v.as_str()) {
-                overrides.stage_directives.insert(id.to_string(), d.to_string());
+                overrides
+                    .stage_directives
+                    .insert(id.to_string(), d.to_string());
             }
             if let Some(tools) = stage.get("tools").and_then(|v| v.as_array()) {
                 let groups: Vec<String> = tools

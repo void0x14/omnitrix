@@ -222,7 +222,10 @@ pub struct KeychainOptions {
 
 impl Default for KeychainOptions {
     fn default() -> Self {
-        Self { path: None, ttl: MasterKeyTtl::default() }
+        Self {
+            path: None,
+            ttl: MasterKeyTtl::default(),
+        }
     }
 }
 
@@ -327,7 +330,9 @@ struct Category {
 
 impl Category {
     fn empty() -> Self {
-        Self { providers: BTreeMap::new() }
+        Self {
+            providers: BTreeMap::new(),
+        }
     }
 }
 
@@ -477,8 +482,8 @@ impl Keychain {
         }
         let password = password_prompt();
         let key = derive_key_safe(&password, &salt_arr, &env.kdf_params)?;
-        let pt = crypto::decrypt(&key, &env.ciphertext_b64)
-            .map_err(|_| KeychainError::WrongPassword)?;
+        let pt =
+            crypto::decrypt(&key, &env.ciphertext_b64).map_err(|_| KeychainError::WrongPassword)?;
         let payload: Payload = serde_json::from_slice(&pt[..])
             .map_err(|e| KeychainError::Corrupted(format!("invalid payload: {e}")))?;
         let mut kc = Keychain {
@@ -578,7 +583,14 @@ impl Keychain {
         model_id: Option<String>,
         base_url: Option<String>,
     ) -> Result<KeyId> {
-        self.add_key_with_source(category, provider_id, api_key, model_id, base_url, KeySource::Manual)
+        self.add_key_with_source(
+            category,
+            provider_id,
+            api_key,
+            model_id,
+            base_url,
+            KeySource::Manual,
+        )
     }
 
     /// Otomatik kategori + otomatik key tipi tespiti ile ekler. Kullanıcıdan
@@ -592,7 +604,14 @@ impl Keychain {
         base_url: Option<String>,
     ) -> Result<KeyId> {
         let category = auto_category(provider_id);
-        self.add_key_with_source(&category, provider_id, api_key, model_id, base_url, KeySource::Manual)
+        self.add_key_with_source(
+            &category,
+            provider_id,
+            api_key,
+            model_id,
+            base_url,
+            KeySource::Manual,
+        )
     }
 
     /// `add_key`'in source'a duyarlı hali; Env/Imported kaynaklar içindir
@@ -617,7 +636,9 @@ impl Keychain {
             masked: mask_key(api_key, &source),
             model_id,
             base_url,
-            created_at: existing.map(|e| e.created_at.clone()).unwrap_or_else(|| now.clone()),
+            created_at: existing
+                .map(|e| e.created_at.clone())
+                .unwrap_or_else(|| now.clone()),
             last_used: existing.and_then(|e| e.last_used.clone()),
             source,
             key_type: detect_key_type(provider_id, api_key),
@@ -680,6 +701,33 @@ impl Keychain {
             .providers
             .insert(provider_id.to_string(), entry);
         id
+    }
+
+    /// Harici credential adaptörlerinin event-loop'ta zaten okunmuş tek bir
+    /// API key'i merge etmesi için güvenli giriş noktası. `overwrite=false`
+    /// mevcut provider kaydını korur. Disk yazımı çağıranın sorumluluğudur.
+    pub fn import_api_key(
+        &mut self,
+        provider_id: &str,
+        api_key: &str,
+        model_id: Option<String>,
+        base_url: Option<String>,
+        overwrite: bool,
+    ) -> Result<Option<KeyId>> {
+        self.require_unlocked()?;
+        let category = auto_category(provider_id);
+        if self.has_provider(&category, provider_id) && !overwrite {
+            return Ok(None);
+        }
+        let created_at = Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true);
+        Ok(Some(self.add_key_import(
+            &category,
+            provider_id,
+            api_key,
+            model_id,
+            base_url,
+            created_at,
+        )))
     }
 
     /// `Some(v)` → güncelle; `None` → dokunma.
@@ -852,13 +900,11 @@ fn valid_kdf_params(p: &KdfParams) -> bool {
         && m_cost <= (1 << 22)
 }
 
-fn derive_key_safe(
-    password: &str,
-    salt: &[u8],
-    params: &KdfParams,
-) -> Result<Zeroizing<[u8; 32]>> {
+fn derive_key_safe(password: &str, salt: &[u8], params: &KdfParams) -> Result<Zeroizing<[u8; 32]>> {
     if !valid_kdf_params(params) {
-        return Err(KeychainError::Corrupted("invalid KDF parameters".to_string()));
+        return Err(KeychainError::Corrupted(
+            "invalid KDF parameters".to_string(),
+        ));
     }
     Ok(crypto::derive_key(password, salt, params))
 }
@@ -866,7 +912,9 @@ fn derive_key_safe(
 /// GCM auth hatası (→ `WrongPassword`) ile yapısal bozukluğu (→ `Corrupted`)
 /// ayırt etmek için ciphertext'in yapısal olarak geçerli olduğunu önceden doğrula.
 fn structurally_valid_ciphertext(encoded: &str) -> bool {
-    B64.decode(encoded).map(|raw| raw.len() >= NONCE_LEN).unwrap_or(false)
+    B64.decode(encoded)
+        .map(|raw| raw.len() >= NONCE_LEN)
+        .unwrap_or(false)
 }
 
 /// Masked görünüm: uzun key'lerde kaynak öneki + "…" + son 4; kısa key'lerde
@@ -946,7 +994,11 @@ fn open_secure(path: &Path) -> std::io::Result<File> {
 
 #[cfg(not(unix))]
 fn open_secure(path: &Path) -> std::io::Result<File> {
-    std::fs::OpenOptions::new().write(true).create(true).truncate(true).open(path)
+    std::fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .open(path)
 }
 
 #[cfg(test)]

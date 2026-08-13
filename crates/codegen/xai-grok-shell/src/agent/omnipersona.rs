@@ -349,7 +349,9 @@ pub fn all_personas() -> &'static [OmniPersona] {
 ///
 /// Buyuk/kucuk harf duyarsizdir: `"XLR8"` ile `"xlr8"` ayni girdiyi bulur.
 pub fn persona_by_id(id: &str) -> Option<&'static OmniPersona> {
-    all_personas().iter().find(|p| p.id.eq_ignore_ascii_case(id))
+    all_personas()
+        .iter()
+        .find(|p| p.id.eq_ignore_ascii_case(id))
 }
 
 /// Persona sistem promptunu uretir; persona yoksa **bos** dizi doner.

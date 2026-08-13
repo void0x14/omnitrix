@@ -1896,6 +1896,17 @@ pub(crate) fn execute(
                     TaskResult::ModelsCatalogFetched { result }
                 });
         }
+        Effect::LoadOpenCodeCredentials { auth_path } => {
+            tasks.spawn(async move {
+                let result = tokio::task::spawn_blocking(move || {
+                    load_opencode_credentials(&auth_path)
+                })
+                .await
+                .map_err(|error| format!("OpenCode credential görevi çöktü: {error}"))
+                .and_then(|result| result);
+                TaskResult::OpenCodeCredentialsLoaded { result }
+            });
+        }
         Effect::FetchProviderModels { base_url, api_key } => {            tasks
                 .spawn(async move {
                     let result = xai_grok_shell::util::models_dev::fetch_provider_models(
@@ -2082,7 +2093,9 @@ pub(crate) fn execute(
             model_key,
             base_url,
             api_backend,
+            activate_session,
         } => {
+            let tx = acp_tx.clone();
             tasks
                 .spawn(async move {
                     let result = persist_provider_connect(
@@ -2093,11 +2106,23 @@ pub(crate) fn execute(
                         api_backend,
                     )
                     .await;
+                    let activation_error = if result.is_ok() {
+                        if let Some((_agent_id, session_id)) = activate_session {
+                            reload_models_and_switch(&tx, session_id, model_key.clone())
+                                .await
+                                .err()
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    };
                     TaskResult::ProviderConnectPersisted {
                         provider_id,
                         model_id,
                         model_key,
                         result,
+                        activation_error,
                     }
                 });
         }
@@ -4488,6 +4513,98 @@ pub(crate) fn execute(
     }
     (false, meta)
 }
+
+/// OpenCode auth.json ve config tercihlerini render thread'i dışında okur.
+/// `type=oauth`/`wellknown` kayıtları aynen bırakılır ve RAM sonucuna girmez.
+fn load_opencode_credentials(
+    auth_path: &Path,
+) -> Result<actions::OpenCodeCredentials, String> {
+    #[derive(serde::Deserialize)]
+    struct OpenCodeRecord {
+        #[serde(rename = "type", default)]
+        kind: Option<String>,
+        #[serde(default)]
+        key: Option<zeroize::Zeroizing<String>>,
+    }
+
+    let bytes = zeroize::Zeroizing::new(std::fs::read(auth_path)
+        .map_err(|error| format!("{} okunamadı: {error}", auth_path.display()))?);
+    let records: std::collections::BTreeMap<String, OpenCodeRecord> =
+        serde_json::from_slice(bytes.as_slice())
+            .map_err(|error| format!("{} bozuk JSON: {error}", auth_path.display()))?;
+    let credentials = records
+        .into_iter()
+        .filter_map(|(provider_id, record)| {
+            if matches!(record.kind.as_deref(), Some("oauth" | "wellknown")) {
+                return None;
+            }
+            let key = record.key?;
+            (!key.trim().is_empty()).then(|| actions::OpenCodeCredential {
+                provider_id,
+                api_key: actions::SecretKey::new(key),
+            })
+        })
+        .collect();
+    Ok(actions::OpenCodeCredentials {
+        credentials,
+        preferred_models: load_opencode_preferred_models(auth_path),
+    })
+}
+
+fn load_opencode_preferred_models(auth_path: &Path) -> Vec<String> {
+    let mut paths = Vec::new();
+    if let Some(config_dir) = std::env::var_os("XDG_CONFIG_HOME") {
+        paths.push(PathBuf::from(config_dir).join("opencode/opencode.json"));
+    }
+    if let Some(home) = std::env::var_os("HOME") {
+        paths.push(PathBuf::from(home).join(".config/opencode/opencode.json"));
+    }
+    if let Some(data_dir) = auth_path.parent() {
+        paths.push(data_dir.join("opencode.json"));
+    }
+    paths.into_iter().find_map(|path| {
+        let bytes = zeroize::Zeroizing::new(std::fs::read(path).ok()?);
+        let value: serde_json::Value = serde_json::from_slice(bytes.as_slice()).ok()?;
+        let mut models = Vec::new();
+        for key in ["model", "small_model", "smallModel"] {
+            if let Some(model) = value.get(key).and_then(serde_json::Value::as_str)
+                && !model.trim().is_empty()
+                && !models.iter().any(|seen| seen == model)
+            {
+                models.push(model.to_string());
+            }
+        }
+        Some(models)
+    }).unwrap_or_default()
+}
+/// Reload the shell model registry and activate a canonical config model in
+/// an existing ACP session. The config key is the stable ACP model ID after
+/// `reload_models`; the provider's API slug is not necessarily advertised by
+/// the pager catalog.
+async fn reload_models_and_switch(
+    tx: &AcpAgentTx,
+    session_id: acp::SessionId,
+    model_key: String,
+) -> Result<(), String> {
+    let reload = acp::ExtRequest::new(
+        "x.ai/internal/reload_models",
+        serde_json::value::to_raw_value(&serde_json::json!({}))
+            .expect("serialize reload_models params")
+            .into(),
+    );
+    acp_send(reload, tx)
+        .await
+        .map_err(|error| sanitize_user_error(&format!("model kataloğu yenilenemedi: {error}")))?;
+    let request = acp::SetSessionModelRequest::new(
+        session_id,
+        acp::ModelId::new(model_key),
+    );
+    acp_send(request, tx)
+        .await
+        .map(|_| ())
+        .map_err(|error| sanitize_user_error(&format!("aktif model değiştirilemedi: {error}")))
+}
+
 /// Fetch session info from ACP via `x.ai/session/info`.
 async fn fetch_session_info(
     session_id: &acp::SessionId,
@@ -4626,7 +4743,7 @@ fn format_session_info(
         "{title_line}  Shell version: {version_display}\n{auth_lines}  Session ID: {session_id}{conversation_line}\n  Working directory: {cwd}\n  Model: {model_display}{model_hash_line}{backend_line}{sandbox_line}{turn_line}\n  Context: {used} / {total} tokens ({pct}%)"
     )
 }
-/// Auth section for `/session-info` — login method + where to manage account/credits.
+/// Auth section for `/session-info`.
 ///
 /// This reflects the process login / ACP auth method, not per-model sampling
 /// credentials (a model `api_key`/`env_key` can still own the turn).
@@ -4637,13 +4754,9 @@ fn format_auth_lines(is_api_key_auth: bool, api_key_env_set: bool) -> String {
         } else {
             "  Auth method: API key\n"
         };
-        return format!(
-            "{method}  Manage account and credits: console.x.ai\n  Run `grok login` to use your SuperGrok subscription instead.\n"
-        );
+        return method.to_string();
     }
-    String::from(
-        "  Auth method: OAuth\n  Manage account and credits: https://grok.com/?_s=billing\n",
-    )
+    String::from("  Auth method: OAuth\n")
 }
 /// Build the single text content block for a plain `Effect::SendPrompt`.
 ///

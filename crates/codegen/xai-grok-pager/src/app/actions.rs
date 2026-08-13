@@ -47,6 +47,33 @@ impl std::fmt::Debug for SecretKey {
     }
 }
 
+/// OpenCode auth.json'dan async okunan tek API credential kaydı. Secret'in
+/// `Debug` çıktısı redacted'dır; OAuth kayıtları bu yapıya hiç girmez.
+#[derive(Debug)]
+pub struct OpenCodeCredential {
+    pub provider_id: String,
+    pub api_key: SecretKey,
+}
+
+/// OpenCode credential ve model tercihleri. Event-loop yalnızca bu RAM
+/// sonucunu keychain'e uygular; auth/config dosyalarını senkron okumaz.
+#[derive(Debug)]
+pub struct OpenCodeCredentials {
+    pub credentials: Vec<OpenCodeCredential>,
+    pub preferred_models: Vec<String>,
+    /// Provider/model entries from OpenCode's config, including inline
+    /// provider endpoints. These are needed when a configured model is not
+    /// present in models.dev (local gateways and private OpenCode plugins).
+    pub provider_models: Vec<OpenCodeProviderModel>,
+}
+
+#[derive(Debug, Clone)]
+pub struct OpenCodeProviderModel {
+    pub provider_id: String,
+    pub model_id: String,
+    pub base_url: Option<String>,
+}
+
 /// Typed error for model switch failures. Replaces the raw `String` in
 /// `TaskResult::SwitchModelComplete` so dispatch can match on the variant
 /// instead of parsing strings.
@@ -93,8 +120,6 @@ pub enum Action {
     ExitSession,
     /// Exit session without double-press confirmation (e.g., from command palette).
     ExitSessionConfirmed,
-    /// Open grok.com in the browser for SuperGrok subscription upsell.
-    OpenSupergrokUrl,
     /// Re-check subscription status via the shell's `x.ai/auth/check_subscription`.
     CheckSubscription,
     /// Open an arbitrary URL in the system browser (with scheme validation).
@@ -542,6 +567,8 @@ pub enum Action {
     },
     /// Cancel the currently running turn.
     CancelTurn,
+    /// Cancel a concrete native pager agent by Omnitrix dashboard id.
+    OmniInterruptAgent(usize),
     /// User confirmed a cancel-turn choice from the panel.
     CancelTurnChoice(crate::views::modal::CancelTurnChoice),
     /// Kill a background task by task_id.
@@ -562,10 +589,6 @@ pub enum Action {
     AnnouncementsHide,
     /// Show the announcements banner.
     AnnouncementsShow,
-    /// Open the promo CTA link (url resolved from current state at dispatch
-    /// time, mirroring how `AnnouncementsHide` resolves its target). The
-    /// payload records which surface activated it, for telemetry.
-    AnnouncementsOpenCta(xai_grok_telemetry::events::AnnouncementCtaSurface),
     /// Cycle session mode (Shift+Tab): Normal → Plan → Always-Approve → Normal.
     /// Plan mode sends a signal to the shell; always-approve is local.
     CycleMode,
@@ -814,8 +837,6 @@ pub enum Action {
     ShowContextInfo,
     /// `/usage` — session token/cost, plus consumer credits when visible.
     ShowUsage,
-    /// `/usage manage` — open consumer billing (no-op if surface hidden).
-    ManageBilling,
     /// Commit a read-only list of the queued prompts as a system block
     /// (`/queue`). The surface minimal mode uses in place of the `QueuePane`.
     ShowQueue,
@@ -1721,12 +1742,19 @@ pub enum Effect {
         /// `None` → resolved from the catalog; falls back to
         /// `ChatCompletions` for unknown/custom providers.
         api_backend: Option<xai_grok_shell::sampling::ApiBackend>,
+        /// Existing ACP session to activate after config/model reload.
+        /// `None` is used when the connection is being prepared for a future
+        /// session or the current view has no live session.
+        activate_session: Option<(AgentId, acp::SessionId)>,
     },
     /// Fetch the models.dev provider catalog for the `/connect` wizard
     /// (async; cache TTL 24h). Completes with
     /// [`TaskResult::ModelsCatalogFetched`]; the open `ProviderConnect`
     /// modal consumes it (fresh provider rows + badges).
     FetchModelsCatalog,
+    /// OpenCode auth/config dosyalarını render/event-loop dışında oku.
+    /// OAuth kayıtları korunur ve atlanır; yalnızca `type=api` key'leri döner.
+    LoadOpenCodeCredentials { auth_path: std::path::PathBuf },
     /// Fetch a custom provider's `/models` list (openai-compatible) for the
     /// connect wizard Model step. `api_key` is session-scoped and optional
     /// (many local endpoints list models without auth); the request is built
@@ -2577,6 +2605,9 @@ pub enum TaskResult {
         model_id: String,
         model_key: String,
         result: Result<(), String>,
+        /// Config persistence can succeed while the current ACP session
+        /// rejects the post-reload model switch.
+        activation_error: Option<String>,
     },
     /// Best-effort bakiye sorgusu sonucu ([`Effect::ProbeKeyBalances`]).
     /// `results`: `(key_id, balance_usd)` — `None` = sorgulanamadı/uyç yok.
@@ -2590,6 +2621,11 @@ pub enum TaskResult {
     /// rows still selectable).
     ModelsCatalogFetched {
         result: Result<xai_grok_shell::util::models_dev::CatalogCache, String>,
+    },
+    /// OpenCode credential taraması tamamlandı. Secret alanları Debug'da
+    /// redacted kalır; dispatch bunları şifreli keychain'e merge eder.
+    OpenCodeCredentialsLoaded {
+        result: Result<OpenCodeCredentials, String>,
     },
     /// Custom provider `/models` list fetched for the connect wizard Model
     /// step ([`Effect::FetchProviderModels`]). Success populates the

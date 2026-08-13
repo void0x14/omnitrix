@@ -333,7 +333,12 @@ impl DedupWindow {
     }
 
     /// Süresi geçmiş girdileri atar; hâlâ taşıyorsa en eski görüleni düşürür.
-    fn prune(entries: &mut HashMap<String, Entry>, window: Duration, now: Instant, capacity: usize) {
+    fn prune(
+        entries: &mut HashMap<String, Entry>,
+        window: Duration,
+        now: Instant,
+        capacity: usize,
+    ) {
         // Pencerenin iki katı kadar görülmeyen imza artık "tekrar" sayılmaz.
         let bayatlama = window.saturating_mul(2);
         entries.retain(|_, entry| now.saturating_duration_since(entry.last_seen) < bayatlama);
@@ -519,13 +524,9 @@ pub fn installed_config() -> Option<NotifyConfig> {
 
 /// Yapılandırma kopyası + paylaşımlı istemci; kurulum yoksa `None`.
 fn runtime_snapshot() -> Option<(NotifyConfig, Arc<DedupWindow>, reqwest::Client)> {
-    lock(&RUNTIME).as_ref().map(|r| {
-        (
-            r.config.clone(),
-            Arc::clone(&r.dedup),
-            r.client.clone(),
-        )
-    })
+    lock(&RUNTIME)
+        .as_ref()
+        .map(|r| (r.config.clone(), Arc::clone(&r.dedup), r.client.clone()))
 }
 
 /// Dedup imzası: olay + mesaj (aynı mesajın pencerede tekrarı susturulur).
@@ -544,9 +545,7 @@ fn with_suppressed(message: &str, suppressed: u32) -> String {
 
 /// Hook olayını kanal gönderimi için hazırlar. Bildirim katmanına girmeyen
 /// olaylar `None` döner — dispatcher akışı hiç etkilenmez.
-fn message_for(
-    envelope: &HookEventEnvelope,
-) -> Option<(HookEventName, Severity, String)> {
+fn message_for(envelope: &HookEventEnvelope) -> Option<(HookEventName, Severity, String)> {
     match &envelope.payload {
         HookPayload::Notification {
             notification_type,
@@ -634,7 +633,9 @@ async fn send_notification_with_severity(
     let (dedup, client) = match runtime_snapshot() {
         Some((_, dedup, client)) => (dedup, client),
         None => (
-            Arc::new(DedupWindow::new(Duration::from_secs(config.dedup_window_secs))),
+            Arc::new(DedupWindow::new(Duration::from_secs(
+                config.dedup_window_secs,
+            ))),
             reqwest::Client::new(),
         ),
     };
@@ -799,11 +800,7 @@ async fn send_sms(
         twilio_resource_url(p.sid, "Messages.json"),
         p.sid,
         p.token,
-        &[
-            ("From", p.from),
-            ("To", p.to),
-            ("Body", body.as_str()),
-        ],
+        &[("From", p.from), ("To", p.to), ("Body", body.as_str())],
     )
     .await?;
     info!(target: "xai_grok_hooks::notify", to = %p.to, "sms gonderildi");
@@ -826,11 +823,7 @@ async fn place_call(
         twilio_resource_url(p.sid, "Calls.json"),
         p.sid,
         p.token,
-        &[
-            ("From", p.from),
-            ("To", p.to),
-            ("Twiml", twiml.as_str()),
-        ],
+        &[("From", p.from), ("To", p.to), ("Twiml", twiml.as_str())],
     )
     .await?;
     info!(target: "xai_grok_hooks::notify", to = %p.to, "sesli arama baslatildi");
@@ -1031,7 +1024,10 @@ mod tests {
         assert_eq!(severity_from_level(None), Severity::Info);
         assert_eq!(severity_from_reason("failed"), Severity::Error);
         assert_eq!(severity_from_reason("end_turn"), Severity::Info);
-        assert_eq!(Severity::for_event(HookEventName::StopFailure), Severity::Critical);
+        assert_eq!(
+            Severity::for_event(HookEventName::StopFailure),
+            Severity::Critical
+        );
     }
 
     #[test]

@@ -1,11 +1,8 @@
 //! `/omni-notify` — fire a test notification through the omnitrix notify
 //! dispatcher (Faz 6, Task 6.1).
 //!
-//! The dispatcher is installed by the `omnitrix` binary after warm-up via
-//! `omni_bridge::install_notify`. This command only reads channels through the
-//! bridge — it never touches omni-notify types. No core running, no channels
-//! configured, or a failed schedule all render as plain messages — no panics
-//! (I6).
+//! The native pager runtime installs the dispatcher before the first TUI frame.
+//! No channels configured or a failed schedule render as plain messages.
 
 use crate::omni_bridge;
 use crate::slash::command::{CommandExecCtx, CommandResult, SlashCommand};
@@ -42,9 +39,7 @@ impl SlashCommand for OmniNotifyCommand {
         }
 
         let Some(notify) = omni_bridge::notify() else {
-            return CommandResult::Message(
-                "omnitrix core baslatilmadi (warmup bekleniyor)".to_string(),
-            );
+            return CommandResult::Message("bildirim runtime'i kullanilamiyor".to_string());
         };
 
         let channels = notify.channels();
@@ -104,7 +99,7 @@ mod tests {
 
     /// Serialized: the bridge is process-global (OnceLock, first-wins), so the
     /// absent/empty-channel paths are only observable under specific orderings.
-    /// Both branches are asserted: no dispatcher -> warm-up message, then
+    /// Both branches are asserted: no dispatcher -> unavailable message, then
     /// install -> queued message; or already-installed -> queued message only.
     #[test]
     #[serial_test::serial(OMNI_BRIDGE)]
@@ -115,8 +110,8 @@ mod tests {
             return;
         }
         assert!(
-            first.contains("baslatilmadi") || first.contains("kanal kurulmamis"),
-            "expected warm-up or no-channel message, got {first}"
+            first.contains("kullanilamiyor") || first.contains("kanal kurulmamis"),
+            "expected unavailable or no-channel message, got {first}"
         );
 
         struct FakeNotify;

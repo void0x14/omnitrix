@@ -1986,9 +1986,7 @@ fn gate_refreshed_emits_check_subscription_on_gate_lift() {
     let mut app = test_app();
     // User starts gated (no subscription).
     app.gate = Some(xai_grok_shell::auth::GateInfo {
-        message: "SuperGrok subscription required".into(),
-        url: Some("https://grok.com/supergrok".into()),
-        label: Some("Subscribe".into()),
+        message: "This provider or account cannot start a session.".into(),
     });
     assert!(!app.has_access());
 
@@ -2021,8 +2019,6 @@ fn gate_refreshed_no_effect_when_still_gated() {
     let mut app = test_app();
     app.gate = Some(xai_grok_shell::auth::GateInfo {
         message: "Subscribe".into(),
-        url: None,
-        label: None,
     });
 
     let settings = xai_grok_shell::util::config::RemoteSettings {
@@ -2101,8 +2097,6 @@ fn gate_refreshed_newly_blocked_defers_gate_for_verification() {
 fn test_gate() -> xai_grok_shell::auth::GateInfo {
     xai_grok_shell::auth::GateInfo {
         message: "Subscribe".into(),
-        url: None,
-        label: None,
     }
 }
 

@@ -158,9 +158,7 @@ fn walk(value: &Value, path: &str, out: &mut Vec<RawKey>) {
 
 fn is_key_field(name: &str) -> bool {
     let lower = name.to_ascii_lowercase();
-    KEY_FIELD_NAMES
-        .iter()
-        .any(|k| k.eq_ignore_ascii_case(name))
+    KEY_FIELD_NAMES.iter().any(|k| k.eq_ignore_ascii_case(name))
         || (lower.ends_with("apikey") || lower.ends_with("api_key") || lower == "key")
 }
 
@@ -209,7 +207,11 @@ fn infer_provider(field: &str, path: &str, map: &serde_json::Map<String, Value>)
     }
     // path'in son segmenti
     path.rsplit(['.', '[', ']'])
-        .find(|s| !s.is_empty() && s.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_'))
+        .find(|s| {
+            !s.is_empty()
+                && s.chars()
+                    .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+        })
         .unwrap_or("unknown")
         .to_ascii_lowercase()
 }
@@ -218,7 +220,11 @@ fn dedupe(keys: Vec<RawKey>) -> Vec<RawKey> {
     let mut seen = std::collections::HashSet::new();
     let mut out = Vec::new();
     for k in keys {
-        let sig = format!("{}:{}", k.provider_id, &k.api_key[..k.api_key.len().min(12)]);
+        let sig = format!(
+            "{}:{}",
+            k.provider_id,
+            &k.api_key[..k.api_key.len().min(12)]
+        );
         if seen.insert(sig) {
             out.push(k);
         }
@@ -227,8 +233,8 @@ fn dedupe(keys: Vec<RawKey>) -> Vec<RawKey> {
 }
 
 fn read_json(path: &Path) -> anyhow::Result<Value> {
-    let bytes = std::fs::read(path)
-        .map_err(|e| anyhow::anyhow!("{} okunamadı: {e}", path.display()))?;
+    let bytes =
+        std::fs::read(path).map_err(|e| anyhow::anyhow!("{} okunamadı: {e}", path.display()))?;
     serde_json::from_slice(&bytes)
         .map_err(|e| anyhow::anyhow!("{} bozuk JSON: {e}", path.display()))
 }

@@ -28,7 +28,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
-use tokio::sync::{mpsc, oneshot, Notify, Semaphore};
+use tokio::sync::{Notify, Semaphore, mpsc, oneshot};
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, warn};
 
@@ -300,7 +300,11 @@ impl Drop for AdmissionToken {
 #[derive(Debug, thiserror::Error)]
 pub enum AdmissionError {
     #[error("RAM limit exceeded: {current} + {requested} > {max}")]
-    RamExceeded { current: u64, requested: u64, max: u64 },
+    RamExceeded {
+        current: u64,
+        requested: u64,
+        max: u64,
+    },
 
     #[error("concurrency limit reached")]
     ConcurrencyLimit,
@@ -506,12 +510,18 @@ pub enum HierarchyError {
     MaxDepthExceeded { depth: u32, max: u32 },
 
     #[error("fan-out ceiling exceeded: {parent} for {fanout} > {max}")]
-    MaxFanoutExceeded { parent: String, fanout: u32, max: u32 },
+    MaxFanoutExceeded {
+        parent: String,
+        fanout: u32,
+        max: u32,
+    },
 
     #[error("node {0} already exists")]
     DuplicateNode(String),
 
-    #[error("cycle detected: node {child} cannot be child of {parent} (would create a circular dependency)")]
+    #[error(
+        "cycle detected: node {child} cannot be child of {parent} (would create a circular dependency)"
+    )]
     CycleDetected { child: String, parent: String },
 }
 
@@ -591,18 +601,16 @@ impl OmniSchedulerInner {
     /// NEVER queued.
     fn admit_hierarchy(&self, child: &str, parent: &str) -> Result<u32, ToolError> {
         self.ensure_parent_node(parent);
-        self.hierarchy
-            .add_node(child, Some(parent))
-            .map_err(|e| {
-                let denial = e.to_denial(child.to_string());
-                warn!(
-                    code = denial.code,
-                    agent_id = %denial.agent_id,
-                    parent_id = ?denial.parent_id,
-                    "subagent spawn denied by hierarchy cap"
-                );
-                ToolError::custom(denial.code, denial.message)
-            })?;
+        self.hierarchy.add_node(child, Some(parent)).map_err(|e| {
+            let denial = e.to_denial(child.to_string());
+            warn!(
+                code = denial.code,
+                agent_id = %denial.agent_id,
+                parent_id = ?denial.parent_id,
+                "subagent spawn denied by hierarchy cap"
+            );
+            ToolError::custom(denial.code, denial.message)
+        })?;
         Ok(self.hierarchy.get_depth(child).unwrap_or(0))
     }
 
@@ -879,8 +887,13 @@ impl OmniSchedulerBackend {
             .position(|e| e.priority < priority)
             .unwrap_or(queue.len());
         queue.insert(pos, entry);
-        self.inner.queued_count.store(queue.len(), Ordering::Release);
-        debug!(queue_len = queue.len(), "subagent queued by resource governor");
+        self.inner
+            .queued_count
+            .store(queue.len(), Ordering::Release);
+        debug!(
+            queue_len = queue.len(),
+            "subagent queued by resource governor"
+        );
     }
 
     /// Removes a subagent from the queue by id (no-op when absent).
@@ -889,7 +902,9 @@ impl OmniSchedulerBackend {
         let before = queue.len();
         queue.retain(|e| e.request.id != subagent_id);
         if queue.len() != before {
-            self.inner.queued_count.store(queue.len(), Ordering::Release);
+            self.inner
+                .queued_count
+                .store(queue.len(), Ordering::Release);
             debug!(subagent_id, queue_len = queue.len(), "subagent dequeued");
         }
     }
@@ -1017,10 +1032,13 @@ impl SubagentBackend for OmniSchedulerBackend {
         let (respond_to, response_rx) = oneshot::channel();
         let cancel_on_receiver_drop = request.owner.is_workflow();
         let dispatch_cancel = request.cancel_token.clone();
-        let sent = self.inner.tx.send(SubagentEvent::Spawn(SubagentSpawnRequest {
-            request: Box::new(request),
-            result_tx: respond_to,
-        }));
+        let sent = self
+            .inner
+            .tx
+            .send(SubagentEvent::Spawn(SubagentSpawnRequest {
+                request: Box::new(request),
+                result_tx: respond_to,
+            }));
         if sent.is_err() {
             drop(token);
             self.inner.active_count.fetch_sub(1, Ordering::AcqRel);
@@ -1076,13 +1094,16 @@ impl SubagentBackend for OmniSchedulerBackend {
         }
 
         let (respond_to, response_rx) = oneshot::channel();
-        let sent = self.inner.tx.send(SubagentEvent::Query(SubagentQueryRequest {
-            subagent_id: id.to_string(),
-            parent_session_id: self.parent_session_id(),
-            block,
-            timeout_ms,
-            respond_to,
-        }));
+        let sent = self
+            .inner
+            .tx
+            .send(SubagentEvent::Query(SubagentQueryRequest {
+                subagent_id: id.to_string(),
+                parent_session_id: self.parent_session_id(),
+                block,
+                timeout_ms,
+                respond_to,
+            }));
         if sent.is_err() {
             return None;
         }
@@ -1210,11 +1231,14 @@ impl OmniSchedulerBackend {
     /// Channel delegation for cancels of active/unknown subagents.
     async fn forward_cancel(&self, id: &str) -> SubagentCancelOutcome {
         let (respond_to, response_rx) = oneshot::channel();
-        let sent = self.inner.tx.send(SubagentEvent::Cancel(SubagentCancelRequest {
-            parent_session_id: self.parent_session_id(),
-            target: SubagentCancelTarget::SubagentId(id.to_string()),
-            respond_to,
-        }));
+        let sent = self
+            .inner
+            .tx
+            .send(SubagentEvent::Cancel(SubagentCancelRequest {
+                parent_session_id: self.parent_session_id(),
+                target: SubagentCancelTarget::SubagentId(id.to_string()),
+                respond_to,
+            }));
         if sent.is_err() {
             return SubagentCancelOutcome::NotFound;
         }

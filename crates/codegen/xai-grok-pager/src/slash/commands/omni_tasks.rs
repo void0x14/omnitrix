@@ -122,7 +122,7 @@ mod tests {
 
     /// A temp-dir OMNI_DATA_HOME so the test never touches the real store and
     /// is hermetic. Restored by `Drop`.
-    struct ScopedDataDir(tempfile::TempDir);
+    struct ScopedDataDir(#[allow(dead_code)] tempfile::TempDir);
 
     impl ScopedDataDir {
         fn new() -> Self {

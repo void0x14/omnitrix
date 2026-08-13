@@ -18,8 +18,8 @@ pub use self::commands::*;
 pub use self::fork::{ForkSessionRequest, ForkSessionResponse, fork_session};
 pub use self::handle::*;
 pub use self::persistence::{
-    LocalFeedbackEntry, UserFeedbackEntry, PersistenceError, SessionEventRecord,
-    SessionEventRecorder, find_local_child_for_remote, resolve_local_session,
+    LocalFeedbackEntry, PersistenceError, SessionEventRecord, SessionEventRecorder,
+    UserFeedbackEntry, find_local_child_for_remote, resolve_local_session,
     resolve_local_session_any_cwd, session_exists_for_cwd,
 };
 pub use self::result::{Empty, ExtMethodResult};

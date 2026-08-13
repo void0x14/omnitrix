@@ -1354,15 +1354,15 @@ impl MvpAgent {
     }
     /// Whether the current session is a personal grok.com account on a gated
     /// tier (free / X Basic). The Imagine tools stay advertised to the model but
-    /// are flagged tier-restricted so they short-circuit at call time with the
-    /// SuperGrok upsell prose (see `ImageGenConfig`/`VideoGenConfig`'s
+    /// are flagged tier-restricted so they short-circuit at call time with a
+    /// neutral capability response (see `ImageGenConfig`/`VideoGenConfig`'s
     /// `tier_restricted`).
     ///
     /// Fails **open** (returns `false`) whenever we can't positively confirm a
     /// restricted personal tier — no auth yet, BYOK / API-key sessions, team
     /// accounts, and an unknown/absent tier all pass. The server
     /// authoritatively zero-limits Imagine for free & X Basic (429), so this
-    /// client gate is a UX optimization (a clean in-chat upsell instead of a
+    /// client gate is a UX optimization (a clean local response instead of a
     /// doomed request), never the security boundary — under-restricting is safe,
     /// over-restricting would wrongly disable a paid feature.
     ///

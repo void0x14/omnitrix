@@ -11,9 +11,9 @@
 
 use zeroize::Zeroizing;
 
-use super::models_dev::{base_url_for_provider, provider_models, CatalogCache, ModelInfo};
+use super::models_dev::{CatalogCache, ModelInfo, base_url_for_provider, provider_models};
 use super::provider_probe::{
-    pick_winner, probe_candidates, probe_rank_key, ProbeRequest, ProbeResult, DEFAULT_TIMEOUT,
+    DEFAULT_TIMEOUT, ProbeRequest, ProbeResult, pick_winner, probe_candidates, probe_rank_key,
 };
 
 /// Auto-connect sonucu: provider + base URL + region + model listesi.

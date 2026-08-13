@@ -18,10 +18,7 @@ mod task_result;
 mod transcript;
 mod turn;
 mod voice;
-use super::billing::{
-    CreditLimitUpsellMode, credit_limit_upsell_mode, is_max_tier, open_credit_limit_upsell,
-    open_free_usage_upsell,
-};
+use super::billing::is_credit_limit_error;
 use super::cta::{
     CTA_MCP_ABSENT_MAX_ATTEMPTS, CTA_MCP_POLL_MAX_ATTEMPTS, cta_impression_plugin_name,
     cta_install_error_category, cta_install_relative_path, plugin_cta_phase_for,
@@ -165,9 +162,6 @@ fn test_app() -> AppView {
         auto_update: None,
         ask_user_question_timeout_enabled: None,
         zdr_access_enabled: false,
-        usage_billing_redirect_url: None,
-        access_gate_shown_logged: false,
-        announcement_cta_impressions_logged: Default::default(),
         gate: None,
         subscription_tier: None,
         paywall_check_started: None,
@@ -199,15 +193,12 @@ fn test_app() -> AppView {
         welcome_announcement: WelcomeAnnouncementState::default(),
         welcome_auth_fallback_rect: None,
         welcome_refresh_rect: None,
-        welcome_gate_url_rect: None,
         welcome_changelog_cta_rect: None,
-        welcome_upgrade_cta_rect: None,
         welcome_privacy_banner_accept_rect: None,
         welcome_privacy_banner_customize_rect: None,
         welcome_privacy_banner_legal_rect: None,
         welcome_toast: None,
         welcome_on_privacy_banner: false,
-        welcome_on_upgrade_cta: false,
         auth_show_raw_url: false,
         auth_mouse_disabled: false,
         session_picker_entries: None,

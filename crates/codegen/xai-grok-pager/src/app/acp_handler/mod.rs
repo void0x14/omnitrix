@@ -177,11 +177,10 @@ fn acp_message_brief(msg: &AcpClientMessage) -> String {
 /// background agent must still land in its own scrollback so the user sees
 /// the full turn after switching back.
 pub(crate) fn handle(msg: AcpClientMessage, app: &mut AppView) -> bool {
-    // Task 1.3: stream every ACP wire message into the omnitrix event sink
-    // (installed by the omnitrix binary after warm-up). `AcpClientMessage` is
-    // not Serialize (it carries `oneshot::Sender`), so the fallback descriptor
-    // passes the variant kind + session id, and the full `SessionUpdate` body
-    // for session notifications. No sink installed (standalone TUI) => no-op.
+    // Stream every ACP wire message into the in-process Omnitrix event sink.
+    // `AcpClientMessage` is not Serialize (it carries `oneshot::Sender`), so
+    // the descriptor passes the variant kind + session id and the full
+    // `SessionUpdate` body for session notifications.
     if let Some(sink) = crate::omni_bridge::event_sink() {
         sink.on_acp_message(&acp_message_brief(&msg));
     }

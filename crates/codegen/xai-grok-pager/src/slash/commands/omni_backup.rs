@@ -1,10 +1,8 @@
 //! `/omni-backup` — trigger an immediate omnitrix backup through the bridge
 //! (Faz 9, Task 9.1).
 //!
-//! The backup engine is installed by the `omnitrix` binary after warm-up via
-//! `omni_bridge::install_backup`. This command only calls through the bridge —
-//! it never touches omni-backup types. No core running or a failed snapshot
-//! both render as plain messages — no panics (I6).
+//! The native pager runtime installs this service before the first TUI frame;
+//! the command queues async backup work and returns immediately.
 
 use crate::omni_bridge;
 use crate::slash::command::{CommandExecCtx, CommandResult, SlashCommand};
@@ -41,11 +39,11 @@ impl SlashCommand for OmniBackupCommand {
         }
 
         let Some(engine) = omni_bridge::backup() else {
-            return CommandResult::Message("yedekleme motoru kurulmamis".to_string());
+            return CommandResult::Message("yedekleme runtime'i kullanilamiyor".to_string());
         };
 
         match engine.backup_now() {
-            Ok(summary) => CommandResult::Message(format!("yedek alindi — {summary}")),
+            Ok(summary) => CommandResult::Message(format!("yedekleme {summary}")),
             Err(err) => CommandResult::Message(format!("yedek basarisiz: {err}")),
         }
     }
@@ -89,21 +87,18 @@ mod tests {
         assert_eq!(message_for("list"), "kullanim: /omni-backup now");
     }
 
-    /// Serialized: the bridge is process-global (OnceLock, first-wins), so the
-    /// absent-engine path is only observable under specific orderings. Both
-    /// branches are asserted: no engine -> not-installed message, then install
-    /// -> summary message; or already-installed -> summary message only.
+    /// The native runtime is process-global. Tests may observe either the
+    /// already-installed async adapter or the locally installed fake.
     #[test]
     #[serial_test::serial(OMNI_BRIDGE)]
     fn now_subcommand_reports_backup() {
         let first = message_for("now");
-        if first.contains("yedek alindi") {
-            assert!(first.contains("—"), "unexpected message: {first}");
+        if first == "yedekleme arka planda baslatildi" {
             return;
         }
         assert!(
-            first.contains("kurulmamis"),
-            "expected not-installed message, got {first}"
+            first.contains("kullanilamiyor"),
+            "expected unavailable message, got {first}"
         );
 
         struct FakeBackup;
@@ -118,7 +113,7 @@ mod tests {
 
         let ran = message_for("now");
         assert!(
-            ran.contains("yedek alindi") && ran.contains("id=7"),
+            ran.contains("yedekleme") && ran.contains("id=7"),
             "expected summary message, got {ran}"
         );
     }

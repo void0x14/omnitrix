@@ -671,7 +671,10 @@ mod tests {
     fn provider_kind_sk_fallback_requires_length_51() {
         let long: String = format!("sk-{}", "a".repeat(48));
         assert_eq!(long.len(), 51);
-        assert_eq!(ProviderKind::detect_from_key(&long), Some(ProviderKind::OpenAI));
+        assert_eq!(
+            ProviderKind::detect_from_key(&long),
+            Some(ProviderKind::OpenAI)
+        );
         assert_eq!(ProviderKind::detect_from_key("sk-short"), None);
         assert_eq!(ProviderKind::detect_from_key(""), None);
         assert_eq!(ProviderKind::detect_from_key("unknown-prefix-123"), None);
@@ -684,10 +687,7 @@ mod tests {
             detect_provider_from_key("sk-proj-abc"),
             ProviderKind::detect_from_key("sk-proj-abc"),
         );
-        assert_eq!(
-            detect_provider_from_key("xai-abc"),
-            Some(ProviderKind::Xai),
-        );
+        assert_eq!(detect_provider_from_key("xai-abc"), Some(ProviderKind::Xai),);
         assert_eq!(detect_provider_from_key("zzz"), None);
     }
 
@@ -700,10 +700,7 @@ mod tests {
         assert_eq!(ProviderKind::Google.name(), "Google");
         assert_eq!(ProviderKind::OpenRouter.name(), "OpenRouter");
         assert_eq!(ProviderKind::DeepSeek.name(), "DeepSeek");
-        assert_eq!(
-            ProviderKind::Xai.default_base_url(),
-            "https://api.x.ai/v1",
-        );
+        assert_eq!(ProviderKind::Xai.default_base_url(), "https://api.x.ai/v1",);
         assert_eq!(
             ProviderKind::OpenAI.default_base_url(),
             "https://api.openai.com/v1",

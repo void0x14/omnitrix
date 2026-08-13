@@ -7,8 +7,8 @@ pub mod actions;
 pub mod app;
 pub mod client_identity;
 pub mod completions_cmd;
-pub mod connect_cmd;
 mod config_toml_edit;
+pub mod connect_cmd;
 pub mod diagnostics;
 pub mod diff;
 pub mod docs;
@@ -44,6 +44,7 @@ pub mod notifications;
 #[allow(unused_imports, unused_macros)]
 pub mod obf;
 pub mod omni_bridge;
+pub mod omni_runtime;
 pub mod plugin_cmd;
 pub mod project_picker;
 pub mod pty_wrap;

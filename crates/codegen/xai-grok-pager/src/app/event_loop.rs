@@ -1124,10 +1124,6 @@ pub(crate) async fn run(
         .value,
     );
 
-    app.usage_billing_redirect_url = remote_settings
-        .as_ref()
-        .and_then(|s| s.usage_billing_redirect_url.clone());
-
     if app.is_access_blocked() {
         app.welcome_prompt_focused = false;
     }

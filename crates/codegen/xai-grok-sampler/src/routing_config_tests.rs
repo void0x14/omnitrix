@@ -5,12 +5,11 @@
 //! `config/routing.toml` / `config/models.toml` kopyaları derleme anında
 //! `include_str!` ile gömülür (P1.2 katalog testleriyle aynı desen).
 
-use crate::routing_config::{
-    ConfigError, GroundingMode, LegacyStrategy, StrategyError,
-    StrategyResolution, VALID_ROLE_IDS, parse_models_config, parse_routing_config,
-    resolve_strategy,
-};
 use crate::router_engine::SUPPORTED_MODES;
+use crate::routing_config::{
+    ConfigError, GroundingMode, LegacyStrategy, StrategyError, StrategyResolution, VALID_ROLE_IDS,
+    parse_models_config, parse_routing_config, resolve_strategy,
+};
 
 /// Testte kullanılan "katalog" dilimi: P1.2 kataloğundan alınan gerçek
 /// canonical ID'ler (motorun `SUPPORTED_MODES`'unun ötesinde katalog
@@ -88,7 +87,10 @@ fn canonical_ids_are_never_aliased() {
 #[test]
 fn fallback_alias_resolves_to_fallback_strict() {
     let resolved = resolve_strategy("fallback", KNOWN).unwrap();
-    assert_eq!(resolved, StrategyResolution::Legacy(LegacyStrategy::Fallback));
+    assert_eq!(
+        resolved,
+        StrategyResolution::Legacy(LegacyStrategy::Fallback)
+    );
     assert_eq!(resolved.canonical_id(), "fallback-strict");
 }
 
@@ -102,7 +104,11 @@ fn all_legacy_aliases_resolve_deterministically() {
         ("jep", LegacyStrategy::Jep, "jep-classic"),
     ];
     for (alias, variant, canonical) in table {
-        assert_eq!(LegacyStrategy::parse(alias), Some(*variant), "parse {alias}");
+        assert_eq!(
+            LegacyStrategy::parse(alias),
+            Some(*variant),
+            "parse {alias}"
+        );
         assert_eq!(variant.as_str(), *alias, "as_str {variant:?}");
         assert_eq!(variant.canonical_id(), *canonical, "canonical {variant:?}");
         let resolved = resolve_strategy(alias, KNOWN).unwrap();
@@ -150,8 +156,14 @@ fn unknown_id_returns_typed_error() {
 fn unknown_error_message_is_useful() {
     let err = resolve_strategy("quantum-bounce", KNOWN).unwrap_err();
     let message = err.to_string();
-    assert!(message.contains("quantum-bounce"), "girdi mesajda: {message}");
-    assert!(message.contains("fallback"), "alias önerisi mesajda: {message}");
+    assert!(
+        message.contains("quantum-bounce"),
+        "girdi mesajda: {message}"
+    );
+    assert!(
+        message.contains("fallback"),
+        "alias önerisi mesajda: {message}"
+    );
     assert!(message.contains("jep"), "alias önerisi mesajda: {message}");
 }
 

@@ -32,14 +32,52 @@ pub struct FlowRules {
 impl Default for FlowRules {
     fn default() -> Self {
         Self {
-            commit_keywords: vec!["commit", "commit et", "commit at", "git commit", "değişiklikleri kaydet"]
-                .into_iter().map(str::to_string).collect(),
-            research_keywords: vec!["araştır", "research", "nedir", "nasıl çalışır", "kıyasla", "karşılaştır",
-                "web", "kaynak", "güncel", "2026", "ne yapmalı", "en iyi"]
-                .into_iter().map(str::to_string).collect(),
-            write_keywords: vec!["yaz", "ekle", "oluştur", "düzelt", "fix", "implement", "kodla",
-                "dosya", "fonksiyon", "modül", "hata", "bug", "refactor", "feature"]
-                .into_iter().map(str::to_string).collect(),
+            commit_keywords: vec![
+                "commit",
+                "commit et",
+                "commit at",
+                "git commit",
+                "değişiklikleri kaydet",
+            ]
+            .into_iter()
+            .map(str::to_string)
+            .collect(),
+            research_keywords: vec![
+                "araştır",
+                "research",
+                "nedir",
+                "nasıl çalışır",
+                "kıyasla",
+                "karşılaştır",
+                "web",
+                "kaynak",
+                "güncel",
+                "2026",
+                "ne yapmalı",
+                "en iyi",
+            ]
+            .into_iter()
+            .map(str::to_string)
+            .collect(),
+            write_keywords: vec![
+                "yaz",
+                "ekle",
+                "oluştur",
+                "düzelt",
+                "fix",
+                "implement",
+                "kodla",
+                "dosya",
+                "fonksiyon",
+                "modül",
+                "hata",
+                "bug",
+                "refactor",
+                "feature",
+            ]
+            .into_iter()
+            .map(str::to_string)
+            .collect(),
             direct_max_len: 120,
             commit_max_len: 400,
             mvp_max_len: 800,
@@ -99,7 +137,11 @@ mod tests {
     #[test]
     fn commit_detected() {
         let r = default_rules();
-        let f = FlowClassifier::classify("commit at bakalım değişiklikleri", UserMode::UserOriented, &r);
+        let f = FlowClassifier::classify(
+            "commit at bakalım değişiklikleri",
+            UserMode::UserOriented,
+            &r,
+        );
         assert_eq!(f, ClassifiedFlow::Commit);
     }
 
@@ -115,7 +157,9 @@ mod tests {
         let r = default_rules();
         let f = FlowClassifier::classify(
             "2026 yılında en iyi rust web frameworkü nedir araştır ve karşılaştır",
-            UserMode::UserOriented, &r);
+            UserMode::UserOriented,
+            &r,
+        );
         assert_eq!(f, ClassifiedFlow::Universal);
     }
 }

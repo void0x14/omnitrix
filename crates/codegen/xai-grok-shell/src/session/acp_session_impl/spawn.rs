@@ -1002,8 +1002,7 @@ pub(crate) async fn spawn_session_actor(
         // `grok_computer` aracının kaydını acar (masaustu dokunusu diff
         // akisi uzerinden degil, aracin kendi backend'i ile calisir).
         computer_use_journal_path: Some(
-            crate::session::persistence::session_dir(&session_info)
-                .join("computer-use.jsonl"),
+            crate::session::persistence::session_dir(&session_info).join("computer-use.jsonl"),
         ),
         tools_notification_handle: tools_notification_handle.clone(),
         bridge_state_path: bridge_state_path.clone(),

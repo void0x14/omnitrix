@@ -27,8 +27,6 @@ pub struct RemoteAnnouncement {
     #[serde(default)]
     pub title: Option<String>,
     #[serde(default)]
-    pub cta: Option<AnnouncementCta>,
-    #[serde(default)]
     pub updated_at: Option<String>,
     #[serde(default)]
     pub expires_at: Option<String>,
@@ -36,22 +34,6 @@ pub struct RemoteAnnouncement {
     pub dismissible: Option<bool>,
     #[serde(default)]
     pub persistent: Option<bool>,
-}
-
-/// Optional call-to-action on an announcement (clients render it as a
-/// clickable link/button). The server only emits it with both fields
-/// non-empty and the url https; kept tolerant here like the parent struct.
-/// `caption` is optional dim helper text after the button; absent = none.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
-#[cfg_attr(feature = "ts", ts(export, optional_fields = nullable))]
-pub struct AnnouncementCta {
-    #[serde(default)]
-    pub label: Option<String>,
-    #[serde(default)]
-    pub url: Option<String>,
-    #[serde(default)]
-    pub caption: Option<String>,
 }
 
 /// Payload for `x.ai/announcements/update` ACP notification.
@@ -237,7 +219,7 @@ mod bindings_export {
                     "exporting {}: {e}", stringify!($t)));
             )+};
         }
-        export!(RemoteAnnouncement, AnnouncementCta, AnnouncementsRefreshed);
+        export!(RemoteAnnouncement, AnnouncementsRefreshed);
     }
 }
 
@@ -296,34 +278,6 @@ mod tests {
         unsafe {
             std::env::remove_var("GROK_ANNOUNCEMENTS_OVERRIDE");
         }
-    }
-
-    /// The nested `cta` object is optional and per-field tolerant, matching
-    /// the parent struct's style (a partial cta parses instead of poisoning).
-    #[test]
-    fn cta_parses_nested_partial_and_absent() {
-        let full: RemoteAnnouncement = serde_json::from_str(
-            r#"{"id":"p","severity":"promo","cta":{"label":"Get SuperGrok","url":"https://x.ai/grok","caption":"or use Ctrl+O"}}"#,
-        )
-        .unwrap();
-        let cta = full.cta.as_ref().expect("cta present");
-        assert_eq!(cta.label.as_deref(), Some("Get SuperGrok"));
-        assert_eq!(cta.url.as_deref(), Some("https://x.ai/grok"));
-        assert_eq!(cta.caption.as_deref(), Some("or use Ctrl+O"));
-
-        let partial: RemoteAnnouncement =
-            serde_json::from_str(r#"{"cta":{"label":"only label"}}"#).unwrap();
-        assert_eq!(
-            partial.cta,
-            Some(AnnouncementCta {
-                label: Some("only label".into()),
-                url: None,
-                caption: None,
-            })
-        );
-
-        let absent: RemoteAnnouncement = serde_json::from_str(r#"{"id":"a"}"#).unwrap();
-        assert_eq!(absent.cta, None);
     }
 
     #[test]

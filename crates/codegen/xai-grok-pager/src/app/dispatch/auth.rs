@@ -171,8 +171,7 @@ pub(super) fn scrollback_has_recent_context_too_large(
 /// Strip the trailing run of auth-error blocks — the `ReAuthRequired`
 /// prompt plus any stale `RetryFailed` / `TurnFailed` — from an agent's
 /// scrollback. Called after a successful mid-session re-auth so the prompt
-/// disappears once the user returns to the session. Mirrors the
-/// credit-limit upsell's stale-block strip.
+/// disappears once the user returns to the session.
 pub(super) fn strip_trailing_auth_error_blocks(agent: &mut AgentView) {
     use crate::scrollback::block::RenderBlock;
     let mut to_remove = Vec::new();
@@ -340,8 +339,7 @@ pub(super) fn handle_auth_complete(
             clear_startup_actions(app);
             // Re-auth succeeded — hide the now-stale re-auth prompt
             // (and any trailing error blocks) so the user returns to
-            // a clean session. Mirrors the credit-limit upsell's
-            // stale-block strip.
+            // a clean session.
             // Auth is global, so handle every agent (the login may
             // have been started from the dashboard, not the agent
             // that 401'd).

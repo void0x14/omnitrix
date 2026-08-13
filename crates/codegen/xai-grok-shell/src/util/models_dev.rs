@@ -256,12 +256,13 @@ pub async fn fetch_provider_models(
         let url = url.clone();
         async move {
             let mut request = client.get(&url).timeout(std::time::Duration::from_secs(10));
-            if with_key
-                && let Some(key) = api_key
-            {
+            if with_key && let Some(key) = api_key {
                 request = request.header("Authorization", format!("Bearer {key}"));
             }
-            request.send().await.context("provider /models request failed")
+            request
+                .send()
+                .await
+                .context("provider /models request failed")
         }
     };
     let mut response = attempt(api_key.is_some()).await?;

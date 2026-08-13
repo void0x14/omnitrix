@@ -11,7 +11,12 @@ pub enum DurationDecision {
 pub struct FlowDurationSystem;
 
 impl FlowDurationSystem {
-    pub fn decide(task_len: usize, classified: &ClassifiedFlow, mode: UserMode, rules: &FlowRules) -> DurationDecision {
+    pub fn decide(
+        task_len: usize,
+        classified: &ClassifiedFlow,
+        mode: UserMode,
+        rules: &FlowRules,
+    ) -> DurationDecision {
         match classified {
             ClassifiedFlow::Commit | ClassifiedFlow::Direct => DurationDecision::Mvp,
             ClassifiedFlow::Universal => {
@@ -36,14 +41,16 @@ mod tests {
     #[test]
     fn short_task_is_mvp() {
         let r = default_rules();
-        let d = FlowDurationSystem::decide(50, &ClassifiedFlow::Universal, UserMode::UserOriented, &r);
+        let d =
+            FlowDurationSystem::decide(50, &ClassifiedFlow::Universal, UserMode::UserOriented, &r);
         assert_eq!(d, DurationDecision::Mvp);
     }
 
     #[test]
     fn autonomous_mode_is_full() {
         let r = default_rules();
-        let d = FlowDurationSystem::decide(50, &ClassifiedFlow::Universal, UserMode::Autonomous, &r);
+        let d =
+            FlowDurationSystem::decide(50, &ClassifiedFlow::Universal, UserMode::Autonomous, &r);
         assert_eq!(d, DurationDecision::Full);
     }
 }

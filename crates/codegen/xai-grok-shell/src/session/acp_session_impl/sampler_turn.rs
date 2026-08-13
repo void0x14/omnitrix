@@ -214,10 +214,9 @@ impl SessionActor {
         let defs = filter_cursor_tools_by_plan_mode(defs, plan_active);
         // Flow Governor (S3): kilitli aşama araçlarını modelin tool listesinden
         // gizle — model yasak aracı "üretemez". (meta/All her aşamada açık.)
-        self.flow_governor.lock().tool_definitions_filter(
-            defs,
-            |d: &ToolDefinition| d.function.name.as_str(),
-        )
+        self.flow_governor
+            .lock()
+            .tool_definitions_filter(defs, |d: &ToolDefinition| d.function.name.as_str())
     }
     pub(super) fn model_auth_facts(&self, model_id: &str) -> crate::agent::config::ModelAuthFacts {
         self.model_auth_state(model_id).0

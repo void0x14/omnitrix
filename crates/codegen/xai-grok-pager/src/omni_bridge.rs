@@ -1,20 +1,14 @@
-//! Omnitrix bridge — the seam through which the omnitrix core (running in the
-//! `omnitrix` binary) exposes itself to the pager TUI.
+//! In-process Omnitrix service interfaces used by the pager TUI.
 //!
-//! Two once-only slots:
+//! The native composition root installs these once-only services before the
+//! first TUI frame. Slow disk/config discovery runs asynchronously and only
+//! updates shared metadata directly; there is no second process or mirror task.
 //!
-//! - [`OmniSnapshotProvider`]: installed by the omnitrix binary after warm-up;
-//!   `/omni` reads a [`OmniSnapshot`] through it.
+//! - [`OmniSnapshotProvider`]: `/omni` reads an [`OmniSnapshot`] through it.
 //! - [`OmniEventSink`]: the reverse direction — pager-side event hooks that the
-//!   omnitrix core can call into (ACP messages, tool calls, prompts). Task 1.3
-//!   wires actual consumers; this module only defines the seam.
-//! - [`OmniResearch`]: the research engine seam (Faz 7). The pager is an xai
-//!   layer and deliberately does NOT depend on `omni-research`; the trait and
-//!   its mirror types live here, and the `omnitrix` binary implements them by
-//!   adapting `omni_research::ResearchEngine`.
-//! - [`OmniNotify`]: the notify dispatcher seam (Task 6.1). The omnitrix binary
-//!   installs it after warm-up; `/omni-notify` sends a test notification
-//!   through it.
+//!   native runtime can consume (ACP messages, tool calls, prompts).
+//! - [`OmniNotify`], [`OmniBackup`], [`OmniRouter`], and [`OmniKeys`] expose
+//!   the remaining all-in-one runtime services without blocking TUI startup.
 
 use std::sync::Arc;
 use std::sync::OnceLock;
@@ -35,6 +29,9 @@ pub struct AgentRow {
 /// Point-in-time health/size summary of the omnitrix core.
 #[derive(Clone, Debug)]
 pub struct OmniSnapshot {
+    /// Runtime phase. The provider is installed before any background work,
+    /// so callers always receive a snapshot instead of a missing-core state.
+    pub phase: OmniPhase,
     /// Number of configured providers.
     pub providers: usize,
     /// Number of scheduler-active agents right now.
@@ -47,8 +44,30 @@ pub struct OmniSnapshot {
     pub agents: Vec<AgentRow>,
 }
 
-/// Provider of an omnitrix core snapshot. Implemented by the omnitrix binary
-/// over its own context (scheduler, storage, provider layer, health probe).
+/// Non-blocking Omnitrix startup phase.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum OmniPhase {
+    /// Bridges are live; background discovery is still collecting metadata.
+    #[default]
+    Starting,
+    /// Native runtime and its local metadata are ready.
+    Ready,
+    /// Runtime is usable, but one or more discovery steps failed.
+    Degraded,
+}
+
+impl OmniPhase {
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Starting => "basliyor",
+            Self::Ready => "hazir",
+            Self::Degraded => "kisitli",
+        }
+    }
+}
+
+/// Provider of the native Omnitrix runtime snapshot.
 pub trait OmniSnapshotProvider: Send + Sync {
     /// Produce the current snapshot. Must be cheap and non-blocking.
     fn snapshot(&self) -> OmniSnapshot;
@@ -64,8 +83,8 @@ pub fn install(p: Arc<dyn OmniSnapshotProvider>) -> Result<(), ()> {
 
 /// Take a snapshot from the installed provider, if any.
 ///
-/// `None` means the omnitrix core has not installed a provider yet (warm-up
-/// pending or the pager is running standalone).
+/// `None` is only possible before the pager composition root runs (primarily
+/// isolated unit tests).
 pub fn snapshot() -> Option<OmniSnapshot> {
     SNAPSHOT_PROVIDER.get().map(|p| p.snapshot())
 }
@@ -96,8 +115,7 @@ pub fn event_sink() -> Option<Arc<dyn OmniEventSink>> {
 
 /// Kesme yolu — `/omni-dashboard interrupt <id>`'nin cekirdege ulastigi seam.
 ///
-/// `install_sink` deseninin kopyasi: omnitrix binary'si kurar, pager komutu
-/// cagirir. `agent_id` dashboard tablosundaki satir kimligidir.
+/// `agent_id` dashboard tablosundaki satir kimligidir.
 pub trait OmniInterrupt: Send + Sync {
     /// Verilen ajan satirina kesme gonderir. Hata mesaji kullaniciya gosterilir.
     fn interrupt(&self, agent_id: i64, reason: &str) -> Result<(), String>;
@@ -112,8 +130,7 @@ pub fn install_interrupt(handler: Arc<dyn OmniInterrupt>) {
 
 /// Kurulu kesme yoluna interrupt gonderir.
 ///
-/// `None` = cekirdek kesme yolunu kurmadi (warm-up bekleniyor ya da pager
-/// tek basina calisiyor).
+/// `None` = bu süreçte kesme işleyicisi kurulmamış.
 pub fn interrupt(agent_id: i64, reason: &str) -> Option<Result<(), String>> {
     INTERRUPT_HANDLER
         .get()
@@ -124,9 +141,7 @@ pub fn interrupt(agent_id: i64, reason: &str) -> Option<Result<(), String>> {
 // Research seam (Faz 7)
 // ---------------------------------------------------------------------------
 
-/// Research modes as seen from the pager side — a mirror of the omni-research
-/// domain. The pager does not depend on `omni-research`; the omnitrix binary
-/// maps these to `omni_research::ResearchMode`.
+/// Research modes used by the native research command/tool surface.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ResearchMode {
     /// Surface: single shot, one query, search snippets only.
@@ -180,10 +195,8 @@ pub struct ResearchReport {
     pub summary: String,
 }
 
-/// The research engine seam. Implemented by the omnitrix binary over
-/// `omni_research::ResearchEngine`; installed via [`install_research`] after
-/// warm-up so `/omni-research` degrades to a "not installed" message when the
-/// core is absent.
+/// Optional in-process research implementation kept for compatible callers.
+/// `/omni-research` itself uses the native asynchronous tool pipeline.
 pub trait OmniResearch: Send + Sync {
     /// Tek arastirma kosar. Hata metni zaten insan-okunur doner.
     fn investigate(&self, mode: ResearchMode, question: String) -> Result<ResearchReport, String>;
@@ -197,14 +210,12 @@ pub fn install_research(r: Arc<dyn OmniResearch>) -> Result<(), ()> {
     RESEARCH.set(r).map_err(|_| ())
 }
 
-/// The installed research engine, if any. `None` means the omnitrix core has
-/// not installed one yet (warm-up pending, no provider configured, or the
-/// pager runs standalone).
+/// The installed optional research implementation, if any.
 pub fn research() -> Option<Arc<dyn OmniResearch>> {
     RESEARCH.get().cloned()
 }
 
-/// Faz 10 tam-otonom dongu motoru (kurulum: omnitrix bin, warmup sonrasi).
+/// Optional in-process autonomous loop implementation.
 ///
 /// Motor problem metnini alir, arastirir, planlar, scheduler'a spawn eder ve
 /// `TerminationOracle` ile degerlendirir; ozet metin doner. Pager yalnizca
@@ -222,19 +233,18 @@ pub fn install_autonomous(engine: Arc<dyn OmniAutonomous>) -> Result<(), ()> {
     AUTONOMOUS.set(engine).map_err(|_| ())
 }
 
-/// The installed autonomous loop engine, if any. `None` means warm-up has not
-/// installed one yet or the pager runs standalone.
+/// The installed optional autonomous loop implementation, if any.
 pub fn autonomous() -> Option<Arc<dyn OmniAutonomous>> {
     AUTONOMOUS.get().cloned()
 }
 
-/// Faz 4 yonlendirme kontrolu (kurulum: omnitrix bin, warmup sonrasi).
+/// Native routing control.
 ///
 /// Pager yalnizca strateji adini ve rol->model eslemesini gorur; `omni-router`
 /// tipleri pager'a sizdirilmaz (I3). Model adlari config'ten gelir (AS7/I5).
 pub trait OmniRouter: Send + Sync {
     /// Aktif stratejiyi degistirir. `strategy` icin izin verilenler:
-    /// `round_robin` | `weighted` | `fallback` | `jep`.
+    /// `rr` | `wrr` | `fallback-strict` | `jep-classic`.
     fn set_strategy(&self, strategy: &str) -> Result<String, String>;
     /// Bir rolu modele atar (config'e yazar). `role` icin izin verilenler:
     /// `judge` | `executor` | `planner` | `summary` | `web_search`.
@@ -259,7 +269,7 @@ pub fn router() -> Option<Arc<dyn OmniRouter>> {
 /// Configured notify channels, as seen by the pager (Task 6.1).
 ///
 /// Plain booleans on purpose: the pager never touches omni-notify types; the
-/// dispatcher implementation lives in the omnitrix binary.
+/// dispatcher implementation lives in the native pager runtime.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct OmniNotifyChannels {
     /// Telegram bot channel configured.
@@ -276,10 +286,8 @@ impl OmniNotifyChannels {
     }
 }
 
-/// Notify dispatcher seam: installed by the omnitrix binary after warm-up so
-/// `/omni-notify test` can fire a test notification through the live
-/// dispatcher. `send_test` is synchronous — the real send happens on the
-/// omnitrix runtime via a captured handle (the pager command loop is sync).
+/// Notify service. `send_test` only queues work on the native async runtime;
+/// network delivery never blocks slash-command dispatch.
 pub trait OmniNotify: Send + Sync {
     /// Configured channels.
     fn channels(&self) -> OmniNotifyChannels;
@@ -302,8 +310,7 @@ pub fn install_notify(notify: Arc<dyn OmniNotify>) {
 
 /// The installed notify dispatcher, if any.
 ///
-/// `None` means the omnitrix core has not installed it yet (warm-up pending
-/// or the pager is running standalone).
+/// `None` is only possible before native pager startup or in isolated tests.
 pub fn notify() -> Option<Arc<dyn OmniNotify>> {
     NOTIFY.get().cloned()
 }
@@ -312,9 +319,8 @@ pub fn notify() -> Option<Arc<dyn OmniNotify>> {
 // Yedekleme seam'i (Faz 9, Task 9.1)
 // ---------------------------------------------------------------------------
 
-/// Backup engine seam: installed by the omnitrix binary after warm-up so
-/// `/omni-backup now` can trigger a snapshot through the live engine. The
-/// command loop is sync; `backup_now` blocks while the snapshot is taken.
+/// Backup service. `backup_now` schedules a snapshot on the native async
+/// runtime and returns immediately.
 pub trait OmniBackup: Send + Sync {
     /// Take an immediate backup. `Ok` carries a human-readable summary.
     fn backup_now(&self) -> Result<String, String>;
@@ -330,17 +336,14 @@ pub fn install_backup(backup: Arc<dyn OmniBackup>) {
 
 /// The installed backup engine, if any.
 ///
-/// `None` means the omnitrix core has not installed it yet (warm-up pending
-/// or the pager is running standalone).
+/// `None` is only possible before native pager startup or in isolated tests.
 pub fn backup() -> Option<Arc<dyn OmniBackup>> {
     BACKUP.get().cloned()
 }
 
 /// Live/dead key counts from the key ingestion pipeline (Faz 8).
 ///
-/// Mirror of the fed key ledger: the omnitrix binary counts `fed_keys` rows
-/// (live/dead status) and the live keys' provider distribution. The pager
-/// never touches SQLite directly — it reads this summary through [`OmniKeys`].
+/// Snapshot of native key discovery and provider distribution.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct KeysSummary {
     /// Keys verified as live (usable by the router).
@@ -359,10 +362,7 @@ impl KeysSummary {
     }
 }
 
-/// Key ledger seam: installed by the omnitrix binary after warm-up so
-/// `/omni-keys` can show live/dead counts. Synchronous on purpose — the pager
-/// command loop is sync; the implementation opens its own short-lived SQLite
-/// connection per call.
+/// Key summary service. Reads already-discovered in-memory metadata only.
 pub trait OmniKeys: Send + Sync {
     /// Current live/dead key summary.
     fn summary(&self) -> KeysSummary;
@@ -378,10 +378,33 @@ pub fn install_keys(keys: Arc<dyn OmniKeys>) -> Result<(), ()> {
 
 /// The installed key ledger, if any.
 ///
-/// `None` means the omnitrix core has not installed it yet (warm-up pending
-/// or the pager is running standalone).
+/// `None` is only possible before native pager startup or in isolated tests.
 pub fn keys_summary() -> Option<KeysSummary> {
     KEYS.get().map(|k| k.summary())
+}
+
+/// Live pager agents are the authoritative Omnitrix dashboard source.
+static LIVE_AGENTS: OnceLock<std::sync::RwLock<Vec<AgentRow>>> = OnceLock::new();
+
+/// Replace the process-wide agent snapshot with the current pager state.
+pub fn publish_live_agents(rows: Vec<AgentRow>) {
+    let lock = LIVE_AGENTS.get_or_init(|| std::sync::RwLock::new(Vec::new()));
+    match lock.write() {
+        Ok(mut current) => *current = rows,
+        Err(poisoned) => *poisoned.into_inner() = rows,
+    }
+}
+
+/// Clone the most recently published pager agent rows.
+#[must_use]
+pub fn live_agents() -> Vec<AgentRow> {
+    let Some(lock) = LIVE_AGENTS.get() else {
+        return Vec::new();
+    };
+    match lock.read() {
+        Ok(rows) => rows.clone(),
+        Err(poisoned) => poisoned.into_inner().clone(),
+    }
 }
 
 #[cfg(test)]
@@ -405,6 +428,7 @@ mod tests {
     #[serial_test::serial(OMNI_BRIDGE)]
     fn first_install_wins_second_rejected() {
         let first = Arc::new(FakeProvider(OmniSnapshot {
+            phase: OmniPhase::Ready,
             providers: 1,
             active_agents: 2,
             storage_bytes: 1024,
@@ -412,6 +436,7 @@ mod tests {
             agents: Vec::new(),
         }));
         let second = Arc::new(FakeProvider(OmniSnapshot {
+            phase: OmniPhase::Degraded,
             providers: 9,
             active_agents: 9,
             storage_bytes: 999,
@@ -469,6 +494,7 @@ mod tests {
     #[serial_test::serial(OMNI_BRIDGE)]
     fn snapshot_carries_agent_rows() {
         let fake = Arc::new(FakeProvider(OmniSnapshot {
+            phase: OmniPhase::Ready,
             providers: 0,
             active_agents: 0,
             storage_bytes: 0,

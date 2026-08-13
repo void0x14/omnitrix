@@ -155,7 +155,11 @@ impl std::fmt::Display for PersistenceError {
                 source,
             } => write!(f, "failed to {operation} {}: {source}", path.display()),
             Self::Serialization { path, source } => {
-                write!(f, "failed to serialize event for {}: {source}", path.display())
+                write!(
+                    f,
+                    "failed to serialize event for {}: {source}",
+                    path.display()
+                )
             }
         }
     }
@@ -257,30 +261,28 @@ impl SessionEventRecorder {
         record: &SessionEventRecord,
     ) -> Result<(), PersistenceError> {
         let path = session_dir.join(SESSION_EVENTS_FILE);
-        let mut body = serde_json::to_value(record).map_err(|source| {
-            PersistenceError::Serialization {
+        let mut body =
+            serde_json::to_value(record).map_err(|source| PersistenceError::Serialization {
                 path: path.clone(),
                 source,
-            }
-        })?;
-        let object = body.as_object_mut().ok_or_else(|| {
-            PersistenceError::Serialization {
+            })?;
+        let object = body
+            .as_object_mut()
+            .ok_or_else(|| PersistenceError::Serialization {
                 path: path.clone(),
                 source: serde_json::Error::io(io::Error::other("record body is not a JSON object")),
-            }
-        })?;
+            })?;
         object.insert(
             "ts".to_owned(),
             serde_json::Value::String(
                 Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
             ),
         );
-        let mut line = serde_json::to_vec(&body).map_err(|source| {
-            PersistenceError::Serialization {
+        let mut line =
+            serde_json::to_vec(&body).map_err(|source| PersistenceError::Serialization {
                 path: path.clone(),
                 source,
-            }
-        })?;
+            })?;
         line.push(b'\n');
 
         let mut file = std::fs::OpenOptions::new()
@@ -322,7 +324,11 @@ mod session_event_recorder_tests {
 
     fn read_lines(session_dir: &Path) -> io::Result<Vec<String>> {
         let text = std::fs::read_to_string(session_dir.join(SESSION_EVENTS_FILE))?;
-        Ok(text.lines().filter(|l| !l.is_empty()).map(str::to_owned).collect())
+        Ok(text
+            .lines()
+            .filter(|l| !l.is_empty())
+            .map(str::to_owned)
+            .collect())
     }
 
     fn parse(line: &str) -> Result<serde_json::Value, PersistenceError> {
@@ -484,8 +490,12 @@ mod session_event_recorder_tests {
             source,
         })?;
 
-        SessionEventRecorder::new()
-            .record_file_touch(&session_dir, "b.rs", Some("pre-hash"), Some("post-hash"))?;
+        SessionEventRecorder::new().record_file_touch(
+            &session_dir,
+            "b.rs",
+            Some("pre-hash"),
+            Some("post-hash"),
+        )?;
         let lines = read_lines(&session_dir).map_err(|source| PersistenceError::Io {
             operation: "read",
             path: session_dir.join(SESSION_EVENTS_FILE),

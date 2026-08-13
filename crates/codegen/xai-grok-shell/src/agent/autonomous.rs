@@ -70,10 +70,10 @@ use xai_grok_tools::implementations::grok_build::task::types::{
     SubagentOwner, SubagentRequest, SubagentResult, SubagentRuntimeOverrides,
 };
 use xai_grok_tools::research_tool::{
-    run_research, ResearchFinding, ResearchMode, ResearchProvider, ResearchToolOutput,
+    ResearchFinding, ResearchMode, ResearchProvider, ResearchToolOutput, run_research,
 };
 
-use crate::session::persistence::{SessionEventRecorder, SESSION_EVENTS_FILE};
+use crate::session::persistence::{SESSION_EVENTS_FILE, SessionEventRecorder};
 
 // ---------------------------------------------------------------------------
 // Hata tipi
@@ -97,7 +97,10 @@ impl fmt::Display for AutonomousError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::NoBackend => {
-                write!(f, "subagent backend is unavailable (coordinator channel closed)")
+                write!(
+                    f,
+                    "subagent backend is unavailable (coordinator channel closed)"
+                )
             }
             Self::DepthExhausted { last } => {
                 write!(f, "autonomous loop exhausted max depth; last: {last}")
@@ -389,7 +392,11 @@ impl CheckOutcome {
                 field: "check.command",
             });
         }
-        Ok(Self { kind, command, passed })
+        Ok(Self {
+            kind,
+            command,
+            passed,
+        })
     }
 
     /// Kategori.
@@ -472,7 +479,10 @@ impl EvidenceClaim {
     ///
     /// # Errors
     /// Iddia ya da kanit atfi bos ise [`OracleError::EmptyField`] doner.
-    pub fn new(claim: impl Into<String>, evidence_ref: impl Into<String>) -> Result<Self, OracleError> {
+    pub fn new(
+        claim: impl Into<String>,
+        evidence_ref: impl Into<String>,
+    ) -> Result<Self, OracleError> {
         let claim = claim.into();
         if claim.trim().is_empty() {
             return Err(OracleError::EmptyField {
@@ -696,7 +706,11 @@ impl TerminationOracle {
         {
             eksik.push(OracleGate::AutomaticVerification);
         }
-        if !self.verdict.as_ref().is_some_and(FalsificationVerdict::upheld) {
+        if !self
+            .verdict
+            .as_ref()
+            .is_some_and(FalsificationVerdict::upheld)
+        {
             eksik.push(OracleGate::JudgeFalsification);
         }
         if !self.sign_off.as_ref().is_some_and(UserSignOff::granted) {
@@ -1008,7 +1022,9 @@ impl AutonomousLoop {
             )?;
 
             // a) + b) her yapi tasi icin arastirma (mod derinlikle artar).
-            let research = self.research_all(&blocks, mode, &session_dir, &events).await?;
+            let research = self
+                .research_all(&blocks, mode, &session_dir, &events)
+                .await?;
 
             // d) multiajan gorevlendirme: bagimsizlar paralel, bagimlilar sirayla.
             let mut evidence = self.run_agents(&blocks, &session_dir, &events).await?;
@@ -1236,10 +1252,7 @@ impl AutonomousLoop {
 
         let transport_ok = evidence.iter().all(|e| !e.transport_failed());
         let agents_ok = !evidence.is_empty() && evidence.iter().all(BlockEvidence::agent_succeeded);
-        let research_ok = !evidence.is_empty()
-            && evidence
-                .iter()
-                .all(|e| e.research.is_some());
+        let research_ok = !evidence.is_empty() && evidence.iter().all(|e| e.research.is_some());
 
         let checks = vec![
             CheckOutcome::new(CheckKind::Build, "autonomous.subagent_spawn", transport_ok),
@@ -1307,7 +1320,8 @@ impl AutonomousLoop {
         }
 
         if agents_ok && research_ok {
-            if let Ok(sign_off) = UserSignOff::record(AUTONOMOUS_APPROVER, ApprovalDecision::Allow) {
+            if let Ok(sign_off) = UserSignOff::record(AUTONOMOUS_APPROVER, ApprovalDecision::Allow)
+            {
                 oracle.submit_sign_off(sign_off);
             }
         }
@@ -1316,12 +1330,7 @@ impl AutonomousLoop {
     }
 
     /// `Done` hukmu icin ozet: arastirma turu sayisi + ajan sayisi + sonuc.
-    fn summarize(
-        &self,
-        ruling: &DoneRuling,
-        depth: u32,
-        evidence: &[BlockEvidence],
-    ) -> String {
+    fn summarize(&self, ruling: &DoneRuling, depth: u32, evidence: &[BlockEvidence]) -> String {
         let research_rounds: usize = evidence
             .iter()
             .filter_map(|e| e.research.as_ref())
@@ -1379,7 +1388,8 @@ mod tests {
 
     #[test]
     fn split_marks_continuation_lines_as_dependent() {
-        let blocks = split_into_building_blocks("ilgili API'yi incele\nve dokumani oku\nsonra test et");
+        let blocks =
+            split_into_building_blocks("ilgili API'yi incele\nve dokumani oku\nsonra test et");
         assert_eq!(blocks.len(), 3);
         assert_eq!(blocks[0].id, "step-0");
         assert_eq!(blocks[0].depends_on, None);
@@ -1450,10 +1460,9 @@ mod tests {
         let mut oracle = TerminationOracle::new(42);
         oracle.submit_verification(gecen_dogrulama());
         oracle.submit_verdict(gecen_hukum());
-        oracle
-            .submit_sign_off(
-                UserSignOff::record("void0x14", ApprovalDecision::Allow).expect("approval"),
-            );
+        oracle.submit_sign_off(
+            UserSignOff::record("void0x14", ApprovalDecision::Allow).expect("approval"),
+        );
         let hukum = oracle.evaluate();
         assert!(hukum.is_done());
     }
@@ -1468,8 +1477,7 @@ mod tests {
 
     #[test]
     fn denied_sign_off_keeps_gate_closed() {
-        let sign_off =
-            UserSignOff::record("void0x14", ApprovalDecision::Deny).expect("approval");
+        let sign_off = UserSignOff::record("void0x14", ApprovalDecision::Deny).expect("approval");
         assert!(!sign_off.granted());
     }
 }

@@ -156,6 +156,26 @@ pub static USER_GUIDE: &[Doc] = &[
         "Permissions and Safety",
         "Modes, authorization order, allow/ask/deny rules, matching, and hooks"
     ),
+    guide!(
+        "23-dashboard.md",
+        "Agent Dashboard",
+        "Central overview of local sessions, live agents, dispatch, and interruption"
+    ),
+    guide!(
+        "24-monitoring-usage.md",
+        "Monitoring Usage",
+        "External OpenTelemetry usage monitoring and export"
+    ),
+    guide!(
+        "25-omnitrix.md",
+        "Omnitrix Operations",
+        "Native runtime, routing, research, autonomous missions, notifications, and backup"
+    ),
+    guide!(
+        "26-provider-keys.md",
+        "Providers and Keys",
+        "Native connect flow, encrypted keychain, and automatic OpenCode import"
+    ),
 ];
 
 /// Non-user-guide reference docs. Separate from USER_GUIDE because they

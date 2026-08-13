@@ -1,10 +1,8 @@
 //! `/omni-dashboard` — live scheduler agent table + interrupt.
 //!
-//! Reads the agent rows from the bridge snapshot (installed by the `omnitrix`
-//! binary after warm-up) and renders an `id | tier | status | gorev` table.
-//! `interrupt <id>` sends an `AgentKill` through the bridge interrupt seam to
-//! the scheduler's bus. Without a core the command degrades to a "core not
-//! started" message; an empty registry renders "no active agents".
+//! Reads live pager agent rows from the native in-process runtime and renders
+//! an `id | tier | status | gorev` table. `interrupt <id>` dispatches through
+//! the pager action path. An empty registry renders "no active agents".
 
 use crate::omni_bridge;
 use crate::slash::command::{AppCtx, ArgItem, CommandExecCtx, CommandResult, SlashCommand};
@@ -43,13 +41,10 @@ impl OmniDashboardCommand {
                 return CommandResult::Error(format!("gecersiz ajan id: {id_raw}"));
             }
         };
-        match omni_bridge::interrupt(id, "TUI dashboard interrupt") {
-            Some(Ok(())) => CommandResult::Message(format!("interrupt gonderildi: {id}")),
-            Some(Err(e)) => CommandResult::Message(format!("interrupt hatasi: {e}")),
-            None => {
-                CommandResult::Message("omnitrix core baslatilmadi (warmup bekleniyor)".to_string())
-            }
-        }
+        let Ok(id) = usize::try_from(id) else {
+            return CommandResult::Error(format!("gecersiz ajan id: {id_raw}"));
+        };
+        CommandResult::Action(crate::app::actions::Action::OmniInterruptAgent(id))
     }
 }
 
@@ -90,9 +85,7 @@ impl SlashCommand for OmniDashboardCommand {
         match omni_bridge::snapshot() {
             Some(s) if s.agents.is_empty() => CommandResult::Message("aktif ajan yok".to_string()),
             Some(s) => CommandResult::Message(Self::render_table(&s)),
-            None => {
-                CommandResult::Message("omnitrix core baslatilmadi (warmup bekleniyor)".to_string())
-            }
+            None => CommandResult::Message("omnitrix ajan durumu kullanilamiyor".to_string()),
         }
     }
 }
@@ -103,7 +96,6 @@ mod tests {
     use crate::acp::model_state::ModelState;
     use crate::app::bundle::BundleState;
     use crate::settings::PagerLocalSnapshot;
-    use std::sync::{Arc, Mutex};
 
     fn ctx<'a>(models: &'a ModelState, bundle: &'a BundleState) -> CommandExecCtx<'a> {
         CommandExecCtx {
@@ -138,8 +130,8 @@ mod tests {
         }
     }
 
-    /// Bridge process-global oldugu icin her iki siralamaya da dayanir:
-    /// provider yoksa isinma mesaji; onceden kurulmus bos defter varsa
+    /// Runtime process-global oldugu icin her iki siralamaya da dayanir:
+    /// provider yoksa kullanilamiyor mesaji; onceden kurulmus bos defter varsa
     /// "aktif ajan yok"; kendi satirlarimiz kurulduysa tablo gorunur.
     #[test]
     #[serial_test::serial(OMNI_BRIDGE)]
@@ -151,8 +143,8 @@ mod tests {
             return;
         }
         assert!(
-            first.contains("baslatilmadi"),
-            "expected warm-up message, got {first}"
+            first.contains("kullanilamiyor"),
+            "expected unavailable message, got {first}"
         );
 
         struct FakeProvider;
@@ -160,6 +152,7 @@ mod tests {
         impl crate::omni_bridge::OmniSnapshotProvider for FakeProvider {
             fn snapshot(&self) -> crate::omni_bridge::OmniSnapshot {
                 crate::omni_bridge::OmniSnapshot {
+                    phase: crate::omni_bridge::OmniPhase::Ready,
                     providers: 1,
                     active_agents: 2,
                     storage_bytes: 0,
@@ -217,32 +210,12 @@ mod tests {
             "expected unknown-subcommand error, got {unknown}"
         );
 
-        struct FakeInterrupt(Arc<Mutex<Vec<i64>>>);
-
-        impl crate::omni_bridge::OmniInterrupt for FakeInterrupt {
-            fn interrupt(&self, agent_id: i64, _reason: &str) -> Result<(), String> {
-                self.0
-                    .lock()
-                    .map_err(|_| "kilit hatasi".to_string())?
-                    .push(agent_id);
-                Ok(())
-            }
-        }
-
-        let calls = std::sync::Arc::new(Mutex::new(Vec::new()));
-        let handler = std::sync::Arc::new(FakeInterrupt(Arc::clone(&calls)));
-        crate::omni_bridge::install_interrupt(handler);
-
-        let sent = message_for(&cmd, "interrupt 42");
-        assert!(
-            sent.contains("42") || sent.contains("baslatilmadi"),
-            "expected delivery or warm-up message, got {sent}"
-        );
-        if let Ok(recorded) = calls.lock() {
-            if !recorded.is_empty() {
-                assert_eq!(recorded[0], 42);
-            }
-        }
+        let (models, bundle) = (ModelState::default(), BundleState::default());
+        let mut c = ctx(&models, &bundle);
+        assert!(matches!(
+            cmd.run(&mut c, "interrupt 42"),
+            CommandResult::Action(crate::app::actions::Action::OmniInterruptAgent(42))
+        ));
     }
 
     #[test]

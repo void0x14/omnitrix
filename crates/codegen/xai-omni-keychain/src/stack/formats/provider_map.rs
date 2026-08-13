@@ -56,10 +56,7 @@ pub fn merge_export(
             continue;
         }
         if let Some(existing) = map.get(provider) {
-            let ty = existing
-                .get("type")
-                .and_then(|v| v.as_str())
-                .unwrap_or("");
+            let ty = existing.get("type").and_then(|v| v.as_str()).unwrap_or("");
             if ty == "oauth" || ty == "wellknown" {
                 summary
                     .skipped_non_api
@@ -97,8 +94,8 @@ pub fn merge_export(
 }
 
 fn read_object_map(path: &Path) -> anyhow::Result<BTreeMap<String, Value>> {
-    let bytes = std::fs::read(path)
-        .map_err(|e| anyhow::anyhow!("{} okunamadı: {e}", path.display()))?;
+    let bytes =
+        std::fs::read(path).map_err(|e| anyhow::anyhow!("{} okunamadı: {e}", path.display()))?;
     let value: Value = serde_json::from_slice(&bytes)
         .map_err(|e| anyhow::anyhow!("{} bozuk JSON: {e}", path.display()))?;
     let obj = value

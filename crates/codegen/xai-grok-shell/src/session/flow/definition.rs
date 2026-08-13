@@ -2,7 +2,17 @@
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum ToolGroup {
-    Read, Search, Write, Bash, Web, Research, Computer, Plan, Task, Meta, All,
+    Read,
+    Search,
+    Write,
+    Bash,
+    Web,
+    Research,
+    Computer,
+    Plan,
+    Task,
+    Meta,
+    All,
 }
 
 impl ToolGroup {
@@ -27,9 +37,23 @@ impl ToolGroup {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum ArtifactId {
-    ProblemList, FindingsArchive, DigestNote, StackChoice, StackVerified,
-    DurationDecision, PlanDoc, BuildingBlocks, ExecutionGraph, WorkDone, Verified, Notified,
-    ChangesSeen, Staged, Committed, CommittedVerified, Done,
+    ProblemList,
+    FindingsArchive,
+    DigestNote,
+    StackChoice,
+    StackVerified,
+    DurationDecision,
+    PlanDoc,
+    BuildingBlocks,
+    ExecutionGraph,
+    WorkDone,
+    Verified,
+    Notified,
+    ChangesSeen,
+    Staged,
+    Committed,
+    CommittedVerified,
+    Done,
 }
 
 impl ArtifactId {
@@ -58,9 +82,23 @@ impl ArtifactId {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum StageId {
-    Analyze, Research, Digest, StackSelect, StackVerify, Duration, Plan,
-    Decompose, ParallelQuery, Execute, Verify, Notify,
-    Status, Stage, Commit, CommitVerify, Do,
+    Analyze,
+    Research,
+    Digest,
+    StackSelect,
+    StackVerify,
+    Duration,
+    Plan,
+    Decompose,
+    ParallelQuery,
+    Execute,
+    Verify,
+    Notify,
+    Status,
+    Stage,
+    Commit,
+    CommitVerify,
+    Do,
 }
 
 impl StageId {
@@ -117,7 +155,13 @@ pub fn default_flows() -> &'static [FlowDefinition] {
         },
         StageDefinition {
             id: StageId::Research,
-            tool_groups: &[ToolGroup::Web, ToolGroup::Research, ToolGroup::Computer, ToolGroup::Search, ToolGroup::Meta],
+            tool_groups: &[
+                ToolGroup::Web,
+                ToolGroup::Research,
+                ToolGroup::Computer,
+                ToolGroup::Search,
+                ToolGroup::Meta,
+            ],
             produces: &[ArtifactId::FindingsArchive],
             directive: "ADIM 2/12 — ARAŞTIRMA: Listeyi kullanarak problemi günümüz gerçeğiyle derin araştır (web/research araçları; yüzey → derin → okyanus modlarını kullan). Bulguları depola (bir bulgular dosyasına yaz). İşin bitince flow_checkpoint ile 'research' aşamasını kapat — dosyalar alanına yazdığın bulgular dosyasının yolunu ver (çalışma dizinine göreli).",
         },
@@ -129,13 +173,23 @@ pub fn default_flows() -> &'static [FlowDefinition] {
         },
         StageDefinition {
             id: StageId::StackSelect,
-            tool_groups: &[ToolGroup::Read, ToolGroup::Web, ToolGroup::Search, ToolGroup::Meta],
+            tool_groups: &[
+                ToolGroup::Read,
+                ToolGroup::Web,
+                ToolGroup::Search,
+                ToolGroup::Meta,
+            ],
             produces: &[ArtifactId::StackChoice],
             directive: "ADIM 4/12 — STACK SEÇİMİ: Çözüm için uygun yığınları (stack) sen belirle ve gerekçesiyle kaydet. Bitince flow_checkpoint ile 'stack_select' aşamasını kapat.",
         },
         StageDefinition {
             id: StageId::StackVerify,
-            tool_groups: &[ToolGroup::Read, ToolGroup::Web, ToolGroup::Search, ToolGroup::Meta],
+            tool_groups: &[
+                ToolGroup::Read,
+                ToolGroup::Web,
+                ToolGroup::Search,
+                ToolGroup::Meta,
+            ],
             produces: &[ArtifactId::StackVerified],
             directive: "ADIM 5/12 — STACK DOĞRULAMA: Sanki hiç seçim yapmamış gibi internetin neyi önerdiğini araştır, kendi önerinle karşılaştır; çürütme yoluyla en doğru stacke ulaşana dek tekrarla. Nihai stacke karar verince flow_checkpoint ile 'stack_verify' aşamasını kapat.",
         },
@@ -153,7 +207,12 @@ pub fn default_flows() -> &'static [FlowDefinition] {
         },
         StageDefinition {
             id: StageId::Decompose,
-            tool_groups: &[ToolGroup::Read, ToolGroup::Plan, ToolGroup::Write, ToolGroup::Meta],
+            tool_groups: &[
+                ToolGroup::Read,
+                ToolGroup::Plan,
+                ToolGroup::Write,
+                ToolGroup::Meta,
+            ],
             produces: &[ArtifactId::BuildingBlocks],
             directive: "ADIM 8/12 — YAPI TAŞLARI: Planı küçük yapı taşlarına böl; building_blocks dosyasına JSONL satırları olarak yaz. Her satır: {\"id\":\"b1\",\"task\":\"<bu taşta yapılacak iş>\",\"files\":[\"<etkilenen dosyalar>\"],\"depends\":[\"<bağımlı olduğu taş id'leri>\"]}. 'task' alanı ZORUNLUDUR (sistem bu metinle alt ajan görevlendirir). Bitince flow_checkpoint ile 'decompose' aşamasını kapat (dosya yolunu ver).",
         },
@@ -171,7 +230,12 @@ pub fn default_flows() -> &'static [FlowDefinition] {
         },
         StageDefinition {
             id: StageId::Verify,
-            tool_groups: &[ToolGroup::Read, ToolGroup::Bash, ToolGroup::Task, ToolGroup::Meta],
+            tool_groups: &[
+                ToolGroup::Read,
+                ToolGroup::Bash,
+                ToolGroup::Task,
+                ToolGroup::Meta,
+            ],
             produces: &[ArtifactId::Verified],
             directive: "ADIM 11/12 — DOĞRULAMA: Sonucu doğrula (test/çalıştır/incele; yazma yok). Bitince flow_checkpoint ile 'verify' aşamasını kapat.",
         },
@@ -208,18 +272,25 @@ pub fn default_flows() -> &'static [FlowDefinition] {
             directive: "DOĞRULAMA: git log/show ile commit'i doğrula (salt okunur). flow_checkpoint ile kapat.",
         },
     ];
-    const DIRECT: &[StageDefinition] = &[
-        StageDefinition {
-            id: StageId::Do,
-            tool_groups: &[ToolGroup::All],
-            produces: &[ArtifactId::Done],
-            directive: "GÖREV: İstediğini yap. Yalnızca gerçekten bittiğinde flow_checkpoint ile 'do' aşamasını kapat.",
-        },
-    ];
+    const DIRECT: &[StageDefinition] = &[StageDefinition {
+        id: StageId::Do,
+        tool_groups: &[ToolGroup::All],
+        produces: &[ArtifactId::Done],
+        directive: "GÖREV: İstediğini yap. Yalnızca gerçekten bittiğinde flow_checkpoint ile 'do' aşamasını kapat.",
+    }];
     const FLOWS: &[FlowDefinition] = &[
-        FlowDefinition { name: "universal", stages: UNIVERSAL },
-        FlowDefinition { name: "commit", stages: COMMIT },
-        FlowDefinition { name: "direct", stages: DIRECT },
+        FlowDefinition {
+            name: "universal",
+            stages: UNIVERSAL,
+        },
+        FlowDefinition {
+            name: "commit",
+            stages: COMMIT,
+        },
+        FlowDefinition {
+            name: "direct",
+            stages: DIRECT,
+        },
     ];
     FLOWS
 }

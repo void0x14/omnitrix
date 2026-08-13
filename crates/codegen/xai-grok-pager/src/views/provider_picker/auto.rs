@@ -5,7 +5,7 @@
 //! Sonuç `TaskResult::AutoConnectComplete` ile `apply_auto_outcome` /
 //! `auto_candidates` üzerinden buraya geri yazılır.
 
-use crossterm::event::{Event, KeyCode, KeyEventKind};
+use crossterm::event::{Event, KeyCode, KeyEventKind, MouseButton, MouseEventKind};
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
@@ -56,6 +56,27 @@ pub(super) fn handle_mode_select_input(
             }
             _ => ConnectOutcome::Nothing,
         },
+        Event::Mouse(mouse) if matches!(mouse.kind, MouseEventKind::Down(MouseButton::Left)) => {
+            let point = ratatui::layout::Position::new(mouse.column, mouse.row);
+            let selected = flow
+                .mode_row_rects
+                .iter()
+                .position(|rect| rect.contains(point));
+            match selected {
+                Some(index) => {
+                    flow.mode_select_cursor = index;
+                    if index == 1 {
+                        flow.step = ConnectStep::AutoKey;
+                        enter_auto_key_step(flow);
+                    } else {
+                        flow.step = ConnectStep::Provider;
+                        flow.picker.search_active = true;
+                    }
+                    ConnectOutcome::Next
+                }
+                None => ConnectOutcome::Nothing,
+            }
+        }
         _ => ConnectOutcome::Nothing,
     }
 }
@@ -145,6 +166,28 @@ pub(super) fn handle_auto_ambiguous_input(
             }
             _ => ConnectOutcome::Nothing,
         },
+        Event::Mouse(mouse) if matches!(mouse.kind, MouseEventKind::Down(MouseButton::Left)) => {
+            let point = ratatui::layout::Position::new(mouse.column, mouse.row);
+            let Some(index) = flow
+                .auto_candidate_row_rects
+                .iter()
+                .position(|rect| rect.contains(point))
+            else {
+                return ConnectOutcome::Nothing;
+            };
+            flow.auto_candidate_cursor = index;
+            let Some(provider_id) = flow.auto_candidates.get(index).cloned() else {
+                return ConnectOutcome::Nothing;
+            };
+            if select_auto_candidate(flow, &provider_id) {
+                ConnectOutcome::PickProvider(provider_id)
+            } else {
+                flow.step = ConnectStep::Error(format!(
+                    "auto-connect: '{provider_id}' katalogda bulunamadı"
+                ));
+                ConnectOutcome::Nothing
+            }
+        }
         _ => ConnectOutcome::Nothing,
     }
 }
@@ -208,6 +251,7 @@ pub(super) fn render_mode_select_step(
     theme: &crate::theme::Theme,
     flow: &mut ProviderConnectFlow,
 ) {
+    flow.mode_row_rects.clear();
     if content.height == 0 || content.width == 0 {
         return;
     }
@@ -258,6 +302,8 @@ pub(super) fn render_mode_select_step(
             ]),
             inner_width,
         );
+        flow.mode_row_rects
+            .push(Rect::new(inner_x, y, inner_width, 1));
         y += 1;
     }
     if y < content.y + content.height {
@@ -374,6 +420,7 @@ pub(super) fn render_auto_ambiguous_step(
     theme: &crate::theme::Theme,
     flow: &mut ProviderConnectFlow,
 ) {
+    flow.auto_candidate_row_rects.clear();
     if content.height == 0 || content.width == 0 {
         return;
     }
@@ -411,6 +458,8 @@ pub(super) fn render_auto_ambiguous_step(
             &Line::from(Span::styled(format!("  {candidate}"), style)),
             inner_width,
         );
+        flow.auto_candidate_row_rects
+            .push(Rect::new(inner_x, y, inner_width, 1));
         y += 1;
     }
     if y < content.y + content.height {
@@ -429,7 +478,9 @@ pub(super) fn render_auto_ambiguous_step(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
+    use crossterm::event::{
+        Event, KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
+    };
     use xai_grok_shell::util::auto_connect::AutoConnectOutcome;
     use xai_grok_shell::util::models_dev::{CacheSource, CatalogCache, ModelInfo, ProviderCatalog};
     use zeroize::Zeroizing;
@@ -448,6 +499,15 @@ mod tests {
 
     fn key_esc() -> Event {
         press(KeyCode::Esc)
+    }
+
+    fn left_click(column: u16, row: u16) -> Event {
+        Event::Mouse(MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column,
+            row,
+            modifiers: KeyModifiers::NONE,
+        })
     }
 
     fn catalog_with_openai() -> CatalogCache {
@@ -536,6 +596,21 @@ mod tests {
         let _ = super::super::handle_connect_input(&mut flow, &key_down());
         assert_eq!(flow.mode_select_cursor, 1, "Down → Auto satırı");
         let out = super::super::handle_connect_input(&mut flow, &key_enter());
+        assert_eq!(out, ConnectOutcome::Next);
+        assert_eq!(flow.step, ConnectStep::AutoKey);
+    }
+
+    #[test]
+    fn mode_select_mouse_click_activates_clicked_row() {
+        let mut flow = new_flow();
+        let rect = Rect::new(10, 5, 80, 12);
+        let mut buf = Buffer::empty(Rect::new(0, 0, 100, 24));
+        let theme = crate::theme::Theme::current();
+        super::render_mode_select_step(&mut buf, rect, 12, 76, &theme, &mut flow);
+
+        // Title + divider consume two rows; the second choice is Automatic.
+        let out = super::super::handle_connect_input(&mut flow, &left_click(20, rect.y + 3));
+
         assert_eq!(out, ConnectOutcome::Next);
         assert_eq!(flow.step, ConnectStep::AutoKey);
     }
@@ -657,6 +732,22 @@ mod tests {
         assert_eq!(out, ConnectOutcome::Back);
         assert_eq!(flow.step, ConnectStep::ModeSelect);
         assert!(flow.auto_candidates.is_empty());
+    }
+
+    #[test]
+    fn auto_ambiguous_mouse_click_selects_clicked_provider() {
+        let mut flow = new_flow();
+        flow.step = ConnectStep::AutoAmbiguous;
+        flow.auto_candidates = vec!["missing".to_string(), "openai".to_string()];
+        let rect = Rect::new(10, 5, 80, 12);
+        let mut buf = Buffer::empty(Rect::new(0, 0, 100, 24));
+        let theme = crate::theme::Theme::current();
+        super::render_auto_ambiguous_step(&mut buf, rect, 12, 76, &theme, &mut flow);
+
+        let out = super::super::handle_connect_input(&mut flow, &left_click(20, rect.y + 3));
+
+        assert_eq!(out, ConnectOutcome::PickProvider("openai".to_string()));
+        assert_eq!(flow.step, ConnectStep::Model);
     }
 
     #[test]

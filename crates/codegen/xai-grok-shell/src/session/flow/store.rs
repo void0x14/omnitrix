@@ -25,22 +25,37 @@ impl FlowStore {
     pub fn open(session_dir: &Path) -> Self {
         let path = session_dir.join(FLOW_EVENTS_FILE);
         let records = std::fs::read_to_string(&path)
-            .map(|s| s.lines().filter_map(|l| serde_json::from_str::<FlowRecord>(l).ok()).collect())
+            .map(|s| {
+                s.lines()
+                    .filter_map(|l| serde_json::from_str::<FlowRecord>(l).ok())
+                    .collect()
+            })
             .unwrap_or_default();
         Self { path, records }
     }
 
     pub fn record(&mut self, artifact: ArtifactId, ok: bool, detail: String) {
         let seq = self.records.len() as u64 + 1;
-        let rec = FlowRecord { seq, artifact: artifact.as_str().to_string(), ok, detail };
-        if let Ok(mut f) = OpenOptions::new().create(true).append(true).open(&self.path) {
+        let rec = FlowRecord {
+            seq,
+            artifact: artifact.as_str().to_string(),
+            ok,
+            detail,
+        };
+        if let Ok(mut f) = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&self.path)
+        {
             let _ = writeln!(f, "{}", serde_json::to_string(&rec).unwrap_or_default());
         }
         self.records.push(rec);
     }
 
     pub fn has(&self, artifact: ArtifactId) -> bool {
-        self.records.iter().any(|r| r.artifact == artifact.as_str() && r.ok)
+        self.records
+            .iter()
+            .any(|r| r.artifact == artifact.as_str() && r.ok)
     }
 
     pub fn progress(&self) -> Vec<FlowRecord> {

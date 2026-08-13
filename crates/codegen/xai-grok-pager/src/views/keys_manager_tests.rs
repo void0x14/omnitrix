@@ -192,6 +192,42 @@ fn browse_header_and_action_bar_present() {
 }
 
 #[test]
+fn browse_footer_exposes_clickable_actions() {
+    let mut state = browse_state(vec![sample_entry("openai", "sk-…a1b2")]);
+    let _ = render_text(&mut state);
+
+    let clickable = state
+        .window
+        .shortcut_hits
+        .iter()
+        .filter(|hit| hit.clickable)
+        .count();
+    assert!(
+        clickable >= 6,
+        "mouse users need the same reveal/add/edit/remove/import/close actions as keyboard users"
+    );
+}
+
+#[test]
+fn small_keychain_uses_compact_centered_popup() {
+    let mut state = browse_state(vec![sample_entry("openai", "sk-…a1b2")]);
+    let area = Rect::new(0, 0, 140, 45);
+    let mut buf = Buffer::empty(area);
+
+    render_keys_manager(&mut buf, area, &mut state, false);
+
+    let popup = state.window.popup_area.expect("keys popup rendered");
+    assert!(
+        popup.height <= 16,
+        "one-row keychain must not consume the whole terminal: {popup:?}"
+    );
+    assert!(
+        popup.y > 0,
+        "keys popup must be vertically centered: {popup:?}"
+    );
+}
+
+#[test]
 fn empty_browse_renders_without_panic() {
     let mut state = browse_state(vec![]);
     let text = render_text(&mut state);

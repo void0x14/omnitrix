@@ -206,8 +206,6 @@ pub(super) fn handle_settings_update(notif: &acp::ExtNotification, app: &mut App
         // access, so it intentionally does not touch the gate here.)
         let effs = app.impose_gate(xai_grok_shell::auth::GateInfo {
             message: msg.clone(),
-            url: update.gate_url.clone(),
-            label: update.gate_label.clone(),
         });
         app.pending_effects.extend(effs);
     }
@@ -525,10 +523,6 @@ pub(super) struct PagerSettingsUpdate {
     // clobber a newer push. Single ingest path: handle_announcements_update.
     #[serde(default)]
     gate_message: Option<String>,
-    #[serde(default)]
-    gate_url: Option<String>,
-    #[serde(default)]
-    gate_label: Option<String>,
     #[serde(default)]
     allow_access: Option<bool>,
     #[serde(default)]

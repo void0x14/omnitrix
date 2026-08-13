@@ -3,7 +3,7 @@
 //!
 //! Kullanim:
 //!   /omni-routing                    -> mevcut strateji + rol ozeti
-//!   /omni-routing <round_robin|weighted|fallback|jep>
+//!   /omni-routing <rr|wrr|fallback-strict|jep-classic>
 //!                                    -> strateji degistir (config'e yazilir)
 //!   /omni-routing <judge|executor|planner|summary|web_search> <model>
 //!                                    -> rol->model atamasi (config/models)
@@ -28,7 +28,7 @@ impl Default for OmniRoutingCommand {
 }
 
 /// Strateji adlari; model/rol adlari gomulu degildir (AS7/I5).
-const STRATEGIES: [&str; 4] = ["round_robin", "weighted", "fallback", "jep"];
+const STRATEGIES: [&str; 4] = ["rr", "wrr", "fallback-strict", "jep-classic"];
 const ROLES: [&str; 5] = ["judge", "executor", "planner", "summary", "web_search"];
 
 /// Argumani cozumler: tek kelime strateji mi, iki kelime rol+model mi.
@@ -73,7 +73,7 @@ impl SlashCommand for OmniRoutingCommand {
     }
 
     fn description(&self) -> &'static str {
-        "Yonlendirme modu (round_robin/weighted/fallback/jep) + rol->model atama"
+        "Yonlendirme modu (rr/wrr/fallback-strict/jep-classic) + rol->model atama"
     }
 
     fn usage(&self) -> &'static str {
@@ -102,9 +102,7 @@ impl SlashCommand for OmniRoutingCommand {
 
     fn run(&self, _ctx: &mut CommandExecCtx<'_>, args: &str) -> CommandResult {
         let Some(router) = crate::omni_bridge::router() else {
-            return CommandResult::Message(
-                "yonlendirme koprusu kurulmamis (warmup bekleniyor)".into(),
-            );
+            return CommandResult::Message("routing runtime'i kullanilamiyor".into());
         };
 
         match parse_args(args.trim()) {
@@ -152,7 +150,7 @@ mod tests {
     #[test]
     fn rejects_unknown() {
         assert!(parse_args("bogus").is_err());
-        assert!(parse_args("round_robin extra").is_err());
+        assert!(parse_args("rr extra").is_err());
         assert!(parse_args("bogus x").is_err());
     }
 
@@ -175,10 +173,7 @@ mod tests {
         };
         match cmd.run(&mut c, "") {
             CommandResult::Message(m) => {
-                assert!(
-                    m.contains("kurulmamis") || m.contains("kurulu"),
-                    "kurulum yoksa bilgi mesaji: {m}"
-                );
+                assert!(m.contains("routing"), "durum mesaji: {m}");
             }
             other => panic!("Message bekleniyordu: {other:?}"),
         }

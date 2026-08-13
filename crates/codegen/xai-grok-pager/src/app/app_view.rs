@@ -112,7 +112,7 @@ pub struct WelcomeAnnouncementState {
     /// Whether a long announcement is expanded inline (default: 2 lines + `…`).
     pub expanded: bool,
     /// Mouse last over the announcement block (drives hover color + redraws).
-    pub on_cta: bool,
+    pub hovered: bool,
     /// Whether the announcement overflowed (the "expandable" signal).
     pub truncated: bool,
     /// Hit-test rect for the full announcement block (click anywhere to toggle).
@@ -860,10 +860,6 @@ pub struct AppView {
     /// Hit-test rect for the "[Refresh]" button on the paywall tier line.
     pub welcome_refresh_rect: Option<ratatui::layout::Rect>,
     /// Hit-test rect for the gate URL link on the paywall CTA.
-    pub welcome_gate_url_rect: Option<ratatui::layout::Rect>,
-    /// Hit-test rect for the welcome hero upgrade CTA `[label]` button
-    /// (click → `AnnouncementsOpenCta(Welcome)`).
-    pub welcome_upgrade_cta_rect: Option<ratatui::layout::Rect>,
     pub welcome_privacy_banner_accept_rect: Option<ratatui::layout::Rect>,
     pub welcome_privacy_banner_customize_rect: Option<ratatui::layout::Rect>,
     pub welcome_privacy_banner_legal_rect: Option<ratatui::layout::Rect>,
@@ -871,8 +867,6 @@ pub struct AppView {
     pub welcome_toast: Option<(String, std::time::Instant)>,
     /// Sticky hover flag for the privacy banner buttons (redraw on enter/leave).
     pub welcome_on_privacy_banner: bool,
-    /// Sticky hover flag for the welcome upgrade CTA (redraw on enter/leave).
-    pub welcome_on_upgrade_cta: bool,
     /// Hit-test rect for the clickable changelog info block (opens release notes).
     pub welcome_changelog_cta_rect: Option<ratatui::layout::Rect>,
     /// Show the raw auth URL with mouse capture disabled for manual copy.
@@ -1082,18 +1076,6 @@ pub struct AppView {
     /// Whether ZDR users are allowed to use the product.
     /// Server-controlled via RemoteSettings (remote settings). Default `false` (blocked) during beta.
     pub zdr_access_enabled: bool,
-    /// When set, `/usage` shows a link to this URL instead of fetching billing
-    /// data from the backend. Server-controlled via RemoteSettings (remote settings
-    /// `grok_build_usage_redirect_url`, targeted at personal-team users).
-    /// `None` (default) fetches usage from the backend.
-    pub usage_billing_redirect_url: Option<String>,
-    pub access_gate_shown_logged: bool,
-    /// (hide-key, surface) pairs whose `AnnouncementCtaShown` impression was
-    /// already logged — once per pager process, cleared on logout. Keyed by
-    /// `announcement_hide_key` (stable even for id-less items, unlike the
-    /// event's `id`).
-    pub announcement_cta_impressions_logged:
-        std::collections::BTreeSet<(String, xai_grok_telemetry::events::AnnouncementCtaSurface)>,
     /// Access gate from `grok_build_access_gate`. `Some` = blocked.
     pub gate: Option<xai_grok_shell::auth::GateInfo>,
     /// User-friendly subscription tier name (e.g. "SuperGrok", "Free").
@@ -1298,29 +1280,17 @@ impl AppView {
         }
         Some(xai_grok_shell::auth::GateInfo {
             message: msg.clone(),
-            url: rs.gate_url.clone(),
-            label: rs.gate_label.clone(),
         })
     }
     /// Apply typed auth metadata from the shell.
     pub fn apply_auth_meta(&mut self, meta: &xai_grok_shell::auth::AuthMeta) {
         self.pending_gate_verification = None;
-        let was_gated = self.gate.is_some();
         self.team_id = meta.team_id.clone();
         self.team_name = meta.team_name.clone();
         self.is_zdr = meta.is_zdr;
         self.team_role = meta.team_role.clone();
         self.coding_data_retention_opt_out = meta.coding_data_retention_opt_out;
         self.gate = meta.gate.clone();
-        if was_gated && self.gate.is_none() {
-            self.paywall_check_started = None;
-            xai_grok_telemetry::session_ctx::log_event(
-                xai_grok_telemetry::events::SubscriptionActivated {
-                    auth_method: self.login_method_id.as_ref().map(|id| id.0.to_string()),
-                    upsell_shown_this_session: self.access_gate_shown_logged,
-                },
-            );
-        }
         self.subscription_tier = meta.subscription_tier.clone();
         let was_api_key = self.is_api_key_auth;
         self.is_api_key_auth = meta.auth_mode.as_deref().is_some_and(is_api_key_label)
@@ -1449,14 +1419,11 @@ impl AppView {
             welcome_announcement: WelcomeAnnouncementState::default(),
             welcome_auth_fallback_rect: None,
             welcome_refresh_rect: None,
-            welcome_gate_url_rect: None,
-            welcome_upgrade_cta_rect: None,
             welcome_privacy_banner_accept_rect: None,
             welcome_privacy_banner_customize_rect: None,
             welcome_privacy_banner_legal_rect: None,
             welcome_toast: None,
             welcome_on_privacy_banner: false,
-            welcome_on_upgrade_cta: false,
             welcome_changelog_cta_rect: None,
             auth_show_raw_url: false,
             auth_mouse_disabled: false,
@@ -1533,9 +1500,6 @@ impl AppView {
             auto_update: None,
             ask_user_question_timeout_enabled: None,
             zdr_access_enabled: false,
-            usage_billing_redirect_url: None,
-            access_gate_shown_logged: false,
-            announcement_cta_impressions_logged: Default::default(),
             gate: None,
             subscription_tier: None,
             paywall_check_started: None,
@@ -2424,11 +2388,6 @@ impl AppView {
         }
         let zdr_blocked = self.is_zdr_blocked();
         let has_access = self.has_access();
-        let welcome_pinned_upgrade_cta = crate::views::announcements::promo_cta(
-            &self.active_announcements,
-            &self.hidden_announcement_ids,
-        )
-        .is_some_and(|(owner, _, _)| !crate::views::announcements::is_dismissible(owner));
         let has_foreign_resume = self.foreign_resume_hint().is_some();
         let sp_loading = crate::views::session_picker::loading_spinner_active(
             self.session_picker_entries.as_deref(),
@@ -2467,21 +2426,17 @@ impl AppView {
                     auth_url_rect: self.welcome_auth_url_rect.as_ref(),
                     auth_fallback_rect: self.welcome_auth_fallback_rect.as_ref(),
                     refresh_rect: self.welcome_refresh_rect.as_ref(),
-                    gate_url_rect: self.welcome_gate_url_rect.as_ref(),
-                    upgrade_cta_rect: self.welcome_upgrade_cta_rect.as_ref(),
                     privacy_banner_accept_rect: self.welcome_privacy_banner_accept_rect.as_ref(),
                     privacy_banner_customize_rect: self
                         .welcome_privacy_banner_customize_rect
                         .as_ref(),
                     privacy_banner_legal_rect: self.welcome_privacy_banner_legal_rect.as_ref(),
                     on_privacy_banner: &mut self.welcome_on_privacy_banner,
-                    on_upgrade_cta: &mut self.welcome_on_upgrade_cta,
-                    upgrade_cta_keyboard: welcome_pinned_upgrade_cta,
                     changelog_cta_rect: self.welcome_changelog_cta_rect.as_ref(),
                     on_changelog_cta: &mut self.welcome_on_changelog_cta,
                     announcement_truncated: self.welcome_announcement.truncated,
                     announcement_rect: self.welcome_announcement.rect.as_ref(),
-                    on_announcement_cta: &mut self.welcome_announcement.on_cta,
+                    announcement_hovered: &mut self.welcome_announcement.hovered,
                     announcement_expanded: &mut self.welcome_announcement.expanded,
                     show_raw_url: &mut self.auth_show_raw_url,
                     has_access,
@@ -3063,22 +3018,12 @@ struct WelcomeInputCtx<'a> {
     auth_url_rect: Option<&'a ratatui::layout::Rect>,
     auth_fallback_rect: Option<&'a ratatui::layout::Rect>,
     refresh_rect: Option<&'a ratatui::layout::Rect>,
-    gate_url_rect: Option<&'a ratatui::layout::Rect>,
-    /// Hit-test rect for the welcome hero upgrade CTA `[label]` button
-    /// (click → open the promo url).
-    upgrade_cta_rect: Option<&'a ratatui::layout::Rect>,
     privacy_banner_accept_rect: Option<&'a ratatui::layout::Rect>,
     privacy_banner_customize_rect: Option<&'a ratatui::layout::Rect>,
     privacy_banner_legal_rect: Option<&'a ratatui::layout::Rect>,
     /// Sticky hover flag for the privacy banner buttons (redraw on
     /// enter/leave/crossing so they brighten/dim).
     on_privacy_banner: &'a mut bool,
-    /// Sticky hover flag for the upgrade CTA (redraw on enter/leave so the
-    /// button brightens/dims).
-    on_upgrade_cta: &'a mut bool,
-    /// A pinned (non-dismissible) promo CTA is live, so `Ctrl+O` opens it
-    /// (the welcome screen has no YOLO toggle to preserve).
-    upgrade_cta_keyboard: bool,
     /// Hit-test rect for the clickable changelog info block (opens release notes).
     changelog_cta_rect: Option<&'a ratatui::layout::Rect>,
     /// Sticky hover flag for the changelog block (redraw on enter/leave).
@@ -3088,7 +3033,7 @@ struct WelcomeInputCtx<'a> {
     /// Hit-test rect for the full announcement block (click anywhere to toggle).
     announcement_rect: Option<&'a ratatui::layout::Rect>,
     /// Sticky hover flag for the announcement block (redraw on enter/leave).
-    on_announcement_cta: &'a mut bool,
+    announcement_hovered: &'a mut bool,
     /// Whether the long announcement is currently expanded inline.
     announcement_expanded: &'a mut bool,
     show_raw_url: &'a mut bool,
@@ -3486,11 +3431,6 @@ fn handle_welcome_input(ev: &Event, ctx: &mut WelcomeInputCtx<'_>) -> InputOutco
             return InputOutcome::Action(Action::NewSession);
         }
         if matches!(ctx.auth_state, AuthState::Done) {
-            if ctx.upgrade_cta_keyboard && key!('o', CONTROL).matches(key) {
-                return InputOutcome::Action(Action::AnnouncementsOpenCta(
-                    xai_grok_telemetry::events::AnnouncementCtaSurface::Keyboard,
-                ));
-            }
             if key!('w', CONTROL).matches(key) && ctx.cwd_has_git_ancestor {
                 return InputOutcome::Action(Action::OpenNewWorktreeDialog);
             }
@@ -3708,18 +3648,6 @@ fn handle_welcome_input(ev: &Event, ctx: &mut WelcomeInputCtx<'_>) -> InputOutco
                 {
                     return InputOutcome::Action(Action::CheckSubscription);
                 }
-                if let Some(rect) = ctx.gate_url_rect
-                    && rect.contains(ratatui::layout::Position::new(mouse.column, mouse.row))
-                {
-                    return InputOutcome::Action(Action::OpenSupergrokUrl);
-                }
-                if let Some(rect) = ctx.upgrade_cta_rect
-                    && rect.contains(ratatui::layout::Position::new(mouse.column, mouse.row))
-                {
-                    return InputOutcome::Action(Action::AnnouncementsOpenCta(
-                        xai_grok_telemetry::events::AnnouncementCtaSurface::Welcome,
-                    ));
-                }
                 if let Some(rect) = ctx.privacy_banner_accept_rect
                     && rect.contains(ratatui::layout::Position::new(mouse.column, mouse.row))
                 {
@@ -3810,11 +3738,6 @@ fn handle_welcome_input(ev: &Event, ctx: &mut WelcomeInputCtx<'_>) -> InputOutco
                     *ctx.on_changelog_cta = over_cta;
                     return InputOutcome::Changed;
                 }
-                let over_upgrade = ctx.upgrade_cta_rect.is_some_and(|r| r.contains(pos));
-                if over_upgrade != *ctx.on_upgrade_cta {
-                    *ctx.on_upgrade_cta = over_upgrade;
-                    return InputOutcome::Changed;
-                }
                 let over_banner = ctx
                     .privacy_banner_accept_rect
                     .is_some_and(|r| r.contains(pos))
@@ -3830,8 +3753,8 @@ fn handle_welcome_input(ev: &Event, ctx: &mut WelcomeInputCtx<'_>) -> InputOutco
                 }
                 let over_ann = (ctx.announcement_truncated || *ctx.announcement_expanded)
                     && ctx.announcement_rect.is_some_and(|r| r.contains(pos));
-                if over_ann != *ctx.on_announcement_cta {
-                    *ctx.on_announcement_cta = over_ann;
+                if over_ann != *ctx.announcement_hovered {
+                    *ctx.announcement_hovered = over_ann;
                     return InputOutcome::Changed;
                 }
                 if matches!(ctx.auth_state, AuthState::Authenticating { .. })
@@ -3914,11 +3837,11 @@ fn dispatch_zdr_menu_action(index: usize) -> InputOutcome {
         _ => InputOutcome::Unchanged,
     }
 }
-/// Menu actions when user is access-gated: 0 = Subscribe CTA, 1 = Logout, 2 = Quit.
+/// Menu actions when user is access-gated: 0 = refresh, 1 = Logout, 2 = Quit.
 /// "Refresh" (ctrl-r) is handled as a direct key shortcut, not a menu item.
 fn dispatch_access_gate_menu_action(index: usize) -> InputOutcome {
     match index {
-        0 => InputOutcome::Action(Action::OpenSupergrokUrl),
+        0 => InputOutcome::Action(Action::CheckSubscription),
         1 => InputOutcome::Action(Action::Logout),
         2 => InputOutcome::Action(Action::Quit),
         _ => InputOutcome::Unchanged,
@@ -4134,6 +4057,7 @@ impl AppView {
     /// synchronized output, cursor blink preservation). See that module's
     /// docs for the full rationale.
     pub fn draw(&mut self, terminal: &mut PagerTerminal) {
+        crate::omni_runtime::publish_agents(self.agents.iter().map(|(id, agent)| (id.0, agent)));
         self.draw_inner(terminal);
         crate::memory_release::run_deferred_release();
     }
@@ -4286,18 +4210,11 @@ impl AppView {
                             Some(eff) => format!("{model_name_base} ({eff})"),
                             None => model_name_base,
                         };
-                        let hero_cta = crate::views::announcements::promo_cta(
-                            &self.active_announcements,
-                            &self.hidden_announcement_ids,
-                        );
-                        let hero_announcement = hero_cta
-                            .map(|(owner, _, _)| owner)
-                            .or_else(|| {
-                                crate::views::announcements::first_session_announcement(
-                                    &self.active_announcements,
-                                    &self.hidden_announcement_ids,
-                                )
-                            })
+                        let hero_announcement =
+                            crate::views::announcements::first_session_announcement(
+                                &self.active_announcements,
+                                &self.hidden_announcement_ids,
+                            )
                             .or(self.announcement.as_ref());
                         let welcome_params = crate::views::welcome::WelcomeRenderParams {
                             prompt_focus: if self.welcome_prompt_focused {
@@ -4356,7 +4273,6 @@ impl AppView {
                             changelog_bullets: &self.changelog_bullets,
                             changelog_has_full_notes: self.changelog_markdown.is_some(),
                             welcome_announcement_expanded: self.welcome_announcement.expanded,
-                            upgrade_cta: hero_cta.map(|(_owner, label, _)| label),
                             privacy_banner,
                         };
                         let result = crate::views::welcome::render_welcome(
@@ -4373,8 +4289,6 @@ impl AppView {
                         self.welcome_auth_url_rect = result.auth_url_rect;
                         self.welcome_auth_fallback_rect = result.auth_fallback_rect;
                         self.welcome_refresh_rect = result.refresh_rect;
-                        self.welcome_gate_url_rect = result.gate_url_rect;
-                        self.welcome_upgrade_cta_rect = result.upgrade_cta_rect;
                         self.welcome_privacy_banner_accept_rect = result.privacy_banner_accept_rect;
                         self.welcome_privacy_banner_customize_rect =
                             result.privacy_banner_customize_rect;
@@ -4423,19 +4337,6 @@ impl AppView {
                                 cached_lines,
                                 compact,
                                 &theme,
-                            );
-                        }
-                        if !has_access && !self.access_gate_shown_logged {
-                            self.access_gate_shown_logged = true;
-                            xai_grok_telemetry::session_ctx::log_event(
-                                xai_grok_telemetry::events::SuperGrokUpsellShown {
-                                    source:
-                                        xai_grok_telemetry::events::SuperGrokUpsell::WelcomeScreen,
-                                    auth_method: self
-                                        .login_method_id
-                                        .as_ref()
-                                        .map(|id| id.0.to_string()),
-                                },
                             );
                         }
                         if let Some(tutorial) = self.tutorial.as_mut() {
@@ -4665,17 +4566,6 @@ impl AppView {
                                 } else {
                                     &self.dashboard_local_sessions
                                 };
-                            let dash_upgrade_cta = crate::views::announcements::promo_cta(
-                                &self.active_announcements,
-                                &self.hidden_announcement_ids,
-                            )
-                            .map(
-                                |(owner, label, _)| crate::views::dashboard::HeaderUpgradeCta {
-                                    label,
-                                    pinned: !crate::views::announcements::is_dismissible(owner),
-                                    caption: crate::views::announcements::usable_cta_caption(owner),
-                                },
-                            );
                             let dash_cursor = crate::views::dashboard::render_dashboard(
                                 f.buffer_mut(),
                                 view_area,
@@ -4685,7 +4575,6 @@ impl AppView {
                                 pending_hint,
                                 dashboard_roster,
                                 self.dashboard_sessions_loading,
-                                dash_upgrade_cta,
                             );
                             let (popup_cursor, popup_post_flush, drawn_popup_agent) =
                                 if let Some(agent_id) = dashboard.attached_agent {
@@ -4773,72 +4662,7 @@ impl AppView {
         if let Some(started) = fps_frame_started {
             self.fps_hud.record(started.elapsed());
         }
-        self.log_announcement_cta_impressions();
         self.maybe_evict_offscreen_caches();
-    }
-    /// Log [`xai_grok_telemetry::events::AnnouncementCtaShown`] for each
-    /// surface whose CTA button is painted this frame (armed hit rect, not
-    /// covered by a frame occluder — the click/OSC 8 truth the impression
-    /// pairs with), once per (announcement, surface) per pager process
-    /// (cleared on logout). The owner resolves through the same slot gate as
-    /// the click dispatch, so a critical preempting the slot or a hidden
-    /// promo emits nothing.
-    pub(crate) fn log_announcement_cta_impressions(&mut self) {
-        use xai_grok_telemetry::events::AnnouncementCtaSurface;
-        let (banner, welcome, header, dashboard) = match self.active_view {
-            ActiveView::Welcome => (false, self.welcome_upgrade_cta_rect.is_some(), false, false),
-            ActiveView::Agent(agent_id) => match self.agents.get(&agent_id) {
-                Some(a) => {
-                    let cta_rect = a.hit_announcement_cta.rect;
-                    let header_rect = a.hit_upgrade_cta.rect;
-                    (
-                        cta_rect.is_some_and(|r| !a.rect_occluded(r)),
-                        false,
-                        header_rect.is_some_and(|r| !a.rect_occluded(r)),
-                        false,
-                    )
-                }
-                None => return,
-            },
-            ActiveView::AgentDashboard => (
-                false,
-                false,
-                false,
-                self.dashboard
-                    .as_ref()
-                    .is_some_and(|d| d.upgrade_cta_hit.rect.is_some()),
-            ),
-        };
-        if !(banner || welcome || header || dashboard) {
-            return;
-        }
-        let Some((owner, _label, _url)) = crate::views::announcements::promo_cta(
-            &self.active_announcements,
-            &self.hidden_announcement_ids,
-        ) else {
-            return;
-        };
-        let key = xai_grok_announcements::announcement_hide_key(owner);
-        let id = owner.id.clone();
-        let surfaces = [
-            (AnnouncementCtaSurface::Banner, banner),
-            (AnnouncementCtaSurface::Welcome, welcome),
-            (AnnouncementCtaSurface::Header, header),
-            (AnnouncementCtaSurface::Dashboard, dashboard),
-        ];
-        for (surface, _) in surfaces.into_iter().filter(|(_, painted)| *painted) {
-            if self
-                .announcement_cta_impressions_logged
-                .insert((key.clone(), surface))
-            {
-                xai_grok_telemetry::session_ctx::log_event(
-                    xai_grok_telemetry::events::AnnouncementCtaShown {
-                        id: id.clone(),
-                        source: surface,
-                    },
-                );
-            }
-        }
     }
     /// Interval between off-screen render-cache eviction sweeps.
     const CACHE_EVICT_INTERVAL: Duration = Duration::from_secs(5);
@@ -5766,9 +5590,6 @@ pub(crate) mod tests {
             auto_update: None,
             ask_user_question_timeout_enabled: None,
             zdr_access_enabled: false,
-            usage_billing_redirect_url: None,
-            access_gate_shown_logged: false,
-            announcement_cta_impressions_logged: Default::default(),
             gate: None,
             subscription_tier: None,
             paywall_check_started: None,
@@ -5802,14 +5623,11 @@ pub(crate) mod tests {
             welcome_announcement: WelcomeAnnouncementState::default(),
             welcome_auth_fallback_rect: None,
             welcome_refresh_rect: None,
-            welcome_gate_url_rect: None,
-            welcome_upgrade_cta_rect: None,
             welcome_privacy_banner_accept_rect: None,
             welcome_privacy_banner_customize_rect: None,
             welcome_privacy_banner_legal_rect: None,
             welcome_toast: None,
             welcome_on_privacy_banner: false,
-            welcome_on_upgrade_cta: false,
             welcome_changelog_cta_rect: None,
             auth_show_raw_url: false,
             auth_mouse_disabled: false,
@@ -7247,9 +7065,7 @@ pub(crate) mod tests {
     fn apply_auth_meta_clears_gate_on_subscription() {
         let mut app = test_app();
         app.gate = Some(xai_grok_shell::auth::GateInfo {
-            message: "Subscribe to use Grok Build".into(),
-            url: Some("https://grok.com/supergrok?referrer=grok-build".into()),
-            label: None,
+            message: "This provider or account cannot start a session.".into(),
         });
         assert!(app.is_access_blocked());
         let meta = xai_grok_shell::auth::AuthMeta::default();
@@ -7262,8 +7078,6 @@ pub(crate) mod tests {
         let mut app = test_app();
         let gate = xai_grok_shell::auth::GateInfo {
             message: "Subscribe".into(),
-            url: None,
-            label: None,
         };
         app.gate = Some(gate.clone());
         let meta = xai_grok_shell::auth::AuthMeta {

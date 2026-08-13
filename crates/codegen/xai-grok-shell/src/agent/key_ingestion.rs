@@ -135,20 +135,18 @@ pub fn ingest_from_sqlite(config: &KeyIngestionConfig) -> Result<IngestReport, I
         return Ok(IngestReport::default());
     }
 
-    let conn = match Connection::open_with_flags(
-        db_path,
-        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
-    ) {
-        Ok(conn) => conn,
-        Err(e) => {
-            tracing::warn!(
-                path = %db_path.display(),
-                error = %e,
-                "key_ingestion: cannot open source db; empty report",
-            );
-            return Ok(IngestReport::default());
-        }
-    };
+    let conn =
+        match Connection::open_with_flags(db_path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY) {
+            Ok(conn) => conn,
+            Err(e) => {
+                tracing::warn!(
+                    path = %db_path.display(),
+                    error = %e,
+                    "key_ingestion: cannot open source db; empty report",
+                );
+                return Ok(IngestReport::default());
+            }
+        };
 
     let raws = match read_raw_keys(&conn, config) {
         Ok(raws) => raws,
@@ -173,10 +171,7 @@ pub fn ingest_from_sqlite(config: &KeyIngestionConfig) -> Result<IngestReport, I
     for raw in raws {
         // On-ek tespiti birincil; provider sutunu (varsa) taninmayan on-ekler
         // icin ipucudur.
-        let provider_hint = raw
-            .provider_kind
-            .as_deref()
-            .and_then(provider_kind_by_name);
+        let provider_hint = raw.provider_kind.as_deref().and_then(provider_kind_by_name);
         let Some(kind) = ProviderKind::detect_from_key(&raw.value).or(provider_hint) else {
             report.dead += 1;
             append_dead_key(&raw.value, None, &checked_at, "unrecognized key prefix");
@@ -189,7 +184,12 @@ pub fn ingest_from_sqlite(config: &KeyIngestionConfig) -> Result<IngestReport, I
             }
         } else {
             report.dead += 1;
-            append_dead_key(&raw.value, Some(kind.name()), &checked_at, "liveness check failed");
+            append_dead_key(
+                &raw.value,
+                Some(kind.name()),
+                &checked_at,
+                "liveness check failed",
+            );
         }
     }
 
@@ -303,10 +303,7 @@ fn validate_identifiers(config: &KeyIngestionConfig) -> Result<(), IngestError> 
 
 /// SQL tanimlayicisi (tablo/sutun adi) guvenli mi? Yalniz `[A-Za-z0-9_]`.
 fn is_safe_ident(ident: &str) -> bool {
-    !ident.is_empty()
-        && ident
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || c == '_')
+    !ident.is_empty() && ident.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
 }
 
 /// Provider etiketi (sutun degeri) -> `ProviderKind` (buyuk/kucuk harf
@@ -345,7 +342,11 @@ fn append_dead_key(key: &str, provider: Option<&str>, checked_at: &str, detail: 
         return;
     }
 
-    match std::fs::OpenOptions::new().create(true).append(true).open(&path) {
+    match std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&path)
+    {
         Ok(mut file) => {
             use std::io::Write as _;
             if let Err(e) = file.write_all(line.as_bytes()) {

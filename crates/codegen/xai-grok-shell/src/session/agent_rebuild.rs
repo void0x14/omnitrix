@@ -654,9 +654,8 @@ mod tests {
                 {
                     let spec_ref = Arc::get_mut(&mut spec)
                         .expect("test rebuild spec should be uniquely owned");
-                    spec_ref.computer_use_journal_path = Some(
-                        std::env::temp_dir().join("computer-use-agent-test.jsonl"),
-                    );
+                    spec_ref.computer_use_journal_path =
+                        Some(std::env::temp_dir().join("computer-use-agent-test.jsonl"));
                 }
                 let agent = spec
                     .build_agent(AgentDefinition::default_grok_build())

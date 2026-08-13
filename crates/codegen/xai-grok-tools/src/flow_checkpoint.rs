@@ -10,7 +10,7 @@
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use xai_tool_runtime::{ListToolsContext, Tool, ToolCallContext, ToolError};
+use xai_tool_runtime::{ListToolsContext, ToolCallContext, ToolError};
 
 use crate::types::requirements::{Expr, ToolRequirement};
 use crate::types::tool::{ToolKind, ToolNamespace};
@@ -51,17 +51,15 @@ impl FlowCheckpointTool {
 /// gecmez; son hata dali gerceklesemez (computer_tool.rs ile ayni desen).
 fn tool_id() -> xai_tool_protocol::ToolId {
     static ID: std::sync::OnceLock<xai_tool_protocol::ToolId> = std::sync::OnceLock::new();
-    ID.get_or_init(|| {
-        match xai_tool_protocol::ToolId::new("flow_checkpoint") {
+    ID.get_or_init(|| match xai_tool_protocol::ToolId::new("flow_checkpoint") {
+        Ok(id) => id,
+        Err(_) => match xai_tool_protocol::ToolId::new("flow_checkpoint_tool") {
             Ok(id) => id,
-            Err(_) => match xai_tool_protocol::ToolId::new("flow_checkpoint_tool") {
+            Err(_) => match xai_tool_protocol::ToolId::new("flow") {
                 Ok(id) => id,
-                Err(_) => match xai_tool_protocol::ToolId::new("flow") {
-                    Ok(id) => id,
-                    Err(_) => unreachable!("statik tool id adaylari gecerlidir"),
-                },
+                Err(_) => unreachable!("statik tool id adaylari gecerlidir"),
             },
-        }
+        },
     })
     .clone()
 }
@@ -97,10 +95,7 @@ impl xai_tool_runtime::Tool for FlowCheckpointTool {
         tool_id()
     }
 
-    fn description(
-        &self,
-        _ctx: &ListToolsContext,
-    ) -> xai_tool_types::ToolDescription {
+    fn description(&self, _ctx: &ListToolsContext) -> xai_tool_types::ToolDescription {
         xai_tool_types::ToolDescription::new(
             "flow_checkpoint",
             ToolMetadata::description_template(self),

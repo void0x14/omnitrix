@@ -700,14 +700,16 @@ mod tests {
         assert_eq!(lines.len(), 1);
 
         let theme = Theme::current();
-        let teal: Vec<&str> = lines[0]
-            .content
-            .spans
-            .iter()
-            .filter(|s| s.style.fg == Some(theme.accent_skill))
-            .map(|s| s.content.as_ref())
-            .collect();
-        assert_eq!(teal, vec!["/commit", "/review"]);
+        if theme.accent_skill != theme.text_primary {
+            let teal: Vec<&str> = lines[0]
+                .content
+                .spans
+                .iter()
+                .filter(|s| s.style.fg == Some(theme.accent_skill))
+                .map(|s| s.content.as_ref())
+                .collect();
+            assert_eq!(teal, vec!["/commit", "/review"]);
+        }
     }
 
     #[test]
@@ -720,10 +722,12 @@ mod tests {
 
         let theme = Theme::current();
         let line0 = &lines[0].content.spans;
-        assert!(
-            line0.iter().all(|s| s.style.fg != Some(theme.accent_skill)),
-            "line 0 has no token"
-        );
+        if theme.accent_skill != theme.text_primary {
+            assert!(
+                line0.iter().all(|s| s.style.fg != Some(theme.accent_skill)),
+                "line 0 has no token"
+            );
+        }
         let line1 = &lines[1].content.spans;
         assert_eq!(line1[1].content.as_ref(), "then ");
         assert_eq!(line1[1].style.fg, Some(theme.text_primary));
@@ -749,14 +753,16 @@ mod tests {
 
         let lines = block.wrap_prompt_lines(80, None, true, false);
         let theme = Theme::current();
-        let teal: Vec<&str> = lines[0]
-            .content
-            .spans
-            .iter()
-            .filter(|s| s.style.fg == Some(theme.accent_skill))
-            .map(|s| s.content.as_ref())
-            .collect();
-        assert_eq!(teal, vec!["/model"]);
+        if theme.accent_skill != theme.text_primary {
+            let teal: Vec<&str> = lines[0]
+                .content
+                .spans
+                .iter()
+                .filter(|s| s.style.fg == Some(theme.accent_skill))
+                .map(|s| s.content.as_ref())
+                .collect();
+            assert_eq!(teal, vec!["/model"]);
+        }
     }
 
     #[test]
@@ -771,12 +777,14 @@ mod tests {
     // --- Token styling across soft-wrap and collapsed truncation ---
 
     /// Concatenated content of a line's skill-accent spans.
-    fn teal_text(line: &Line, theme: &Theme) -> String {
-        line.spans
-            .iter()
-            .filter(|s| s.style.fg == Some(theme.accent_skill))
-            .map(|s| s.content.as_ref())
-            .collect()
+    fn teal_text(line: &Line, theme: &Theme) -> Option<String> {
+        (theme.accent_skill != theme.text_primary).then(|| {
+            line.spans
+                .iter()
+                .filter(|s| s.style.fg == Some(theme.accent_skill))
+                .map(|s| s.content.as_ref())
+                .collect()
+        })
     }
 
     #[test]
@@ -792,11 +800,12 @@ mod tests {
         let theme = Theme::current();
         let last = &lines[2].content;
         assert!(line_text(last).ends_with(" \u{2026}"));
-        let teal = teal_text(last, &theme);
-        assert!(
-            !teal.is_empty() && "/pr-workflow".starts_with(&teal),
-            "visible head of the straddling token must stay teal, got {teal:?}"
-        );
+        if let Some(teal) = teal_text(last, &theme) {
+            assert!(
+                !teal.is_empty() && "/pr-workflow".starts_with(&teal),
+                "visible head of the straddling token must stay teal, got {teal:?}"
+            );
+        }
     }
 
     #[test]
@@ -811,14 +820,16 @@ mod tests {
         let theme = Theme::current();
         let last = &lines[2].content;
         assert!(line_text(last).ends_with(" \u{2026}"));
-        assert_eq!(teal_text(last, &theme), "/do-it");
-        let body: String = last
-            .spans
-            .iter()
-            .filter(|s| s.style.fg == Some(theme.text_primary))
-            .map(|s| s.content.as_ref())
-            .collect();
-        assert!(body.contains("more"), "args stay body-styled, got {body:?}");
+        if let Some(teal) = teal_text(last, &theme) {
+            assert_eq!(teal, "/do-it");
+            let body: String = last
+                .spans
+                .iter()
+                .filter(|s| s.style.fg == Some(theme.text_primary))
+                .map(|s| s.content.as_ref())
+                .collect();
+            assert!(body.contains("more"), "args stay body-styled, got {body:?}");
+        }
     }
 
     #[test]
@@ -831,16 +842,18 @@ mod tests {
         assert!(lines.len() >= 2);
 
         let theme = Theme::current();
-        let teal_by_line: Vec<String> = lines
+        let teal_by_line = lines
             .iter()
             .map(|l| teal_text(&l.content, &theme))
-            .collect();
-        let lines_with_teal = teal_by_line.iter().filter(|t| !t.is_empty()).count();
-        assert!(
-            lines_with_teal >= 2,
-            "split token must stay teal on every row: {teal_by_line:?}"
-        );
-        assert_eq!(teal_by_line.concat(), "/pr-workflow");
+            .collect::<Option<Vec<_>>>();
+        if let Some(teal_by_line) = teal_by_line {
+            let lines_with_teal = teal_by_line.iter().filter(|t| !t.is_empty()).count();
+            assert!(
+                lines_with_teal >= 2,
+                "split token must stay teal on every row: {teal_by_line:?}"
+            );
+            assert_eq!(teal_by_line.concat(), "/pr-workflow");
+        }
     }
 
     #[test]

@@ -324,12 +324,11 @@ impl xai_tool_runtime::Tool for ImageEditTool {
             res.require::<ImageGenClient>()?.clone()
         };
 
-        // Free / X Basic users are zero-limited on Imagine server-side; return
-        // the upsell prose instead of a doomed request (shares `image_gen`'s
-        // message and short-circuits before resolving any attachments).
+        // Avoid a doomed request when the provider/account reports no image
+        // capability; short-circuit before resolving attachments.
         if client.is_tier_restricted() {
             return Ok(ToolOutput::Text(
-                super::image_gen::TIER_RESTRICTED_UPSELL.into(),
+                super::image_gen::TIER_RESTRICTED_ERROR.into(),
             ));
         }
 

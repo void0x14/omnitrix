@@ -65,8 +65,8 @@ pub use router_engine::{
 };
 pub use routing_config::{
     ConfigError, GroundingMode, JepRoles, LegacyStrategy, ModelsConfig, RoutingConfig,
-    StrategyError, StrategyResolution, VALID_ROLE_IDS, parse_models_config,
-    parse_routing_config, resolve_strategy,
+    StrategyError, StrategyResolution, VALID_ROLE_IDS, parse_models_config, parse_routing_config,
+    resolve_strategy,
 };
 pub use sampling_log::AuthInfo;
 pub use stream::{collect_response, stream_chat_completions, stream_messages, stream_responses};

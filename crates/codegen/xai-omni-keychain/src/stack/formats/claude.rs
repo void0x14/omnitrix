@@ -188,8 +188,8 @@ fn provider_to_env_var(provider: &str) -> Option<&'static str> {
 }
 
 fn read_json(path: &Path) -> anyhow::Result<Value> {
-    let bytes = std::fs::read(path)
-        .map_err(|e| anyhow::anyhow!("{} okunamadı: {e}", path.display()))?;
+    let bytes =
+        std::fs::read(path).map_err(|e| anyhow::anyhow!("{} okunamadı: {e}", path.display()))?;
     serde_json::from_slice(&bytes)
         .map_err(|e| anyhow::anyhow!("{} bozuk JSON: {e}", path.display()))
 }

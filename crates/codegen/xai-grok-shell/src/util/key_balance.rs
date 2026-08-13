@@ -41,7 +41,9 @@ async fn probe_openai(
     base_url: Option<&str>,
     api_key: &str,
 ) -> Option<f64> {
-    let base = base_url.unwrap_or("https://api.openai.com/v1").trim_end_matches('/');
+    let base = base_url
+        .unwrap_or("https://api.openai.com/v1")
+        .trim_end_matches('/');
     let url = format!("{base}/dashboard/billing/subscription");
     let response = client
         .get(&url)

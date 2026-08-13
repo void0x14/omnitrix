@@ -1,4 +1,4 @@
-//! `/usage` — session token/cost; consumer accounts can also manage billing.
+//! `/usage` — session token/cost and provider usage information.
 
 use crate::app::actions::Action;
 use crate::slash::command::{AppCtx, ArgItem, CommandExecCtx, CommandResult, SlashCommand};
@@ -19,7 +19,7 @@ impl SlashCommand for UsageCommand {
     }
 
     fn usage(&self) -> &str {
-        "/usage [show|manage]"
+        "/usage [show]"
     }
 
     fn takes_args(&self) -> bool {
@@ -35,20 +35,12 @@ impl SlashCommand for UsageCommand {
         if !ctx.billing_surface_visible {
             return None;
         }
-        Some(vec![
-            ArgItem {
-                display: "show".into(),
-                match_text: "show".into(),
-                insert_text: "show".into(),
-                description: "View usage".into(),
-            },
-            ArgItem {
-                display: "manage".into(),
-                match_text: "manage".into(),
-                insert_text: "manage".into(),
-                description: "Manage billing".into(),
-            },
-        ])
+        Some(vec![ArgItem {
+            display: "show".into(),
+            match_text: "show".into(),
+            insert_text: "show".into(),
+            description: "View usage".into(),
+        }])
     }
 
     fn run(&self, ctx: &mut CommandExecCtx, args: &str) -> CommandResult {
@@ -61,10 +53,7 @@ impl SlashCommand for UsageCommand {
         }
         match arg {
             "" | "show" => CommandResult::Action(Action::ShowUsage),
-            "manage" => CommandResult::Action(Action::ManageBilling),
-            _ => CommandResult::Error(format!(
-                "Unknown argument: {arg}. Use /usage show or /usage manage"
-            )),
+            _ => CommandResult::Error(format!("Unknown argument: {arg}. Use /usage show")),
         }
     }
 }

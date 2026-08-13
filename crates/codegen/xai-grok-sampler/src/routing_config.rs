@@ -249,9 +249,7 @@ pub struct ModelsConfig {
 #[derive(Debug)]
 pub enum ConfigError {
     /// TOML ayrıştırılamadı (bozuk sözdizimi, yanlış tip vb.).
-    Toml {
-        source: toml::de::Error,
-    },
+    Toml { source: toml::de::Error },
     /// `[jep]` değeri geçerli bir rol kimliği değil (model adı reddedilir — I5).
     InvalidJepRole {
         /// TOML anahtarı (`planner` / `executor` / `judge`).
@@ -300,9 +298,8 @@ impl std::error::Error for ConfigError {
 /// doğrular (I5 sınırı: rol kimliği olmayan değer — model adı dahil —
 /// reddedilir).
 pub fn parse_routing_config(content: &str) -> Result<RoutingConfig, ConfigError> {
-    let config: RoutingConfig = toml::from_str(content).map_err(|source| ConfigError::Toml {
-        source,
-    })?;
+    let config: RoutingConfig =
+        toml::from_str(content).map_err(|source| ConfigError::Toml { source })?;
     validate_jep_roles(&config.jep)?;
     Ok(config)
 }
@@ -334,9 +331,8 @@ fn validate_jep_roles(jep: &JepRoles) -> Result<(), ConfigError> {
 /// `config/models.toml` içeriğini ayrıştırır ve `[roles]` anahtarlarını
 /// doğrular (yalnızca rol kimlikleri; model adı anahtarı reddedilir).
 pub fn parse_models_config(content: &str) -> Result<ModelsConfig, ConfigError> {
-    let config: ModelsConfig = toml::from_str(content).map_err(|source| ConfigError::Toml {
-        source,
-    })?;
+    let config: ModelsConfig =
+        toml::from_str(content).map_err(|source| ConfigError::Toml { source })?;
     for key in config.roles.keys() {
         if !VALID_ROLE_IDS.contains(&key.as_str()) {
             return Err(ConfigError::InvalidRoleKey {

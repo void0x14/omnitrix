@@ -276,24 +276,19 @@ fn parse_embedded_catalog() -> Result<Vec<RoutingModeDef>, RoutingCatalogError> 
     parse_catalog(EMBEDDED_CATALOG, Path::new("config/routing_modes.toml"))
 }
 
-fn parse_catalog(
-    content: &str,
-    path: &Path,
-) -> Result<Vec<RoutingModeDef>, RoutingCatalogError> {
-    let file: CatalogFile = toml::from_str(content).map_err(|source| RoutingCatalogError::Parse {
-        path: path.to_path_buf(),
-        source,
-    })?;
+fn parse_catalog(content: &str, path: &Path) -> Result<Vec<RoutingModeDef>, RoutingCatalogError> {
+    let file: CatalogFile =
+        toml::from_str(content).map_err(|source| RoutingCatalogError::Parse {
+            path: path.to_path_buf(),
+            source,
+        })?;
     validate_catalog(&file.modes, path)?;
     Ok(file.modes)
 }
 
 /// Unique id, zorunlu alan ve parametre şeması kontrolü; tüm ihlaller tek
 /// mesajda toplanır.
-fn validate_catalog(
-    modes: &[RoutingModeDef],
-    path: &Path,
-) -> Result<(), RoutingCatalogError> {
+fn validate_catalog(modes: &[RoutingModeDef], path: &Path) -> Result<(), RoutingCatalogError> {
     let mut errors: Vec<String> = Vec::new();
     let mut seen: HashSet<&str> = HashSet::with_capacity(modes.len());
     for mode in modes {
@@ -353,9 +348,11 @@ fn default_matches_kind(kind: ParamKind, default: &str) -> bool {
             .ok()
             .is_some_and(|value| value.is_finite()),
         ParamKind::String => true,
-        ParamKind::List => serde_json::from_str::<serde_json::Value>(default)
-            .is_ok_and(|value| value.is_array()),
-        ParamKind::Map => serde_json::from_str::<serde_json::Value>(default)
-            .is_ok_and(|value| value.is_object()),
+        ParamKind::List => {
+            serde_json::from_str::<serde_json::Value>(default).is_ok_and(|value| value.is_array())
+        }
+        ParamKind::Map => {
+            serde_json::from_str::<serde_json::Value>(default).is_ok_and(|value| value.is_object())
+        }
     }
 }

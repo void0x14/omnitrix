@@ -75,10 +75,7 @@ pub fn merge_export(
         if existing.is_some() && overwrite {
             summary.overwritten.push("openai".into());
         }
-        obj.insert(
-            "OPENAI_API_KEY".into(),
-            Value::String(api_key.clone()),
-        );
+        obj.insert("OPENAI_API_KEY".into(), Value::String(api_key.clone()));
         // oauth tokens alanına dokunma
         if !obj.contains_key("auth_mode") {
             obj.insert("auth_mode".into(), Value::String("apikey".into()));
@@ -92,8 +89,8 @@ pub fn merge_export(
 }
 
 fn read_json(path: &Path) -> anyhow::Result<Value> {
-    let bytes = std::fs::read(path)
-        .map_err(|e| anyhow::anyhow!("{} okunamadı: {e}", path.display()))?;
+    let bytes =
+        std::fs::read(path).map_err(|e| anyhow::anyhow!("{} okunamadı: {e}", path.display()))?;
     serde_json::from_slice(&bytes)
         .map_err(|e| anyhow::anyhow!("{} bozuk JSON: {e}", path.display()))
 }

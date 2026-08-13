@@ -53,11 +53,13 @@ pub fn analyze(blocks_file: &Path) -> ExecutionGraph {
 
     if blocks.is_empty() {
         // Dosya yok/boş/bozuk: fail-safe — sıralı (yürütme modelde kalır).
-        return ExecutionGraph { sequence: vec![], total_blocks: 0 };
+        return ExecutionGraph {
+            sequence: vec![],
+            total_blocks: 0,
+        };
     }
 
-    let by_id: HashMap<&str, &BuildingBlock> =
-        blocks.iter().map(|b| (b.id.as_str(), b)).collect();
+    let by_id: HashMap<&str, &BuildingBlock> = blocks.iter().map(|b| (b.id.as_str(), b)).collect();
     let file_owner: HashMap<&str, Vec<&str>> = {
         let mut m: HashMap<&str, Vec<&str>> = HashMap::new();
         for b in &blocks {
@@ -110,11 +112,16 @@ pub fn analyze(blocks_file: &Path) -> ExecutionGraph {
             }
         }
         group.sort_unstable();
-        sequence.push(ParallelGroup { parallel: group.iter().map(|s| s.to_string()).collect() });
+        sequence.push(ParallelGroup {
+            parallel: group.iter().map(|s| s.to_string()).collect(),
+        });
         remaining = rest;
     }
 
-    ExecutionGraph { sequence, total_blocks: blocks.len() }
+    ExecutionGraph {
+        sequence,
+        total_blocks: blocks.len(),
+    }
 }
 
 /// Grafiğin insan+AI okur özeti (kanıt detayına yazılır).

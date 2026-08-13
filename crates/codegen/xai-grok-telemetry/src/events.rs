@@ -1135,76 +1135,6 @@ pub struct ProjectPickerSelected {
     pub project_dir_options: usize,
 }
 
-// ---------------------------------------------------------------------------
-// SuperGrok upsell
-// ---------------------------------------------------------------------------
-
-#[derive(Debug, Serialize, Clone, Copy, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum SuperGrokUpsell {
-    WelcomeScreen,
-    RateLimitError,
-    /// Free-usage-exhausted paywall modal (free-tier 429 with the
-    /// `subscription:free-usage-exhausted` well-known error code).
-    FreeUsagePaywall,
-    /// Upsell modal shown when a tier-restricted slash command
-    /// (`/usage`, `/imagine`, …) is invoked on the free / X Basic tiers.
-    RestrictedCommand,
-}
-
-#[derive(Serialize)]
-pub struct SuperGrokUpsellShown {
-    pub source: SuperGrokUpsell,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub auth_method: Option<String>,
-}
-
-#[derive(Serialize)]
-pub struct SuperGrokUpsellClicked {
-    pub source: SuperGrokUpsell,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub auth_method: Option<String>,
-}
-
-/// Which surface a promo announcement's upgrade CTA was activated from.
-/// Modeled on [`SuperGrokUpsell`]; lets the funnel attribute the click to the
-/// welcome hero vs the in-session header vs the banner vs the dashboard, and
-/// distinguish keyboard (`Ctrl+O`) activations from pointer/OSC 8 ones.
-/// Ord/Eq exist for the pager's per-(announcement, surface) impression latch.
-#[derive(Debug, Serialize, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-#[serde(rename_all = "snake_case")]
-pub enum AnnouncementCtaSurface {
-    Banner,
-    Welcome,
-    Header,
-    Dashboard,
-    Keyboard,
-}
-
-/// A promo announcement's CTA button was painted on a surface — the
-/// impression half of the per-surface CTR funnel with
-/// [`AnnouncementCtaClicked`]. Emitted once per (announcement, surface) per
-/// pager process (cleared on logout); never emitted for `Keyboard` (a
-/// click-only surface).
-#[derive(Serialize)]
-pub struct AnnouncementCtaShown {
-    /// Announcement `id` from the server push (`None` for id-less items).
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub id: Option<String>,
-    /// Which surface painted the button.
-    pub source: AnnouncementCtaSurface,
-}
-
-/// User activated a promo announcement's CTA button (the `[label]` open).
-#[derive(Serialize)]
-pub struct AnnouncementCtaClicked {
-    /// Announcement `id` from the server push (`None` for id-less items).
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub id: Option<String>,
-    /// Which surface the activation came from (per-surface conversion signal).
-    pub source: AnnouncementCtaSurface,
-}
-
 /// Flat snapshot of the terminal environment for telemetry.
 ///
 /// Shared across pager events so terminal fields are typed once.
@@ -1382,8 +1312,7 @@ pub struct DashboardAgentLaunched {
 // Rate limiting
 // ---------------------------------------------------------------------------
 
-/// Emitted when a user's turn fails due to rate limiting (all retries
-/// exhausted). Key conversion-funnel signal: rate limit → upsell → subscribe.
+/// Emitted when a user's turn fails after exhausting rate-limit retries.
 #[derive(Serialize)]
 pub struct RateLimitHit {
     pub model_id: String,
@@ -1447,73 +1376,6 @@ pub struct ExternalOtelExportHealth {
     pub metric_exports_dropped: u64,
     pub export_failures: u64,
     pub export_successes: u64,
-}
-
-// ---------------------------------------------------------------------------
-// Credit limit
-// ---------------------------------------------------------------------------
-
-/// 403 "run out of credits" — billing exhaustion (not request throttling).
-#[derive(Serialize)]
-pub struct CreditLimitHit {
-    pub model_id: String,
-}
-
-#[derive(Serialize, Clone, Copy)]
-#[serde(rename_all = "snake_case")]
-pub enum CreditLimitUpsellSurface {
-    /// Q&A modal with "Upgrade tier" + "Pay as you go" options (non-max-tier).
-    QuestionModal,
-    /// Inline scrollback card with PAYG link (max-tier / Heavy users).
-    InlineCard,
-}
-
-/// Credit-limit upsell displayed to the user.
-#[derive(Serialize)]
-pub struct CreditLimitUpsellShown {
-    pub surface: CreditLimitUpsellSurface,
-    pub max_tier: bool,
-    pub pay_as_you_go: bool,
-    /// User is on unified usage billing (buy-credits wording). When false,
-    /// legacy on-demand / PAYG wording was used.
-    #[serde(default)]
-    pub unified_billing: bool,
-}
-
-#[derive(Debug, Serialize, Clone, Copy)]
-#[serde(rename_all = "snake_case")]
-pub enum CreditLimitChoice {
-    UpgradeTier,
-    /// Covers both "Pay as you go" (enable) and "Increase limit" (raise cap).
-    PayAsYouGo,
-    /// Unified-billing / credits-pool users: purchase prepaid credits.
-    PurchaseCredits,
-}
-
-/// User clicked an option in the credit-limit upsell.
-#[derive(Serialize)]
-pub struct CreditLimitUpsellClicked {
-    pub surface: CreditLimitUpsellSurface,
-    pub choice: CreditLimitChoice,
-}
-
-// ---------------------------------------------------------------------------
-// Subscription conversion
-// ---------------------------------------------------------------------------
-
-/// Emitted when a previously access-gated user re-authenticates and the gate
-/// is lifted — i.e. they subscribed (externally on grok.com) and came back.
-/// This is the actual conversion signal for SuperGrok Heavy subscriptions
-/// attributed to Grok Build: the user saw the gate in Grok Build, went and
-/// paid, then returned with access.
-#[derive(Serialize)]
-pub struct SubscriptionActivated {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub auth_method: Option<String>,
-    /// Whether the subscribe CTA was shown in this session before the gate
-    /// was lifted (`access_gate_shown_logged`). When `true`, the conversion
-    /// is strongly attributable to Grok Build's upsell surface.
-    pub upsell_shown_this_session: bool,
 }
 
 /// Why auth recovery could not refresh the credential, forcing the user to
@@ -1736,10 +1598,6 @@ telemetry_event!(
 telemetry_event!(PagerSlashCommand, "pager_slash_command");
 telemetry_event!(PlanSubmit, "plan_submit");
 telemetry_event!(ProjectPickerSelected, "project_picker_selected");
-telemetry_event!(SuperGrokUpsellShown, "supergrok_upsell_shown");
-telemetry_event!(SuperGrokUpsellClicked, "supergrok_upsell_clicked");
-telemetry_event!(AnnouncementCtaShown, "announcement_cta_shown");
-telemetry_event!(AnnouncementCtaClicked, "announcement_cta_clicked");
 telemetry_event!(TerminalTelemetry, "terminal_context");
 telemetry_event!(DisplayRefreshProbe, "display_refresh_probe");
 telemetry_event!(BackspaceNoEffect, "backspace_no_effect");
@@ -1756,10 +1614,6 @@ telemetry_event!(
     "rate_limit_hit",
     external = crate::external::schema::map_rate_limit_hit
 );
-telemetry_event!(CreditLimitHit, "credit_limit_hit");
-telemetry_event!(CreditLimitUpsellShown, "credit_limit_upsell_shown");
-telemetry_event!(CreditLimitUpsellClicked, "credit_limit_upsell_clicked");
-telemetry_event!(SubscriptionActivated, "subscription_activated");
 telemetry_event!(
     ApiError,
     "api_error",
@@ -2004,12 +1858,6 @@ mod tests {
         assert_eq!(PluginCtaConnectClicked::NAME, "plugin_cta_connect_clicked");
         assert_eq!(PluginCtaDismissed::NAME, "plugin_cta_dismissed");
         assert_eq!(PluginCtaInstalled::NAME, "plugin_cta_installed");
-    }
-
-    #[test]
-    fn announcement_cta_event_names() {
-        assert_eq!(AnnouncementCtaShown::NAME, "announcement_cta_shown");
-        assert_eq!(AnnouncementCtaClicked::NAME, "announcement_cta_clicked");
     }
 
     #[test]

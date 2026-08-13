@@ -1,16 +1,15 @@
 //! `/omni-research <surface|deep|ocean> <soru>` — run a research scan on the
 //! omnitrix research engine.
 //!
-//! Reads the engine through [`crate::omni_bridge::research`]. The engine is
-//! installed by the `omnitrix` binary after warm-up (Faz 7), so this command
-//! degrades to a "not installed" message when the core is absent or no
-//! research provider is configured. Runs synchronously; the markdown summary
-//! is capped to a few scrollback-friendly lines.
+//! Injects a structured request into the native agent/tool pipeline. The
+//! `grok_research` tool performs the asynchronous work; slash dispatch never
+//! blocks on research I/O.
 
-use crate::omni_bridge::{self, ResearchMode};
+use crate::omni_bridge::ResearchMode;
 use crate::slash::command::{CommandExecCtx, CommandResult, SlashCommand};
 
 /// Maksimum goruntulenecek markdown satiri (scrollback dostu ozet).
+#[cfg(test)]
 const SUMMARY_LINES: usize = 40;
 
 /// Run a research scan on the omnitrix core.
@@ -44,7 +43,8 @@ fn parse_args(args: &str) -> Result<(ResearchMode, String), String> {
 }
 
 /// Rapor ozetini olusturur: markdown'in ilk satirlari, uzunsa kisaltma ipucu.
-fn render_summary(report: &omni_bridge::ResearchReport) -> String {
+#[cfg(test)]
+fn render_summary(report: &crate::omni_bridge::ResearchReport) -> String {
     let mut lines: Vec<&str> = report.summary.lines().take(SUMMARY_LINES).collect();
     let elided = report.summary.lines().count() > SUMMARY_LINES;
     if elided || report.truncated {
@@ -60,25 +60,20 @@ fn run_research(args: &str) -> CommandResult {
         Err(msg) => return CommandResult::Message(msg),
     };
 
-    let engine = match omni_bridge::research() {
-        Some(e) => e,
-        None => {
-            return CommandResult::Message(
-                "arastirma motoru kurulmamis (warmup bekleniyor veya saglayici yok)".to_string(),
-            );
-        }
-    };
-
-    match engine.investigate(mode, question) {
-        Ok(report) => CommandResult::Message(format!(
-            "arastirma tamamlandi: mod={} bulgu={} tur={} saglayici={}\n\n{}",
-            report.mode.as_str(),
-            report.findings,
-            report.rounds_run,
-            report.provider,
-            render_summary(&report),
-        )),
-        Err(e) => CommandResult::Message(format!("arastirma basarisiz: {e}")),
+    let instruction = format!(
+        "Use the native grok_research tool exactly once with mode '{}' and query '{}'. \
+         Return its evidence-backed markdown report and preserve source URLs. \
+         Do not replace the tool call with unaided knowledge.",
+        mode.as_str(),
+        question
+    );
+    CommandResult::InjectSkill {
+        display_text: format!("/omni-research {} {}", mode.as_str(), question),
+        prompt_blocks: vec![agent_client_protocol::ContentBlock::Text(
+            agent_client_protocol::TextContent::new(instruction),
+        )],
+        display_as_skill: false,
+        scheduled_task_preview: None,
     }
 }
 
@@ -159,7 +154,7 @@ mod tests {
 
     #[test]
     fn render_summary_satir_ustunu_keser() {
-        let mut report = omni_bridge::ResearchReport {
+        let mut report = crate::omni_bridge::ResearchReport {
             mode: ResearchMode::Surface,
             query: "q".into(),
             provider: "s".into(),
@@ -195,21 +190,21 @@ mod tests {
         assert!(cmd.args_required());
     }
 
-    /// Bridge OnceLock process-global oldugu icin kurulu motor yokken komutun
-    /// "kurulmamis" mesaji vermesi garanti edilemez; her iki durum da dogru
-    /// davranis olmalidir.
     #[test]
-    #[serial_test::serial(OMNI_BRIDGE)]
-    fn not_installed_or_runs() {
+    fn injects_native_research_tool_request() {
         match run("deep soru") {
-            CommandResult::Message(msg) => {
-                if msg.contains("kurulmamis") {
-                    assert!(msg.contains("arastirma motoru"));
-                } else {
-                    assert!(msg.contains("arastirma tamamlandi"));
-                }
+            CommandResult::InjectSkill {
+                display_text,
+                prompt_blocks,
+                ..
+            } => {
+                assert_eq!(display_text, "/omni-research deep soru");
+                let prompt = format!("{prompt_blocks:?}");
+                assert!(prompt.contains("grok_research"));
+                assert!(prompt.contains("deep"));
+                assert!(prompt.contains("soru"));
             }
-            other => panic!("expected Message, got {other:?}"),
+            other => panic!("expected InjectSkill, got {other:?}"),
         }
     }
 }

@@ -43,15 +43,15 @@ pub mod mcps;
 pub mod model;
 pub mod multiline;
 pub mod new;
-pub mod omni_notify;
-pub mod omni_keys;
-pub mod omni_dashboard;
-pub mod omni_status;
-pub mod omni_tasks;
-pub mod omni_research;
 pub mod omni_autonomous;
 pub mod omni_backup;
+pub mod omni_dashboard;
+pub mod omni_keys;
+pub mod omni_notify;
+pub mod omni_research;
 pub mod omni_routing;
+pub mod omni_status;
+pub mod omni_tasks;
 pub mod personas;
 pub mod plan;
 pub mod plugin;
@@ -63,6 +63,9 @@ pub mod remember;
 pub mod rename;
 pub mod resume;
 pub mod rewind;
+pub mod routing;
+#[cfg(test)]
+mod routing_tests;
 pub mod screen_mode_switch;
 pub mod scroll_debug;
 pub mod session_info;
@@ -80,9 +83,6 @@ pub mod view_plan;
 pub mod vim_mode;
 pub mod voice;
 pub mod workflows;
-pub mod routing;
-#[cfg(test)]
-mod routing_tests;
 use super::command::SlashCommand;
 use std::sync::Arc;
 /// All pager-local builtin commands, in display order.
@@ -353,6 +353,7 @@ mod tests {
             "rename",
             "resume",
             "rewind",
+            "routing",
             "scroll-debug",
             "session-info",
             "sessions",
@@ -652,7 +653,7 @@ mod tests {
         usage::UsageCommand.run(&mut ctx, args)
     }
     #[test]
-    fn usage_consumer_show_and_manage() {
+    fn usage_consumer_show_only() {
         assert!(matches!(
             run_usage("", true),
             CommandResult::Action(Action::ShowUsage)
@@ -661,10 +662,7 @@ mod tests {
             run_usage("show", true),
             CommandResult::Action(Action::ShowUsage)
         ));
-        assert!(matches!(
-            run_usage("  manage  ", true),
-            CommandResult::Action(Action::ManageBilling)
-        ));
+        assert!(matches!(run_usage("manage", true), CommandResult::Error(_)));
         assert!(matches!(run_usage("delete", true), CommandResult::Error(_)));
     }
     #[test]
@@ -709,7 +707,7 @@ mod tests {
         let items = usage::UsageCommand.suggest_args(&ctx, "").unwrap();
         assert_eq!(
             items.iter().map(|i| i.display.as_str()).collect::<Vec<_>>(),
-            ["show", "manage"]
+            ["show"]
         );
         ctx.billing_surface_visible = false;
         assert!(usage::UsageCommand.suggest_args(&ctx, "").is_none());

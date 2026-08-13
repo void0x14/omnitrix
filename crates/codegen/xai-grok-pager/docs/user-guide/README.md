@@ -52,3 +52,5 @@ Automate, script, and integrate Grok Build with other systems.
 | 22 | [Permissions and Safety](22-permissions-and-safety.md) | Modes (always-approve, auto, ask), rules, matching, hooks, and examples |
 | 23 | [Agent Dashboard](23-dashboard.md) | Central overview of local sessions and forks |
 | 24 | [Monitoring Usage (External OpenTelemetry)](24-monitoring-usage.md) | Customer OTEL export |
+| 25 | [Omnitrix Operations](25-omnitrix.md) | Native runtime, routing, research, autonomous missions, notifications, and backup |
+| 26 | [Providers and Keys](26-provider-keys.md) | `/connect`, encrypted key management, and automatic OpenCode import |

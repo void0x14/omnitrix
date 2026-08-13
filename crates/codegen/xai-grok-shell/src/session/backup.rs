@@ -538,7 +538,10 @@ pub(crate) mod sigv4 {
             f.debug_struct("SigV4Credentials")
                 .field("access_key_id", &self.access_key_id)
                 .field("secret_access_key", &"[REDACTED]")
-                .field("session_token", &self.session_token.as_ref().map(|_| "[REDACTED]"))
+                .field(
+                    "session_token",
+                    &self.session_token.as_ref().map(|_| "[REDACTED]"),
+                )
                 .finish()
         }
     }
@@ -607,7 +610,10 @@ pub(crate) mod sigv4 {
         /// `kSecret -> kDate -> kRegion -> kService -> kSigning` zinciri.
         fn signing_key(&self, date_stamp: &str) -> Zeroizing<Vec<u8>> {
             let seed = Zeroizing::new(format!("AWS4{}", self.secret()).into_bytes());
-            let k_date = hmac::sign(&hmac::Key::new(hmac::HMAC_SHA256, &seed), date_stamp.as_bytes());
+            let k_date = hmac::sign(
+                &hmac::Key::new(hmac::HMAC_SHA256, &seed),
+                date_stamp.as_bytes(),
+            );
             let k_region = hmac::sign(
                 &hmac::Key::new(hmac::HMAC_SHA256, k_date.as_ref()),
                 self.region.as_bytes(),
@@ -628,7 +634,11 @@ pub(crate) mod sigv4 {
         }
 
         /// Tam SigV4 imzasını üretir.
-        pub fn sign(&self, req: &CanonicalRequest<'_>, now: DateTime<Utc>) -> Result<SignedRequest> {
+        pub fn sign(
+            &self,
+            req: &CanonicalRequest<'_>,
+            now: DateTime<Utc>,
+        ) -> Result<SignedRequest> {
             validate(req)?;
 
             let amz_date = now.format("%Y%m%dT%H%M%SZ").to_string();
@@ -1042,14 +1052,8 @@ struct S3UploadTarget<'a> {
 fn s3_target(config: &BackupConfig) -> Option<S3UploadTarget<'_>> {
     let endpoint = config.s3_endpoint.as_deref().filter(|s| !s.is_empty())?;
     let bucket = config.s3_bucket.as_deref().filter(|s| !s.is_empty())?;
-    let access_key = config
-        .s3_access_key
-        .as_deref()
-        .filter(|s| !s.is_empty())?;
-    let secret_key = config
-        .s3_secret_key
-        .as_deref()
-        .filter(|s| !s.is_empty())?;
+    let access_key = config.s3_access_key.as_deref().filter(|s| !s.is_empty())?;
+    let secret_key = config.s3_secret_key.as_deref().filter(|s| !s.is_empty())?;
     let region = config
         .region
         .as_deref()
@@ -1104,10 +1108,7 @@ async fn upload_backup_to_s3(
                 query: &[],
                 host: &host_header,
                 payload_sha256_hex: &payload_hash,
-                extra_headers: &[(
-                    "x-amz-content-sha256".to_string(),
-                    payload_hash.clone(),
-                )],
+                extra_headers: &[("x-amz-content-sha256".to_string(), payload_hash.clone())],
             },
             Utc::now(),
         )
@@ -1173,7 +1174,10 @@ pub(crate) fn maybe_auto_backup() {
         return;
     };
     static LAST_BACKUP: OnceLock<Mutex<Instant>> = OnceLock::new();
-    let Ok(mut last) = LAST_BACKUP.get_or_init(|| Mutex::new(Instant::now())).lock() else {
+    let Ok(mut last) = LAST_BACKUP
+        .get_or_init(|| Mutex::new(Instant::now()))
+        .lock()
+    else {
         return;
     };
     if last.elapsed() < Duration::from_secs(interval_secs) {

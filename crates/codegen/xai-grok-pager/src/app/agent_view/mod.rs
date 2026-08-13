@@ -852,8 +852,8 @@ pub struct AgentView {
     /// Restored when editing ends.
     pub stashed_prompt: Option<StashedPrompt>,
     /// Complete prompt stashed from a credit-limit-blocked turn. Used by
-    /// `CreditLimitRecheckComplete` to retry the prompt after a tier
-    /// upgrade instead of showing a stale upsell.
+    /// `CreditLimitRecheckComplete` to retry the prompt after access is
+    /// restored instead of showing a stale access message.
     pub credit_limit_stashed_prompt: Option<crate::app::agent::InFlightPrompt>,
     /// Complete prompt stashed from a turn that failed because the login
     /// expired (401 / re-auth). Used by the `AuthComplete` handler to
@@ -1099,15 +1099,9 @@ pub struct AgentView {
     pub(crate) watching_cue_toast_shown: bool,
     /// `[hide]` button on the announcement banner (click == `/announcements hide`).
     pub hit_announcement_hide: HitArea,
-    /// `[label]` CTA button on the promo banner row (click opens its link).
-    pub hit_announcement_cta: HitArea,
     /// Privacy upsell banner state: slot ownership + click targets
     /// (packaged like [`Self::plugin_cta`]).
     pub privacy_banner: PrivacyBannerState,
-    /// `[label]` upgrade CTA appended after the cwd path in the status bar
-    /// (click opens its link; nulled under dropdowns / occluders like the
-    /// banner CTA).
-    pub hit_upgrade_cta: HitArea,
     /// Stop button in the voice record indicator row (`[stop]`), far right.
     pub hit_voice_stop_button: HitArea,
     /// Scrollbar track for the scrollback pane (for click-to-jump / drag).
@@ -1239,11 +1233,6 @@ pub struct AgentView {
     /// mode-switch, an announcement can last the session, so tips must not
     /// burn TTL/seen counts while hidden.
     pub(crate) session_banner_active: bool,
-    /// A pinned (non-dismissible) promo upgrade CTA is live this frame (set at
-    /// the start of `draw` from the same slot gate as the header CTA). When
-    /// true, `Ctrl+O` opens that CTA instead of toggling YOLO; the dispatch
-    /// re-resolves through the gate so a stale-by-one-frame value stays safe.
-    pub(crate) pinned_upgrade_cta_live: bool,
     /// Fullscreen block viewer. When `Some`, replaces the scrollback area.
     pub(crate) block_viewer: Option<BlockViewerPane>,
     /// Active scrollback search session. When `Some`, vim `/` (or `/find`) is
@@ -1681,39 +1670,6 @@ fn translate_local_submit(
                 worktree,
                 persist_mode,
             })
-        }
-        LocalQuestionKind::CreditLimitUpsell { choices } => {
-            let q = qv.questions.first();
-            let url = q
-                .and_then(|q| q.options.get(*idx))
-                .and_then(|o| o.id.as_deref())
-                .unwrap_or(super::dispatch::UPSELL_URL_PAYG);
-            let choice = choices
-                .get(*idx)
-                .copied()
-                .unwrap_or(xai_grok_telemetry::events::CreditLimitChoice::PayAsYouGo);
-            xai_grok_telemetry::session_ctx::log_event(
-                xai_grok_telemetry::events::CreditLimitUpsellClicked {
-                    surface: xai_grok_telemetry::events::CreditLimitUpsellSurface::QuestionModal,
-                    choice,
-                },
-            );
-            InputOutcome::Action(Action::OpenUrl(url.to_string()))
-        }
-        LocalQuestionKind::FreeUsageUpsell { source } => {
-            let url = qv
-                .questions
-                .first()
-                .and_then(|q| q.options.get(*idx))
-                .and_then(|o| o.id.as_deref())
-                .unwrap_or(super::dispatch::UPSELL_URL_UPGRADE);
-            xai_grok_telemetry::session_ctx::log_event(
-                xai_grok_telemetry::events::SuperGrokUpsellClicked {
-                    source,
-                    auth_method: None,
-                },
-            );
-            InputOutcome::Action(Action::OpenUrl(url.to_string()))
         }
         LocalQuestionKind::AgentTypeMismatch { model_id, effort } => {
             let start_new = *idx == 0;

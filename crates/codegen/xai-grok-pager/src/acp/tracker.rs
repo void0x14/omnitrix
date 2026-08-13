@@ -2077,7 +2077,7 @@ fn media_gen_block(tc: &acp::ToolCall, success: bool) -> RenderBlock {
     RenderBlock::ToolCall(ToolCallBlock::Other(block))
 }
 /// Plain-text body of a media-variant tool that returned `ToolOutput::Text`
-/// rather than a media file (the free / X Basic SuperGrok-upsell short-circuit).
+/// rather than a media file (the provider/account capability short-circuit).
 /// `None` for real media outputs — including ZDR upload-only results — so their
 /// typed rendering is untouched.
 fn media_gen_text(tc: &acp::ToolCall) -> Option<String> {
@@ -6686,15 +6686,13 @@ mod tests {
             "uploaded_url-only media must not claim a local open path"
         );
     }
-    /// A tier-restricted (free / X Basic) imagine call short-circuits with the
-    /// SuperGrok upsell as `ToolOutput::Text` on a `Completed` status. The media
-    /// renderer has no file to open, so it must surface the upsell text in the
+    /// A capability-restricted imagine call short-circuits with neutral text on
+    /// a `Completed` status. The media renderer has no file to open, so it must surface the text in the
     /// card body (not a bare title) and must NOT mark the card as an error.
     #[test]
-    fn tier_restricted_media_shows_upsell_text_not_error() {
-        let upsell = "Image generation is a SuperGrok feature. Upgrade at \
-             https://grok.com/supergrok?referrer=grok-build";
-        let output = ToolOutput::Text(xai_grok_tools::types::output::TextOutput::from(upsell));
+    fn tier_restricted_media_shows_neutral_text_not_error() {
+        let message = "Image generation is unavailable for the current provider or account.";
+        let output = ToolOutput::Text(xai_grok_tools::types::output::TextOutput::from(message));
         let tc = acp::ToolCall::new(
             acp::ToolCallId::new(Arc::from("tier-restricted-img")),
             "image_gen",
@@ -6702,7 +6700,7 @@ mod tests {
         .kind(acp::ToolKind::Other)
         .status(acp::ToolCallStatus::Completed)
         .content(vec![acp::ToolCallContent::Content(acp::Content::new(
-            acp::ContentBlock::Text(acp::TextContent::new(upsell)),
+            acp::ContentBlock::Text(acp::TextContent::new(message)),
         ))])
         .raw_input(Some(serde_json::json!({ "variant": "ImageGen" })))
         .raw_output(serde_json::to_value(output).ok())
@@ -6713,15 +6711,15 @@ mod tests {
         };
         assert!(
             block.is_success(),
-            "the upsell is a successful result, not an error"
+            "the capability response is a successful result, not an error"
         );
         assert!(
             block
                 .output
                 .as_deref()
                 .unwrap_or_default()
-                .contains("SuperGrok"),
-            "upsell text must be shown in the card body, got: {:?}",
+                .contains("unavailable"),
+            "capability text must be shown in the card body, got: {:?}",
             block.output
         );
     }

@@ -1105,8 +1105,6 @@ pub(super) fn dispatch_task_result(result: TaskResult, app: &mut AppView) -> Vec
         }
         TaskResult::LogoutComplete => {
             app.auth_state = AuthState::Pending { error: None };
-            app.access_gate_shown_logged = false;
-            app.announcement_cta_impressions_logged.clear();
             app.gate = None;
             app.pending_gate_verification = None;
             app.last_subscription_check_at = None;
@@ -1237,6 +1235,7 @@ pub(super) fn dispatch_task_result(result: TaskResult, app: &mut AppView) -> Vec
                             flow.set_catalog(cache.clone());
                         }
                     }
+                    return super::connect::activate_imported_opencode_provider(app, &cache);
                 }
                 Err(error) => {
                     tracing::warn!(
@@ -1260,10 +1259,28 @@ pub(super) fn dispatch_task_result(result: TaskResult, app: &mut AppView) -> Vec
                             flow.error = None;
                         }
                     }
+                    // OpenCode auto-activation must not remain armed after a
+                    // catalog failure; otherwise every later key refresh
+                    // reports a connection that can never complete.
+                    with_keys_manager(app, |state| {
+                        if state.auto_activate_opencode {
+                            state.auto_activate_opencode = false;
+                            state.notice = Some(format!(
+                                "OpenCode etkinleştirilemedi: katalog alınamadı ({error})"
+                            ));
+                        }
+                    });
                 }
             }
             vec![]
         }
+        TaskResult::OpenCodeCredentialsLoaded { result } => match result {
+            Ok(loaded) => super::connect::apply_opencode_credentials(app, loaded),
+            Err(error) => {
+                tracing::warn!(target: "keys", %error, "OpenCode credential import skipped");
+                vec![]
+            }
+        },
         TaskResult::AutoConnectComplete { result } => {
             // Auto-connect sonucu (P0.4). Stale guard: sonuç yalnızca hâlâ
             // `AutoDetecting`'teki flow'a yazılır — modal kapandıysa veya
@@ -1312,6 +1329,7 @@ pub(super) fn dispatch_task_result(result: TaskResult, app: &mut AppView) -> Vec
             model_id,
             model_key,
             result,
+            activation_error,
         } => {
             // Wizard apply hâlâ `Apply` adımındaysa sonucu bağla: kalıcılık
             // başarılı → `Done` (bağlantı tamamlandı); başarısız → `Error`
@@ -1342,6 +1360,29 @@ pub(super) fn dispatch_task_result(result: TaskResult, app: &mut AppView) -> Vec
                         model_key = %model_key,
                         "provider connection persisted",
                     );
+                    if let Some(error) = activation_error {
+                        tracing::warn!(
+                            target: "connect",
+                            provider = %provider_id,
+                            model = %model_id,
+                            model_key = %model_key,
+                            %error,
+                            "provider persisted but active session model switch failed",
+                        );
+                        app.show_toast(&format!(
+                            "bağlandı fakat aktif oturum değiştirilemedi: {error}"
+                        ));
+                        with_keys_manager(app, |state| {
+                            state.notice = Some(format!(
+                                "OpenCode bağlandı; aktif oturum değiştirilemedi: {error}"
+                            ));
+                        });
+                    } else {
+                        with_keys_manager(app, |state| {
+                            state.notice =
+                                Some(format!("OpenCode etkin: {provider_id} / {model_id}"));
+                        });
+                    }
                 }
                 Err(error) => {
                     tracing::warn!(
@@ -1429,6 +1470,7 @@ pub(super) fn dispatch_task_result(result: TaskResult, app: &mut AppView) -> Vec
                         tracing::warn!(target: "keys", error = %e, "keychain save failed after balance probe");
                     }
                     super::connect::reload_keys_manager_entries(app);
+                    crate::omni_runtime::refresh();
                 }
             }
             vec![]

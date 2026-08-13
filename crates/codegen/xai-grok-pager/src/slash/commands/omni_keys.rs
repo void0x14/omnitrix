@@ -1,10 +1,8 @@
 //! `/omni-keys` — show the live/dead key ledger from the key ingestion
 //! pipeline (Faz 8).
 //!
-//! Reads a [`crate::omni_bridge::KeysSummary`] from the bridge. The provider
-//! is installed by the `omnitrix` binary after warm-up, so this command
-//! degrades to a "core not started" message when the pager runs standalone,
-//! and to "anahtar veritabani yok" when nothing has been fed yet.
+//! Reads a [`crate::omni_bridge::KeysSummary`] from the native in-process
+//! runtime and reports an empty ledger when no usable key has been discovered.
 
 use crate::omni_bridge;
 use crate::slash::command::{CommandExecCtx, CommandResult, SlashCommand};
@@ -50,9 +48,7 @@ impl SlashCommand for OmniKeysCommand {
             Some(_) => {
                 CommandResult::Message("anahtar veritabani yok (beslenen anahtar yok)".to_string())
             }
-            None => {
-                CommandResult::Message("omnitrix core baslatilmadi (warmup bekleniyor)".to_string())
-            }
+            None => CommandResult::Message("omnitrix anahtar durumu kullanilamiyor".to_string()),
         }
     }
 }
@@ -104,8 +100,8 @@ mod tests {
             return;
         }
         assert!(
-            first.contains("baslatilmadi") || first.contains("anahtar veritabani yok"),
-            "expected warm-up or no-db message, got {first}"
+            first.contains("kullanilamiyor") || first.contains("anahtar veritabani yok"),
+            "expected unavailable or no-db message, got {first}"
         );
 
         struct FakeKeys;

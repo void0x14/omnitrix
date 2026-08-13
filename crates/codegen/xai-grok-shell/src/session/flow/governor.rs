@@ -25,7 +25,7 @@ use super::events::FlowEvents;
 use super::gate::FlowGate;
 use super::judge::JudgeVerdict;
 use super::notify::NotifyReport;
-use super::parallel::{graph_summary, analyze};
+use super::parallel::{analyze, graph_summary};
 use super::state::FlowStateMachine;
 use super::store::FlowStore;
 
@@ -224,12 +224,8 @@ impl FlowGovernor {
             format!("akış seçimi (sistem): {}", flow.name),
         );
         // Süre kararı sistemindir (AI değil) — duration aşamasının kanıtıdır.
-        let duration = FlowDurationSystem::decide(
-            prompt_text.len(),
-            &classified,
-            user_mode,
-            &self.rules,
-        );
+        let duration =
+            FlowDurationSystem::decide(prompt_text.len(), &classified, user_mode, &self.rules);
         self.duration = Some(duration);
         if classified != ClassifiedFlow::Direct {
             self.store.record(
@@ -245,7 +241,11 @@ impl FlowGovernor {
     }
 
     // ── B) tool görünürlük filtresi ───────────────────────────────────────
-    pub fn tool_definitions_filter<T: Clone>(&self, defs: Vec<T>, id_of: impl Fn(&T) -> &str) -> Vec<T> {
+    pub fn tool_definitions_filter<T: Clone>(
+        &self,
+        defs: Vec<T>,
+        id_of: impl Fn(&T) -> &str,
+    ) -> Vec<T> {
         if !self.is_active() {
             return defs;
         }
@@ -275,7 +275,10 @@ impl FlowGovernor {
         if !self.is_active() {
             return None;
         }
-        if self.machine.bump_redirect(self.rules.max_redirects_per_stage) {
+        if self
+            .machine
+            .bump_redirect(self.rules.max_redirects_per_stage)
+        {
             let stage = self.machine.current_stage().unwrap_or(StageId::Do);
             let directive = self.stage_directive_effective(stage).to_string();
             let detail = format!("aşama {} tamamlanmadı; stop reddedildi", stage.as_str());
@@ -296,7 +299,10 @@ impl FlowGovernor {
             Some(stage) => {
                 // Kilit açma (deterministik): aşama başına N tur direktif; model
                 // flow_checkpoint çağırmazsa tur sonlandırılır (stop gate'e düşer).
-                if self.machine.bump_redirect(self.rules.max_redirects_per_stage) {
+                if self
+                    .machine
+                    .bump_redirect(self.rules.max_redirects_per_stage)
+                {
                     RoundVerdict::Continue(self.stage_directive_effective(stage).to_string())
                 } else {
                     RoundVerdict::EndTurn
@@ -313,7 +319,8 @@ impl FlowGovernor {
         // ihlal kaydı: bu tool bu aşamada yasaklanmış bir gruba mı ait?
         if let Some(group) = super::gate::tool_group_of(tool) {
             if !self.tool_unlocked_effective(tool, group) {
-                self.events.violation(tool, "kilitli grup çağrısı (filtre aşıldı)");
+                self.events
+                    .violation(tool, "kilitli grup çağrısı (filtre aşıldı)");
             }
         }
     }
@@ -344,7 +351,11 @@ impl FlowGovernor {
         match current {
             StageId::Duration => {
                 // Karar zaten activate'te verildi ve kaydedildi; kanıt yaz ve ilerle.
-                return self.advance_after_artifact(current, ArtifactId::DurationDecision, "süre kararı (sistem): onaylandı".to_string());
+                return self.advance_after_artifact(
+                    current,
+                    ArtifactId::DurationDecision,
+                    "süre kararı (sistem): onaylandı".to_string(),
+                );
             }
             StageId::ParallelQuery => {
                 // building_blocks yolunu decompose kanıtının detayından al.
@@ -384,12 +395,15 @@ impl FlowGovernor {
         for f in &req.files {
             let p = Path::new(f);
             if !p.is_file() || p.metadata().map(|m| m.len() == 0).unwrap_or(true) {
-                self.events.checkpoint_rejected(&req.stage, "kanıt dosyası eksik/boş");
+                self.events
+                    .checkpoint_rejected(&req.stage, "kanıt dosyası eksik/boş");
                 return CheckpointResult::done(
                     false,
                     &current,
                     self.stage_directive_effective(current),
-                    format!("Kanıt dosyası eksik veya boş: {f}. Önce aşama çıktısını üret, sonra kapat."),
+                    format!(
+                        "Kanıt dosyası eksik veya boş: {f}. Önce aşama çıktısını üret, sonra kapat."
+                    ),
                 );
             }
         }
@@ -484,11 +498,16 @@ impl FlowGovernor {
     pub fn finalize_verify(&mut self, verdict: &JudgeVerdict) -> CheckpointResult {
         let stage = self.machine.current_stage().unwrap_or(StageId::Verify);
         if verdict.accepted {
-            self.store.record(ArtifactId::Verified, true, verdict.raw_output.clone());
+            self.store
+                .record(ArtifactId::Verified, true, verdict.raw_output.clone());
             let advanced = self.machine.record_artifact(ArtifactId::Verified, true);
             self.finish_stage_transition(stage, advanced)
-        } else if self.machine.bump_redirect(self.rules.max_redirects_per_stage) {
-            self.store.record(ArtifactId::Verified, false, verdict.raw_output.clone());
+        } else if self
+            .machine
+            .bump_redirect(self.rules.max_redirects_per_stage)
+        {
+            self.store
+                .record(ArtifactId::Verified, false, verdict.raw_output.clone());
             let directive = format!(
                 "Yargıç reddetti; aşama tekrarlanmalı.\nYargıç gerekçesi: {}\n\n{}",
                 verdict.reason,
@@ -497,7 +516,11 @@ impl FlowGovernor {
             CheckpointResult::done(false, &stage, &directive, "yargıç reddi".to_string())
         } else {
             // Deterministik kilit açma: 2 yargıç turu yeterli.
-            self.store.record(ArtifactId::Verified, true, "yargıç turu limiti; kabul (kilit açma)".to_string());
+            self.store.record(
+                ArtifactId::Verified,
+                true,
+                "yargıç turu limiti; kabul (kilit açma)".to_string(),
+            );
             let advanced = self.machine.record_artifact(ArtifactId::Verified, true);
             self.finish_stage_transition(stage, advanced)
         }
@@ -519,17 +542,30 @@ impl FlowGovernor {
     /// yok; aynı bloklar asla sınırsızca yeniden çalıştırılmaz).
     pub fn reject_execute(&mut self, detail: &str) -> CheckpointResult {
         let stage = self.machine.current_stage().unwrap_or(StageId::Execute);
-        if self.machine.bump_redirect(self.rules.max_redirects_per_stage) {
-            self.store.record(ArtifactId::WorkDone, false, detail.to_string());
+        if self
+            .machine
+            .bump_redirect(self.rules.max_redirects_per_stage)
+        {
+            self.store
+                .record(ArtifactId::WorkDone, false, detail.to_string());
             let directive = format!(
                 "Sistem çoklu ajan yürütmesi başarısız: {detail}\n\
                  Yapı taşlarını kendin uygula ve flow_checkpoint ile tekrar dene.\n\n{}",
                 self.stage_directive_effective(stage)
             );
-            CheckpointResult::done(false, &stage, &directive, "sistem yürütmesi başarısız".to_string())
+            CheckpointResult::done(
+                false,
+                &stage,
+                &directive,
+                "sistem yürütmesi başarısız".to_string(),
+            )
         } else {
             // Deterministik kilit açma: ret turları limiti doldu → kabul.
-            self.store.record(ArtifactId::WorkDone, true, "sistem yürütmesi ret limiti; model uyguladı (kilit açma)".to_string());
+            self.store.record(
+                ArtifactId::WorkDone,
+                true,
+                "sistem yürütmesi ret limiti; model uyguladı (kilit açma)".to_string(),
+            );
             let advanced = self.machine.record_artifact(ArtifactId::WorkDone, true);
             self.finish_stage_transition(stage, advanced)
         }
@@ -572,7 +608,10 @@ mod tests {
     #[test]
     fn activate_returns_directive_and_classifies() {
         let mut g = FlowGovernor::new(&temp_dir());
-        let d = g.activate("2026'da en iyi rust frameworkü nedir araştır", UserMode::UserOriented);
+        let d = g.activate(
+            "2026'da en iyi rust frameworkü nedir araştır",
+            UserMode::UserOriented,
+        );
         assert!(d.is_some());
         assert_eq!(g.flow().map(|f| f.name), Some("universal"));
         assert!(g.is_active());
@@ -582,8 +621,15 @@ mod tests {
     #[test]
     fn checkpoint_wrong_stage_rejected() {
         let mut g = FlowGovernor::new(&temp_dir());
-        g.activate("2026'da en iyi rust frameworkü nedir araştır", UserMode::UserOriented);
-        let req = CheckpointRequest { stage: "research".to_string(), summary: "x".to_string(), files: vec![] };
+        g.activate(
+            "2026'da en iyi rust frameworkü nedir araştır",
+            UserMode::UserOriented,
+        );
+        let req = CheckpointRequest {
+            stage: "research".to_string(),
+            summary: "x".to_string(),
+            files: vec![],
+        };
         let res = g.validate_checkpoint(&req, StageId::Analyze);
         assert!(!res.accepted);
         assert!(!res.directive.is_empty());
@@ -601,9 +647,13 @@ mod tests {
         let mut g = FlowGovernor::new(&temp_dir());
         g.activate("uzun araştırma görevi", UserMode::UserOriented);
         // analyze'ı sistem kanıtıyla geç
-        let r = g.advance_after_artifact(StageId::Analyze, ArtifactId::ProblemList, "x".to_string());
+        let r =
+            g.advance_after_artifact(StageId::Analyze, ArtifactId::ProblemList, "x".to_string());
         assert_eq!(r.stage, "analyze");
-        assert!(g.machine.current_stage() == Some(StageId::Research) || g.machine.current_stage().is_some());
+        assert!(
+            g.machine.current_stage() == Some(StageId::Research)
+                || g.machine.current_stage().is_some()
+        );
     }
 
     #[test]
@@ -611,12 +661,27 @@ mod tests {
         let mut g = FlowGovernor::new(&temp_dir());
         g.activate("araştır ve uygula", UserMode::UserOriented);
         // analyze→research→digest→stack_select→stack_verify→duration→plan→decompose→parallel_query→execute ilerle
-        let stages = [StageId::Analyze, StageId::Research, StageId::Digest, StageId::StackSelect,
-            StageId::StackVerify, StageId::Duration, StageId::Plan, StageId::Decompose,
-            StageId::ParallelQuery, StageId::Execute, StageId::Verify];
+        let stages = [
+            StageId::Analyze,
+            StageId::Research,
+            StageId::Digest,
+            StageId::StackSelect,
+            StageId::StackVerify,
+            StageId::Duration,
+            StageId::Plan,
+            StageId::Decompose,
+            StageId::ParallelQuery,
+            StageId::Execute,
+            StageId::Verify,
+        ];
         for s in stages {
             let r = g.advance_after_artifact(s, ArtifactId::ProblemList, "x".to_string());
-            assert!(r.accepted || r.detail.starts_with("system_async:"), "stage {:?} → {:?}", s, r.detail);
+            assert!(
+                r.accepted || r.detail.starts_with("system_async:"),
+                "stage {:?} → {:?}",
+                s,
+                r.detail
+            );
             if r.detail.starts_with("system_async:verify") {
                 assert_eq!(s, StageId::Verify);
             }
@@ -635,7 +700,11 @@ mod tests {
     fn judge_reject_keeps_stage_and_bounds() {
         let mut g = FlowGovernor::new(&temp_dir());
         g.activate("araştır", UserMode::UserOriented);
-        let v = JudgeVerdict { raw_output: "RED: kanıt yok".to_string(), accepted: false, reason: "kanıt yok".to_string() };
+        let v = JudgeVerdict {
+            raw_output: "RED: kanıt yok".to_string(),
+            accepted: false,
+            reason: "kanıt yok".to_string(),
+        };
         let r1 = g.finalize_verify(&v);
         assert!(!r1.accepted);
         assert!(r1.directive.contains("Yargıç reddetti"));

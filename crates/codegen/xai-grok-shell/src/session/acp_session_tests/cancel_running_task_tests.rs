@@ -69,6 +69,7 @@ async fn persist_ack_waits_for_disk_flush_before_success() {
                 doom_loop_recovery: None,
                 header_injector: None,
                 fallback: None,
+                grounding: None,
             })
             .expect("sampling client should build for persistence actor");
             let persistence = crate::session::persistence::new_with_explicit_dir(
@@ -220,6 +221,11 @@ async fn persist_ack_waits_for_disk_flush_before_success() {
                 active_skill: parking_lot::Mutex::new(None),
                 plan_mode: Arc::new(parking_lot::Mutex::new(
                     crate::session::plan_mode::PlanModeTracker::new(std::path::PathBuf::from(
+                        "/tmp/test-session",
+                    )),
+                )),
+                flow_governor: Arc::new(parking_lot::Mutex::new(
+                    crate::session::flow::governor::FlowGovernor::new(std::path::Path::new(
                         "/tmp/test-session",
                     )),
                 )),
@@ -380,6 +386,7 @@ async fn first_turn_memory_injection_persists_to_chat_history() {
                     doom_loop_recovery: None,
                     header_injector: None,
                     fallback: None,
+                    grounding: None,
                 })
                 .expect("sampling client should build for persistence actor");
             let persistence = crate::session::persistence::new_with_explicit_dir(
@@ -515,6 +522,7 @@ async fn first_turn_memory_injection_disabled_does_not_persist_to_chat_history()
                 doom_loop_recovery: None,
                 header_injector: None,
                 fallback: None,
+                grounding: None,
             })
             .expect("sampling client should build for persistence actor");
             let persistence = crate::session::persistence::new_with_explicit_dir(
@@ -690,6 +698,11 @@ async fn first_turn_memory_injection_disabled_does_not_persist_to_chat_history()
                 active_skill: parking_lot::Mutex::new(None),
                 plan_mode: Arc::new(parking_lot::Mutex::new(
                     crate::session::plan_mode::PlanModeTracker::new(std::path::PathBuf::from(
+                        "/tmp/test-session",
+                    )),
+                )),
+                flow_governor: Arc::new(parking_lot::Mutex::new(
+                    crate::session::flow::governor::FlowGovernor::new(std::path::Path::new(
                         "/tmp/test-session",
                     )),
                 )),
@@ -978,6 +991,11 @@ async fn cancel_running_task_teardown_clears_running_and_pending_work() {
                         ),
                     ),
                 ),
+                flow_governor: Arc::new(parking_lot::Mutex::new(
+                    crate::session::flow::governor::FlowGovernor::new(std::path::Path::new(
+                        "/tmp/test-session",
+                    )),
+                )),
                 goal_enabled: false,
                 background_workflows_enabled: false,
                 goal_harness_enabled: std::sync::atomic::AtomicBool::new(false),
@@ -2056,6 +2074,7 @@ async fn cancel_propagates_to_sampler_handle_so_no_further_emission() {
                 doom_loop_recovery: None,
                 header_injector: None,
                 fallback: None,
+                grounding: None,
             };
             let (sampler_event_tx, _sampler_event_rx) = tokio::sync::mpsc::unbounded_channel::<
                 xai_grok_sampler::SamplingEvent,
@@ -2234,6 +2253,11 @@ async fn cancel_propagates_to_sampler_handle_so_no_further_emission() {
                         ),
                     ),
                 ),
+                flow_governor: Arc::new(parking_lot::Mutex::new(
+                    crate::session::flow::governor::FlowGovernor::new(std::path::Path::new(
+                        "/tmp/test-session",
+                    )),
+                )),
                 goal_enabled: false,
                 background_workflows_enabled: false,
                 goal_harness_enabled: std::sync::atomic::AtomicBool::new(false),

@@ -356,5 +356,6 @@ pub fn test_sampler_config(
         doom_loop_recovery: None,
         header_injector: None,
         fallback: None,
+        grounding: None,
     }
 }

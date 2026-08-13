@@ -103,8 +103,6 @@ pub struct WelcomeRenderResult {
     pub auth_fallback_rect: Option<Rect>,
     /// Hit-test rect for the "[Refresh]" button on the paywall tier line.
     pub refresh_rect: Option<Rect>,
-    /// Hit-test rect for the gate URL link (click to open in browser).
-    pub gate_url_rect: Option<Rect>,
     /// Whether a "Changelog" menu action was rendered (above Quit), so the
     /// input handler can map the extra menu row to the release-notes action
     /// once markdown is available.
@@ -115,8 +113,6 @@ pub struct WelcomeRenderResult {
     pub announcement_truncated: bool,
     /// Hit-test rect for the full announcement block (click anywhere to toggle).
     pub announcement_rect: Option<Rect>,
-    /// Hit-test rect for the promo upgrade CTA `[label]` button (click → open).
-    pub upgrade_cta_rect: Option<Rect>,
     pub privacy_banner_accept_rect: Option<Rect>,
     pub privacy_banner_customize_rect: Option<Rect>,
     pub privacy_banner_legal_rect: Option<Rect>,
@@ -172,8 +168,6 @@ struct WelcomeLayoutInput<'a> {
     announcement: Option<&'a xai_grok_announcements::RemoteAnnouncement>,
     /// Whether a long announcement is expanded inline (vs. collapsed to 2 lines).
     expanded: bool,
-    /// Whether the info slot reserves a promo upgrade CTA (spacer + button).
-    has_upgrade_cta: bool,
 }
 
 impl WelcomeLayout {
@@ -235,7 +229,6 @@ impl WelcomeLayout {
             prompt_compact,
             announcement,
             expanded,
-            has_upgrade_cta,
         } = input;
         let zero = Rect::default();
         // Pick hero vs stacked first, independent of the announcement's height:
@@ -263,7 +256,6 @@ impl WelcomeLayout {
                 changelog_height,
                 announcement,
                 expanded,
-                has_upgrade_cta,
             );
         }
 
@@ -275,15 +267,13 @@ impl WelcomeLayout {
                     .width
                     .saturating_sub(prompt::prompt_inset(prompt_compact) * 2);
                 let width = stacked_info_width(avail, content_area.height, MENU_MIN_WIDTH);
-                hero_box::announcement_desired_rows(ann, width, expanded, has_upgrade_cta).min(
-                    stacked_info_budget(
-                        content_area,
-                        error_height,
-                        menu_height,
-                        tip_height,
-                        compact,
-                    ),
-                )
+                hero_box::announcement_desired_rows(ann, width, expanded).min(stacked_info_budget(
+                    content_area,
+                    error_height,
+                    menu_height,
+                    tip_height,
+                    compact,
+                ))
             }
             None => changelog_height,
         };
@@ -647,10 +637,6 @@ pub struct WelcomeRenderParams<'a> {
     /// Whether a long managed-config announcement is expanded inline (vs the
     /// default 2-line collapsed view with a trailing `…`).
     pub welcome_announcement_expanded: bool,
-    /// Promo upgrade CTA `[label]` to paint below the hero announcement: `Some`
-    /// drives both the reserved row height and the `[label]` button. `None` = no
-    /// CTA on the welcome screen.
-    pub upgrade_cta: Option<&'a str>,
     /// Non-blocking welcome privacy banner above the prompt.
     pub privacy_banner: bool,
 }
@@ -727,12 +713,10 @@ pub fn render_welcome(
                 auth_url_rect: None,
                 auth_fallback_rect: None,
                 refresh_rect: None,
-                gate_url_rect: None,
                 changelog_action_present: false,
                 changelog_cta_rect: None,
                 announcement_truncated: false,
                 announcement_rect: None,
-                upgrade_cta_rect: None,
                 privacy_banner_accept_rect: None,
                 privacy_banner_customize_rect: None,
                 privacy_banner_legal_rect: None,
@@ -762,12 +746,10 @@ pub fn render_welcome(
                 auth_url_rect: url_rect,
                 auth_fallback_rect: fallback_rect,
                 refresh_rect: None,
-                gate_url_rect: None,
                 changelog_action_present: false,
                 changelog_cta_rect: None,
                 announcement_truncated: false,
                 announcement_rect: None,
-                upgrade_cta_rect: None,
                 privacy_banner_accept_rect: None,
                 privacy_banner_customize_rect: None,
                 privacy_banner_legal_rect: None,
@@ -798,12 +780,10 @@ pub fn render_welcome(
                 auth_url_rect: None,
                 auth_fallback_rect: None,
                 refresh_rect: None,
-                gate_url_rect: None,
                 changelog_action_present: false,
                 changelog_cta_rect: None,
                 announcement_truncated: false,
                 announcement_rect: None,
-                upgrade_cta_rect: None,
                 privacy_banner_accept_rect: None,
                 privacy_banner_customize_rect: None,
                 privacy_banner_legal_rect: None,
@@ -1655,8 +1635,7 @@ fn render_announcement_section(
     content_height: u16,
     expanded: bool,
     mouse_pos: Option<(u16, u16)>,
-    upgrade_cta: Option<&str>,
-) -> (Option<Rect>, bool, Option<Rect>) {
+) -> (Option<Rect>, bool) {
     // Same width the height pre-pass reserved for (see `stacked_info_width`).
     let menu_width = stacked_info_width(area.width, content_height, min_width_hint);
     let [_, centered, _] = Layout::horizontal([
@@ -1668,21 +1647,17 @@ fn render_announcement_section(
     .areas(area);
 
     if centered.width < 20 || centered.height == 0 {
-        return (None, false, None);
+        return (None, false);
     }
-
-    // Mirror the hero: reserve the CTA rows at the bottom, draw the text into
-    // what's left, then place the `[label]` button right after the drawn text.
-    let (text_area, truncated, cta_rect) = hero_box::render_announcement_with_upgrade_cta(
+    let truncated = hero_box::render_announcement_block(
         buf,
         theme,
         centered,
         announcement,
         expanded,
         mouse_pos,
-        upgrade_cta,
     );
-    (Some(text_area), truncated, cta_rect)
+    (Some(centered), truncated)
 }
 
 /// Render the normal welcome screen (Done state -- already authenticated).
@@ -1701,10 +1676,6 @@ fn render_welcome_done(
     // normal welcome layout.
     let welcome_compact = show_picker;
 
-    let cta = p
-        .gate
-        .and_then(|g| g.label.as_deref())
-        .unwrap_or("Upgrade Subscription");
     let in_vscode_family = welcome_in_vscode_family();
     let (key_g, key_l, key_q) = (
         "ctrl+g",
@@ -1724,7 +1695,7 @@ fn render_welcome_done(
     let has_update_tip = p.pending_update_version.is_some();
     let has_resume_tip = !has_update_tip && p.foreign_resume_hint.is_some();
     // Tip slot precedence: pending update > privacy banner (2 rows) > resume
-    // hint > random tip. The update outranks the upsell so a ready update is
+    // hint > random tip. The update outranks the privacy notice so a ready update is
     // never invisible; the banner takes the slot back once it's applied.
     let tip_height = if !show_picker {
         if has_update_tip {
@@ -1755,7 +1726,11 @@ fn render_welcome_done(
     let gate_menu;
     let owned_menu;
     let menu_items: &[(&str, &str)] = if !p.has_access {
-        gate_menu = [(key_g, cta), (key_l, "Logout"), (key_q, "Quit")];
+        gate_menu = [
+            (key_g, "Refresh access"),
+            (key_l, "Logout"),
+            (key_q, "Quit"),
+        ];
         &gate_menu
     } else {
         let (key_w, key_s, key_q, key_i_with_x) = (
@@ -1828,7 +1803,6 @@ fn render_welcome_done(
         prompt_compact: p.compact,
         announcement: p.announcement,
         expanded: p.welcome_announcement_expanded,
-        has_upgrade_cta: p.upgrade_cta.is_some(),
     });
 
     // Render startup warning in the error area (same slot as auth errors).
@@ -1838,7 +1812,6 @@ fn render_welcome_done(
     let mut changelog_cta_rect: Option<Rect> = None;
     let mut announcement_truncated = false;
     let mut announcement_rect: Option<Rect> = None;
-    let mut upgrade_cta_rect: Option<Rect> = None;
 
     let (menu_rects, picker_close_button) = if show_picker {
         // Use the full area since logo/menu are hidden and shortcuts
@@ -1883,12 +1856,10 @@ fn render_welcome_done(
             p.welcome_announcement_expanded,
             p.changelog_bullets,
             p.changelog_has_full_notes,
-            p.upgrade_cta,
         );
         changelog_cta_rect = rects.changelog_cta_rect;
         announcement_truncated = rects.announcement_truncated;
         announcement_rect = rects.announcement_rect;
-        upgrade_cta_rect = rects.upgrade_cta_rect;
         (rects.menu_rects, None)
     } else {
         // Narrow layout: stacked logo above, menu below. Inset the menu the
@@ -1916,7 +1887,7 @@ fn render_welcome_done(
     if layout.changelog.height > 0 {
         let info_area = inset_horizontal(layout.changelog, prompt::prompt_inset(p.compact));
         if let Some(ann) = p.announcement {
-            let (block, truncated, cta_rect) = render_announcement_section(
+            let (block, truncated) = render_announcement_section(
                 info_area,
                 buf,
                 theme,
@@ -1925,11 +1896,9 @@ fn render_welcome_done(
                 content_area.height,
                 p.welcome_announcement_expanded,
                 p.mouse_pos,
-                p.upgrade_cta,
             );
             announcement_rect = block;
             announcement_truncated = truncated;
-            upgrade_cta_rect = cta_rect;
         } else {
             changelog_cta_rect = render_changelog_section(
                 info_area,
@@ -1947,7 +1916,6 @@ fn render_welcome_done(
     // Skip the prompt input when picker is visible to save space;
     // shortcuts are rendered inside the picker content area.
     let mut refresh_hit_rect: Option<Rect> = None;
-    let mut gate_url_hit_rect: Option<Rect> = None;
     let mut privacy_banner_accept_rect: Option<Rect> = None;
     let mut privacy_banner_customize_rect: Option<Rect> = None;
     let mut privacy_banner_legal_rect: Option<Rect> = None;
@@ -2002,7 +1970,7 @@ fn render_welcome_done(
         let gate_text = p
             .gate
             .map(|g| g.message.as_str())
-            .unwrap_or("SuperGrok subscription required");
+            .unwrap_or("This provider or account cannot start a session.");
         let msg = Line::from(Span::styled(
             gate_text,
             Style::default().fg(theme.gray_bright),
@@ -2016,36 +1984,6 @@ fn render_welcome_done(
             },
             buf,
         );
-
-        if centered.height > 2 {
-            let url_area = Rect {
-                y: centered.y + 2,
-                height: 1,
-                ..centered
-            };
-            let gate_link = p
-                .gate
-                .and_then(|g| g.url.as_deref())
-                .unwrap_or("https://grok.com/supergrok?referrer=grok-build");
-            let url = Line::from(Span::styled(
-                gate_link,
-                Style::default()
-                    .fg(theme.accent_user)
-                    .add_modifier(Modifier::UNDERLINED),
-            ))
-            .alignment(Alignment::Center);
-            Paragraph::new(url).render(url_area, buf);
-
-            // Compute click rect for the gate URL text (centered within url_area).
-            let link_width = gate_link.len() as u16;
-            let link_x = url_area.x + url_area.width.saturating_sub(link_width) / 2;
-            gate_url_hit_rect = Some(Rect {
-                x: link_x,
-                y: url_area.y,
-                width: link_width.min(url_area.width),
-                height: 1,
-            });
-        }
 
         render_version_badge(
             layout.version,
@@ -2213,12 +2151,10 @@ fn render_welcome_done(
         auth_url_rect: None,
         auth_fallback_rect: None,
         refresh_rect: refresh_hit_rect,
-        gate_url_rect: gate_url_hit_rect,
         changelog_action_present: show_changelog_action,
         changelog_cta_rect,
         announcement_truncated,
         announcement_rect,
-        upgrade_cta_rect,
         privacy_banner_accept_rect,
         privacy_banner_customize_rect,
         privacy_banner_legal_rect,
@@ -2791,7 +2727,6 @@ mod tests {
             changelog_bullets: &[],
             changelog_has_full_notes: false,
             welcome_announcement_expanded: false,
-            upgrade_cta: None,
             privacy_banner: false,
         }
     }

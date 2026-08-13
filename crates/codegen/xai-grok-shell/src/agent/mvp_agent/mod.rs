@@ -503,8 +503,6 @@ struct SettingsUpdateNotification {
     slash_command_tags: Option<std::collections::BTreeMap<String, String>>,
     announcements: Option<Vec<xai_grok_announcements::RemoteAnnouncement>>,
     gate_message: Option<String>,
-    gate_url: Option<String>,
-    gate_label: Option<String>,
     allow_access: Option<bool>,
     subscription_tier_display: Option<String>,
     auto_permission_mode_enabled: Option<bool>,
@@ -1978,8 +1976,6 @@ impl MvpAgent {
                 .filter(|m| !m.is_empty())
                 .map(|message| crate::auth::GateInfo {
                     message: message.clone(),
-                    url: rs.and_then(|s| s.gate_url.clone()),
-                    label: rs.and_then(|s| s.gate_label.clone()),
                 });
             let subscription_tier = rs.and_then(|s| s.subscription_tier_display.clone());
             (rs.and_then(|s| s.show_resolved_model), gate, subscription_tier)
@@ -1993,13 +1989,8 @@ impl MvpAgent {
             .current()
             .map(|auth| {
                 let gate = if !self.tier_allowed.get() && gate.is_none() {
-                    let message = "A subscription is required.".to_string();
                     Some(crate::auth::GateInfo {
-                        message,
-                        url: Some(
-                            "https://grok.com/supergrok?referrer=grok-build".to_string(),
-                        ),
-                        label: Some("Subscribe".to_string()),
+                        message: "This provider or account cannot start a session.".to_string(),
                     })
                 } else {
                     gate
@@ -2096,8 +2087,6 @@ impl MvpAgent {
                 slash_command_tags: rs.and_then(|s| s.slash_command_tags.clone()),
                 announcements: rs.and_then(|s| s.announcements.clone()),
                 gate_message: rs.and_then(|s| s.gate_message.clone()),
-                gate_url: rs.and_then(|s| s.gate_url.clone()),
-                gate_label: rs.and_then(|s| s.gate_label.clone()),
                 allow_access: rs.and_then(|s| s.allow_access),
                 subscription_tier_display: rs
                     .and_then(|s| s.subscription_tier_display.clone()),

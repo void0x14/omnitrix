@@ -1,8 +1,7 @@
 //! `/omni` — show the omnitrix core status summary.
 //!
-//! Reads a [`crate::omni_bridge::OmniSnapshot`] from the bridge. The provider
-//! is installed by the `omnitrix` binary after warm-up, so this command
-//! degrades to a "core not started" message when the pager runs standalone.
+//! Reads a [`crate::omni_bridge::OmniSnapshot`] from the in-process native
+//! runtime installed during pager startup.
 
 use crate::omni_bridge;
 use crate::slash::command::{CommandExecCtx, CommandResult, SlashCommand};
@@ -34,16 +33,15 @@ impl SlashCommand for OmniStatusCommand {
             Some(s) => {
                 let healthy = if s.healthy { "evet" } else { "hayir" };
                 CommandResult::Message(format!(
-                    "omnitrix: providers={} aktif_ajan={} storage={} MB saglikli={}",
+                    "omnitrix: durum={} providers={} aktif_ajan={} storage={} MB saglikli={}",
+                    s.phase.as_str(),
                     s.providers,
                     s.active_agents,
                     s.storage_bytes / (1024 * 1024),
                     healthy
                 ))
             }
-            None => {
-                CommandResult::Message("omnitrix core baslatilmadi (warmup bekleniyor)".to_string())
-            }
+            None => CommandResult::Message("omnitrix runtime kullanilamiyor".to_string()),
         }
     }
 }
@@ -79,17 +77,15 @@ mod tests {
         }
     }
 
-    /// Serialized: the bridge is process-global (OnceLock, first-wins), so the
-    /// absent-provider path is only observable when no earlier test installed
-    /// one. Both orderings are covered: absent first -> warm-up message, then
-    /// install -> summary; or already-installed -> summary only.
+    /// The native runtime is process-global, so the first snapshot provider
+    /// installed by the suite remains authoritative.
     #[test]
     #[serial_test::serial(OMNI_BRIDGE)]
     fn status_messages() {
         let cmd = OmniStatusCommand::new();
 
         let first = message_for(&cmd);
-        if first.starts_with("omnitrix: providers=") {
+        if first.starts_with("omnitrix: durum=") {
             assert!(
                 first.contains("saglikli="),
                 "summary must carry health, got {first}"
@@ -97,8 +93,8 @@ mod tests {
             return;
         }
         assert!(
-            first.contains("baslatilmadi"),
-            "expected warm-up message, got {first}"
+            first.contains("kullanilamiyor"),
+            "expected unavailable-runtime message, got {first}"
         );
 
         struct FakeProvider;
@@ -106,6 +102,7 @@ mod tests {
         impl crate::omni_bridge::OmniSnapshotProvider for FakeProvider {
             fn snapshot(&self) -> crate::omni_bridge::OmniSnapshot {
                 crate::omni_bridge::OmniSnapshot {
+                    phase: crate::omni_bridge::OmniPhase::Ready,
                     providers: 3,
                     active_agents: 2,
                     storage_bytes: 5 * 1024 * 1024,
@@ -119,7 +116,7 @@ mod tests {
 
         let summary = message_for(&cmd);
         assert!(
-            summary.starts_with("omnitrix: providers="),
+            summary.starts_with("omnitrix: durum="),
             "expected summary line, got {summary}"
         );
         assert!(

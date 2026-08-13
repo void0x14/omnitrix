@@ -78,18 +78,20 @@ impl crate::slash::command::SlashCommand for OmniAutonomousCommand {
             );
         }
 
-        // Dongu motoru bridge'den gelir (omnitrix bin kurar).
-        let Some(engine) = crate::omni_bridge::autonomous() else {
-            return crate::slash::command::CommandResult::Message(
-                "otonom dongu motoru kurulmamis (warmup bekleniyor)".into(),
-            );
-        };
-
-        match engine.run(&problem) {
-            Ok(summary) => crate::slash::command::CommandResult::Message(summary),
-            Err(err) => {
-                crate::slash::command::CommandResult::Message(format!("otonom dongu hatasi: {err}"))
-            }
+        let instruction = format!(
+            "Run this as an autonomous Omnitrix mission: {problem}\n\n\
+             Decompose independent work, use native task/subagent tools in parallel where safe, \
+             use grok_research when external evidence is required, implement the result, run \
+             verification, inspect failures, and continue until the objective is actually \
+             satisfied or a concrete external blocker exists. Do not stop for routine approval."
+        );
+        crate::slash::command::CommandResult::InjectSkill {
+            display_text: format!("/omni-autonomous {problem}"),
+            prompt_blocks: vec![agent_client_protocol::ContentBlock::Text(
+                agent_client_protocol::TextContent::new(instruction),
+            )],
+            display_as_skill: false,
+            scheduled_task_preview: None,
         }
     }
 }
@@ -112,7 +114,7 @@ mod tests {
     use crate::app::bundle::BundleState;
     use crate::omni_bridge::{OmniAutonomous, OmniResearch, research};
     use crate::settings::PagerLocalSnapshot;
-    use crate::slash::command::{CommandExecCtx, CommandResult, SlashCommand};
+    use crate::slash::command::{CommandExecCtx, SlashCommand};
     use std::sync::Arc;
 
     fn ctx<'a>(models: &'a ModelState, bundle: &'a BundleState) -> CommandExecCtx<'a> {
@@ -149,20 +151,23 @@ mod tests {
     }
 
     #[test]
-    fn no_engine_returns_graceful_message() {
-        // Motor kurulu degilse dongu yerine bilgi mesaji donmeli (I6: panik yok).
+    fn mission_uses_native_agent_pipeline() {
         let cmd = OmniAutonomousCommand::new();
         let models = ModelState::default();
         let bundle = BundleState::default();
         let mut c = ctx(&models, &bundle);
         match cmd.run(&mut c, "bir problem") {
-            crate::slash::command::CommandResult::Message(m) => {
-                assert!(
-                    m.contains("kurulmamis") || m.contains("kurulu"),
-                    "kurulum yoksa bilgi mesaji: {m}"
-                );
+            crate::slash::command::CommandResult::InjectSkill {
+                display_text,
+                prompt_blocks,
+                ..
+            } => {
+                assert_eq!(display_text, "/omni-autonomous bir problem");
+                let prompt = format!("{prompt_blocks:?}");
+                assert!(prompt.contains("autonomous Omnitrix mission"));
+                assert!(prompt.contains("bir problem"));
             }
-            other => panic!("Message bekleniyordu: {other:?}"),
+            other => panic!("InjectSkill bekleniyordu: {other:?}"),
         }
     }
 

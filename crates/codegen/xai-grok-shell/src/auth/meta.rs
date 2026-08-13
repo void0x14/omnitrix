@@ -4,10 +4,6 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GateInfo {
     pub message: String,
-    #[serde(default)]
-    pub url: Option<String>,
-    #[serde(default)]
-    pub label: Option<String>,
 }
 
 /// Typed auth metadata passed from the shell to the pager via ACP.

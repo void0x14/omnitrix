@@ -3,10 +3,6 @@
 
 use super::*;
 
-fn ids(candidates: &[DetectCandidate]) -> Vec<&str> {
-    candidates.iter().map(|c| c.provider_id.as_str()).collect()
-}
-
 #[test]
 fn anthropic_api03_prefix_detected() {
     let got = detect_providers_from_key("sk-ant-api03-abcdef123456");
@@ -95,7 +91,12 @@ fn huggingface_prefix_detected() {
 #[test]
 fn generic_sk_gives_multiple_candidates_sorted_desc() {
     let got = detect_providers_from_key("sk-unknown123xyz");
-    assert_eq!(got.len(), 2, "genel sk- birden fazla aday üretmeli: {:?}", got);
+    assert_eq!(
+        got.len(),
+        2,
+        "genel sk- birden fazla aday üretmeli: {:?}",
+        got
+    );
     let first = &got[0];
     let second = &got[1];
     assert_eq!(first.provider_id, "openai");
@@ -201,7 +202,10 @@ fn detect_key_type_still_works() {
         KeyType::Anthropic
     );
     assert_eq!(crate::detect_key_type("google", "AIzaX"), KeyType::Google);
-    assert_eq!(crate::detect_key_type("deepseek", "sk-x"), KeyType::DeepSeek);
+    assert_eq!(
+        crate::detect_key_type("deepseek", "sk-x"),
+        KeyType::DeepSeek
+    );
     assert_eq!(crate::detect_key_type("groq", "gsk_x"), KeyType::Groq);
     assert_eq!(crate::detect_key_type("xai", "xai-x"), KeyType::Xai);
     assert_eq!(

@@ -85,8 +85,7 @@ pub(super) async fn fetch_plugin_cta_mcps(
     }
 }
 /// Convert an ACP error to a user-friendly string for display.
-/// Rate-limit errors: free-usage paywall, else server detail (with API-key
-/// rewrite when the body pushes personal SuperGrok), else auth-aware fallback
+/// Rate-limit errors: neutral quota copy, safe server detail, or auth-aware fallback
 /// (see [`format_rate_limited_user_message`]).
 /// All other errors are sanitized to remove internal service names and jargon.
 pub(super) fn format_acp_error(err: &acp::Error, is_api_key_auth: bool) -> String {

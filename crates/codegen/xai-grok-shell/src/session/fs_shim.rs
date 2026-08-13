@@ -77,8 +77,12 @@ impl CasBlobStore {
     /// Cagri yolu `~/.grok/omnitrix-cas/` gibi bir yoldur. Dizin kurulamazsa
     /// `Err` doner — cagiran (spawn) akisi atifsiz surdurur (I6).
     pub fn new(base_path: &Path) -> Result<Self, CasError> {
-        fs::create_dir_all(base_path)
-            .map_err(|e| CasError(format!("depo dizini kurulamadi ({}): {e}", base_path.display())))?;
+        fs::create_dir_all(base_path).map_err(|e| {
+            CasError(format!(
+                "depo dizini kurulamadi ({}): {e}",
+                base_path.display()
+            ))
+        })?;
         Ok(Self {
             base_path: base_path.to_path_buf(),
         })
@@ -92,8 +96,9 @@ impl CasBlobStore {
         let hash = blake3::hash(data).to_hex().to_string();
         let path = hash_to_path(&hash, &self.base_path);
         if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent)
-                .map_err(|e| CasError(format!("CAS dizini kurulamadi ({}): {e}", parent.display())))?;
+            fs::create_dir_all(parent).map_err(|e| {
+                CasError(format!("CAS dizini kurulamadi ({}): {e}", parent.display()))
+            })?;
         }
         let mut f = fs::File::create(&path)
             .map_err(|e| CasError(format!("CAS dosyasi acilamadi ({}): {e}", path.display())))?;
@@ -489,8 +494,9 @@ mod tests {
     }
 
     impl MemFs {
-        fn locked(&self) -> Result<std::sync::MutexGuard<'_, HashMap<PathBuf, Vec<u8>>>, ComputerError>
-        {
+        fn locked(
+            &self,
+        ) -> Result<std::sync::MutexGuard<'_, HashMap<PathBuf, Vec<u8>>>, ComputerError> {
             self.files
                 .lock()
                 .map_err(|_| ComputerError::io("test fs kilidi zehirlendi"))
@@ -501,9 +507,10 @@ mod tests {
     impl AsyncFileSystem for MemFs {
         async fn read_file(&self, path: &Path) -> Result<Vec<u8>, ComputerError> {
             let files = self.locked()?;
-            files.get(path).cloned().ok_or_else(|| {
-                ComputerError::io_with_kind("yok", std::io::ErrorKind::NotFound)
-            })
+            files
+                .get(path)
+                .cloned()
+                .ok_or_else(|| ComputerError::io_with_kind("yok", std::io::ErrorKind::NotFound))
         }
 
         async fn write_file(&self, path: &Path, data: &[u8]) -> Result<(), ComputerError> {
@@ -521,7 +528,10 @@ mod tests {
 
     fn shim(root: PathBuf) -> (DiffShimFs, TouchStream) {
         let (sink, stream) = touch_channel();
-        (DiffShimFs::new(Arc::new(MemFs::default()), root, sink), stream)
+        (
+            DiffShimFs::new(Arc::new(MemFs::default()), root, sink),
+            stream,
+        )
     }
 
     #[tokio::test]
@@ -589,7 +599,11 @@ mod tests {
         let loaded = cas.load(&reference).expect("okuma basarili");
         assert_eq!(loaded.as_deref(), Some(b"icerik".as_slice()));
 
-        assert!(cas.load("yok-boyle-bir-ozet").expect("yok olan None doner").is_none());
+        assert!(
+            cas.load("yok-boyle-bir-ozet")
+                .expect("yok olan None doner")
+                .is_none()
+        );
     }
 
     #[test]
@@ -599,6 +613,9 @@ mod tests {
 
         let first = cas.store(b"ayni-icerik", false).expect("ilk yazim");
         let second = cas.store(b"ayni-icerik", false).expect("ikinci yazim");
-        assert_eq!(first, second, "ozet tabanli CAS ayni icerige ayni atfi verir");
+        assert_eq!(
+            first, second,
+            "ozet tabanli CAS ayni icerige ayni atfi verir"
+        );
     }
 }

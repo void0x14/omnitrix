@@ -214,15 +214,14 @@
     }
 
     #[test]
-    fn retry_exhausted_api_key_rewrites_consumer_subscription_upsell() {
+    fn retry_exhausted_api_key_rewrites_external_purchase_prompt() {
         use xai_grok_shell::sampling::error::RATE_LIMITED_USER_MESSAGE_API_KEY;
 
         let rpm = RetryState::Exhausted {
             attempts: 2,
             reason: "API error (status 429 Too Many Requests): \
                      Some resource has been exhausted: You are sending requests too quickly. \
-                     Please slow down, or upgrade to a Grok subscription for higher limits: \
-                     https://grok.com/supergrok"
+                     Please visit https://example.com/plans."
                 .into(),
             is_rate_limited: true,
         };
@@ -233,7 +232,7 @@
         match last_session_event(&scrollback) {
             Some(SessionEvent::RetryFailed { error, .. }) => {
                 assert_eq!(error, RATE_LIMITED_USER_MESSAGE_API_KEY);
-                assert!(!error.contains("grok.com/supergrok"));
+                assert!(!error.contains("example.com"));
             }
             other => panic!("expected API-key rate-limit RetryFailed, got {other:?}"),
         }
@@ -883,4 +882,3 @@
             "non-encrypted_content error types must not set model_incompatible"
         );
     }
-

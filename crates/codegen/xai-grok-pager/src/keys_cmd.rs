@@ -13,9 +13,9 @@ use std::path::{Path, PathBuf};
 
 use anyhow::Context as _;
 use xai_omni_keychain::{
-    detect_stacks, export_to_stack, find_stack_def, import_from_stack, preview_export,
-    preview_import, all_stack_defs, ExportScope, ImportSummary, Keychain, KeychainError,
-    KeychainOptions, MasterKeyTtl, MergePolicy,
+    ExportScope, ImportSummary, Keychain, KeychainError, KeychainOptions, MasterKeyTtl,
+    MergePolicy, all_stack_defs, detect_stacks, export_to_stack, find_stack_def, import_from_stack,
+    preview_export, preview_import,
 };
 
 use crate::app::cli::{KeysArgs, KeysCommand};
@@ -242,10 +242,21 @@ fn cmd_stacks(detected_only: bool) -> anyhow::Result<()> {
         }
         return Ok(());
     }
-    println!("{:<16}  {:<6}  {:<6}  {:<22}  {}", "ID", "IMP", "EXP", "LABEL", "AÇIKLAMA");
+    println!(
+        "{:<16}  {:<6}  {:<6}  {:<22}  {}",
+        "ID", "IMP", "EXP", "LABEL", "AÇIKLAMA"
+    );
     for def in all_stack_defs() {
-        let imp = if def.capability.import { "evet" } else { "hayır" };
-        let exp = if def.capability.export { "evet" } else { "hayır" };
+        let imp = if def.capability.import {
+            "evet"
+        } else {
+            "hayır"
+        };
+        let exp = if def.capability.export {
+            "evet"
+        } else {
+            "hayır"
+        };
         println!(
             "{:<16}  {:<6}  {:<6}  {:<22}  {}",
             def.id, imp, exp, def.label, def.description
@@ -266,9 +277,8 @@ fn cmd_sync_from(
     dry_run: bool,
     overwrite: bool,
 ) -> anyhow::Result<()> {
-    let def = find_stack_def(stack).ok_or_else(|| {
-        anyhow::anyhow!("bilinmeyen stack: {stack} (grok keys stacks)")
-    })?;
+    let def = find_stack_def(stack)
+        .ok_or_else(|| anyhow::anyhow!("bilinmeyen stack: {stack} (grok keys stacks)"))?;
     if !def.capability.import {
         anyhow::bail!("{} import desteklemiyor", def.id);
     }
@@ -293,10 +303,15 @@ fn cmd_sync_from(
         );
         for c in &preview.candidates {
             let mark = if c.conflict { "CONFLICT" } else { "yeni" };
-            println!("  [{mark}] {}  {}  ({})", c.provider_id, c.masked, c.source_field);
+            println!(
+                "  [{mark}] {}  {}  ({})",
+                c.provider_id, c.masked, c.source_field
+            );
         }
         if !overwrite && preview.conflict_count > 0 {
-            println!("not: conflict'ler atlanacak (varsayılan merge); --overwrite ile üzerine yazılır");
+            println!(
+                "not: conflict'ler atlanacak (varsayılan merge); --overwrite ile üzerine yazılır"
+            );
         }
         return Ok(());
     }
@@ -317,9 +332,8 @@ fn cmd_sync_to(
     dry_run: bool,
     overwrite: bool,
 ) -> anyhow::Result<()> {
-    let def = find_stack_def(stack).ok_or_else(|| {
-        anyhow::anyhow!("bilinmeyen stack: {stack} (grok keys stacks)")
-    })?;
+    let def = find_stack_def(stack)
+        .ok_or_else(|| anyhow::anyhow!("bilinmeyen stack: {stack} (grok keys stacks)"))?;
     if !def.capability.export {
         anyhow::bail!("{} export desteklemiyor", def.id);
     }

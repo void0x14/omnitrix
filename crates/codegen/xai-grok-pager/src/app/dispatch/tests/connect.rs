@@ -4,15 +4,16 @@
 
 use super::*;
 use crate::app::dispatch::connect::{
-    dispatch_auto_connect, dispatch_connect_provider, dispatch_fetch_provider_models,
-    dispatch_keychain_add, dispatch_keychain_borrow, dispatch_keychain_export,
-    dispatch_keychain_import, dispatch_keychain_remove, dispatch_keychain_remove_category,
-    dispatch_keychain_reveal, dispatch_keychain_unlock, dispatch_keychain_update,
-    dispatch_open_connect_picker, dispatch_open_keys_manager,
+    activate_imported_opencode_provider, apply_opencode_credentials, dispatch_auto_connect,
+    dispatch_connect_provider, dispatch_fetch_provider_models, dispatch_keychain_add,
+    dispatch_keychain_borrow, dispatch_keychain_export, dispatch_keychain_import,
+    dispatch_keychain_remove, dispatch_keychain_remove_category, dispatch_keychain_reveal,
+    dispatch_keychain_unlock, dispatch_keychain_update, dispatch_open_connect_picker,
+    dispatch_open_keys_manager,
 };
 use crate::views::keys_manager::{KeysManagerMode, KeysManagerState};
 use xai_grok_shell::auth::runtime_key;
-use xai_omni_keychain::{Keychain, KeychainOptions, MasterKeyTtl};
+use xai_omni_keychain::{KeySource, Keychain, KeychainOptions, MasterKeyTtl};
 use zeroize::Zeroizing;
 
 /// Tmpdir'de gerçek bir keychain açar (master password `"pw"`) ve bir kayıt
@@ -248,7 +249,8 @@ fn connect_provider_borrows_pushes_and_persists() {
             Some("sk-test-secret")
         );
     }
-    // Config yazımı async efekte bırakıldı; katalog boş olduğundan switch yok.
+    // Config yazımı async efekte bırakıldı; kalıcılık tamamlanınca aynı task
+    // katalog reload + canlı oturum switch'ini sıralı yapar.
     assert_eq!(effects.len(), 1);
     match &effects[0] {
         Effect::ConnectProviderWrite {
@@ -257,12 +259,14 @@ fn connect_provider_borrows_pushes_and_persists() {
             model_key,
             base_url,
             api_backend,
+            activate_session,
         } => {
             assert_eq!(provider_id, "openai");
             assert_eq!(model_id, "gpt-4o");
             assert_eq!(model_key, "omni-openai-gpt-4o");
             assert!(base_url.is_none());
             assert!(api_backend.is_none());
+            assert!(activate_session.is_none());
         }
         other => panic!("expected ConnectProviderWrite, got {other:?}"),
     }
@@ -494,12 +498,14 @@ fn wizard_apply_new_key_uses_draft_and_emits_write() {
             model_key,
             base_url,
             api_backend,
+            activate_session,
         } => {
             assert_eq!(provider_id, "custom-openai");
             assert_eq!(model_id, "my-model");
             assert_eq!(model_key, "omni-custom-openai-my-model");
             assert_eq!(base_url.as_deref(), Some("http://localhost:8000/v1"));
             assert_eq!(*api_backend, Some(ApiBackend::ChatCompletions));
+            assert!(activate_session.is_none());
         }
         other => panic!("expected ConnectProviderWrite, got {other:?}"),
     }
@@ -536,6 +542,7 @@ fn wizard_apply_persist_result_moves_flow_to_done_or_error() {
             model_id: "my-model".to_string(),
             model_key: "omni-custom-openai-my-model".to_string(),
             result: Ok(()),
+            activation_error: None,
         },
         &mut app,
     );
@@ -566,6 +573,7 @@ fn wizard_apply_persist_failure_moves_flow_to_error() {
             model_id: "my-model".to_string(),
             model_key: "omni-custom-openai-my-model".to_string(),
             result: Err("disk dolu".to_string()),
+            activation_error: None,
         },
         &mut app,
     );
@@ -723,7 +731,7 @@ fn wizard_apply_new_key_persists_to_keychain_when_open() {
         .iter()
         .find(|e| e.provider_id == "custom-openai")
         .expect("new entry added");
-    assert_eq!(entry.category, "personal");
+    assert_eq!(entry.category, "custom-openai");
     assert_eq!(effects.len(), 1);
     let toast = welcome_toast(&app).expect("success toast");
     assert!(
@@ -888,12 +896,164 @@ fn keys_unlock_action_opens_keychain_and_lists_entries() {
     let mut app = test_app();
     open_keys_manager_locked(&mut app, path);
     let effects = dispatch_keychain_unlock(&mut app, Zeroizing::new("pw".to_string()));
-    assert!(effects.is_empty());
+    assert!(
+        effects.iter().all(|effect| matches!(
+            effect,
+            Effect::LoadOpenCodeCredentials { .. } | Effect::ProbeKeyBalances { .. }
+        )),
+        "unlock yalnızca arka plan OpenCode/bakiye işleri başlatmalı: {effects:?}"
+    );
     assert!(app.keychain.is_some(), "keychain açılmış olmalı");
     let state = keys_manager_state(&app);
     assert_eq!(state.mode, KeysManagerMode::Browse);
     assert_eq!(state.entries.len(), 1);
     assert_eq!(state.entries[0].provider_id, "openai");
+}
+
+#[test]
+fn keys_unlock_schedules_opencode_auto_import() {
+    let dir = tempfile::tempdir().expect("tmpdir");
+    let keychain_path = dir.path().join("keychain.omx");
+    let opencode_path = dir.path().join("auth.json");
+    std::fs::write(
+        &opencode_path,
+        r#"{
+            "openai": {"type":"api", "key":"sk-opencode"},
+            "github-copilot": {"type":"oauth", "refresh":"ignored"}
+        }"#,
+    )
+    .expect("write auth.json");
+
+    let mut app = test_app();
+    open_keys_manager_locked(&mut app, keychain_path);
+    keys_manager_state_mut(&mut app).opencode_auth_path = Some(opencode_path.clone());
+
+    let effects = dispatch_keychain_unlock(&mut app, Zeroizing::new("pw".to_string()));
+    assert!(effects.iter().any(|effect| {
+        matches!(
+            effect,
+            Effect::LoadOpenCodeCredentials { auth_path } if auth_path == &opencode_path
+        )
+    }));
+}
+
+#[test]
+fn opencode_credentials_import_every_api_record_and_request_activation() {
+    let dir = tempfile::tempdir().expect("tmpdir");
+    let keychain_path = dir.path().join("keychain.omx");
+    let mut app = test_app();
+    open_keys_manager_locked(&mut app, keychain_path);
+    let _ = dispatch_keychain_unlock(&mut app, Zeroizing::new("pw".to_string()));
+
+    let effects = apply_opencode_credentials(
+        &mut app,
+        crate::app::actions::OpenCodeCredentials {
+            credentials: vec![
+                crate::app::actions::OpenCodeCredential {
+                    provider_id: "openai".to_string(),
+                    api_key: crate::app::actions::SecretKey::new(Zeroizing::new(
+                        "sk-openai".to_string(),
+                    )),
+                },
+                crate::app::actions::OpenCodeCredential {
+                    provider_id: "deepseek".to_string(),
+                    api_key: crate::app::actions::SecretKey::new(Zeroizing::new(
+                        "sk-deepseek".to_string(),
+                    )),
+                },
+            ],
+            preferred_models: vec!["deepseek/deepseek-chat".to_string()],
+        },
+    );
+
+    let state = keys_manager_state(&app);
+    assert_eq!(state.entries.len(), 2);
+    assert!(
+        state
+            .entries
+            .iter()
+            .all(|entry| entry.source == KeySource::Imported)
+    );
+    assert!(state.auto_activate_opencode);
+    assert!(
+        effects
+            .iter()
+            .any(|effect| matches!(effect, Effect::FetchModelsCatalog))
+    );
+}
+
+#[test]
+fn opencode_catalog_activation_uses_configured_model_and_runtime_key() {
+    runtime_key::clear_runtime_keys();
+    let dir = tempfile::tempdir().expect("tmpdir");
+    let keychain_path = dir.path().join("keychain.omx");
+    let mut app = test_app_with_agent();
+    open_keys_manager_locked(&mut app, keychain_path);
+    let _ = dispatch_keychain_unlock(&mut app, Zeroizing::new("pw".to_string()));
+    let _ = apply_opencode_credentials(
+        &mut app,
+        crate::app::actions::OpenCodeCredentials {
+            credentials: vec![crate::app::actions::OpenCodeCredential {
+                provider_id: "deepseek".to_string(),
+                api_key: crate::app::actions::SecretKey::new(Zeroizing::new(
+                    "sk-deepseek".to_string(),
+                )),
+            }],
+            preferred_models: vec!["deepseek/deepseek-chat".to_string()],
+        },
+    );
+    let cache = CatalogCache {
+        providers: indexmap::IndexMap::from([(
+            "deepseek".to_string(),
+            ProviderCatalog {
+                id: "deepseek".to_string(),
+                name: "DeepSeek".to_string(),
+                env: vec![],
+                npm: None,
+                api: Some("https://api.deepseek.com".to_string()),
+                doc: None,
+                models: indexmap::IndexMap::from([(
+                    "deepseek-chat".to_string(),
+                    ModelInfo {
+                        id: "deepseek-chat".to_string(),
+                        name: "DeepSeek Chat".to_string(),
+                        description: None,
+                        reasoning: false,
+                        tool_call: true,
+                        temperature: true,
+                        limit: None,
+                        cost: None,
+                    },
+                )]),
+            },
+        )]),
+        fetched_at: None,
+        source: CacheSource::Cached,
+    };
+
+    let effects = activate_imported_opencode_provider(&mut app, &cache);
+    assert!(effects.iter().any(|effect| {
+        matches!(
+            effect,
+            Effect::ConnectProviderWrite {
+                provider_id,
+                model_id,
+                model_key,
+                activate_session: Some((agent_id, session_id)),
+                ..
+            }
+                if provider_id == "deepseek"
+                    && model_id == "deepseek-chat"
+                    && model_key == "omni-deepseek-deepseek-chat"
+                    && *agent_id == AgentId(0)
+                    && session_id.0.as_ref() == "test-session"
+        )
+    }));
+    assert_eq!(
+        runtime_key::runtime_model_key("deepseek-chat").as_deref(),
+        Some("sk-deepseek")
+    );
+    runtime_key::clear_runtime_keys();
 }
 
 #[test]
@@ -1421,9 +1581,8 @@ fn auto_connect_debug_redacts_api_key() {
     // Security: `Action::AutoConnect` / `Effect::AutoConnect` Debug çıktısı
     // ham key içermemeli (`Zeroizing<String>` Debug'ı iç metni yazdırır;
     // SecretKey wrapper redact eder).
-    let key = crate::app::actions::SecretKey::from(Zeroizing::new(
-        "sk-gizli-debug-123".to_string(),
-    ));
+    let key =
+        crate::app::actions::SecretKey::from(Zeroizing::new("sk-gizli-debug-123".to_string()));
     let catalog = auto_test_catalog();
     let action = Action::AutoConnect {
         api_key: key.clone(),

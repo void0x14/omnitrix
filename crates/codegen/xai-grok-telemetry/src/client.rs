@@ -175,12 +175,7 @@ impl UserContext {
 ///
 /// **no-telemetry fork:** permanently no-op. Never posts to SpaceXAI product
 /// events or Mixpanel, regardless of client state.
-pub async fn track(
-    _event_name: &str,
-    _request_id: &str,
-    _ctx: &UserContext,
-    _metadata: Metadata,
-) {
+pub async fn track(_event_name: &str, _request_id: &str, _ctx: &UserContext, _metadata: Metadata) {
     // Intentionally empty — SpaceXAI phone-home stripped in this fork.
 }
 
@@ -259,8 +254,8 @@ mod tests {
         assert_eq!(event_value("grok-workspace-turn"), "turn");
     }
 
-    /// SessionMetrics must not attempt Mixpanel profile engage — sync_profile
-    /// is a no-op unless mode is fully Enabled.
+    /// The no-telemetry fork must not install a client or attempt Mixpanel
+    /// profile engagement in SessionMetrics mode.
     #[test]
     fn sync_profile_is_noop_in_session_metrics_mode() {
         // No tokio runtime here BY DESIGN: if the gate wrongly falls through,
@@ -302,11 +297,13 @@ mod tests {
         );
         // Explicit call must no-op too (init already invoked it once).
         sync_profile();
-        assert!(
-            is_session_metrics_enabled(),
-            "client must be live for session metrics"
-        );
+        assert!(!is_session_metrics_enabled(), "all telemetry must stay off");
         assert!(!is_enabled(), "product analytics must stay off");
+        let lock = TELEMETRY_CLIENT.get_or_init(|| Mutex::new(None));
+        assert!(
+            lock.lock().unwrap_or_else(|err| err.into_inner()).is_none(),
+            "no-telemetry init must not install a client"
+        );
     }
 
     /// Names without a known emitter prefix pass through unchanged (preserves

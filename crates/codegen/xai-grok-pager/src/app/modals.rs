@@ -18,6 +18,50 @@ use super::app_view::InputOutcome;
 use crate::theme::Theme;
 use crate::views::modal::{self, ActiveModal};
 
+const CONNECT_SHORTCUT_UP: usize = 1;
+const CONNECT_SHORTCUT_DOWN: usize = 2;
+const CONNECT_SHORTCUT_PRIMARY: usize = 3;
+const CONNECT_SHORTCUT_BACK: usize = 4;
+
+fn connect_shortcut_key(id: usize) -> Option<KeyEvent> {
+    let code = match id {
+        CONNECT_SHORTCUT_UP => KeyCode::Up,
+        CONNECT_SHORTCUT_DOWN => KeyCode::Down,
+        CONNECT_SHORTCUT_PRIMARY => KeyCode::Enter,
+        CONNECT_SHORTCUT_BACK => KeyCode::Esc,
+        _ => return None,
+    };
+    Some(KeyEvent::new(code, KeyModifiers::NONE))
+}
+
+fn centered_modal_margin(area_height: u16, desired_height: u16) -> u16 {
+    area_height.saturating_sub(desired_height.min(area_height)) / 2
+}
+
+fn connect_modal_sizing(
+    area: Rect,
+    step: &crate::views::provider_picker::ConnectStep,
+    compact: bool,
+) -> crate::views::modal_window::ModalSizing {
+    use crate::views::provider_picker::ConnectStep;
+    let desired_height = match step {
+        ConnectStep::ModeSelect => 12,
+        ConnectStep::AutoKey | ConnectStep::BaseUrl | ConnectStep::Apply | ConnectStep::Done => 11,
+        ConnectStep::AutoDetecting | ConnectStep::Error(_) => 10,
+        ConnectStep::Key => 18,
+        ConnectStep::Provider | ConnectStep::Model | ConnectStep::AutoAmbiguous => 24,
+    };
+    crate::views::modal_window::ModalSizing {
+        width_pct: 0.64,
+        max_width: 96,
+        min_width: 52,
+        v_margin: centered_modal_margin(area.height, desired_height),
+        h_pad: if compact { 1 } else { 2 },
+        v_pad: if compact { 0 } else { 1 },
+        footer_lines: 2,
+    }
+}
+
 impl AgentView {
     /// `suggest_args` falls back to model rows when the query is not in effort
     /// phase. Model-phase reasoning rows use a trailing space in `insert_text`;
@@ -1766,6 +1810,12 @@ impl AgentView {
                     InputOutcome::Changed
                 }
                 ModalWindowOutcome::Handled => InputOutcome::Changed,
+                ModalWindowOutcome::ShortcutActivated(id) => {
+                    let Some(key) = connect_shortcut_key(id) else {
+                        return InputOutcome::Changed;
+                    };
+                    self.handle_connect_picker_input(&crossterm::event::Event::Key(key))
+                }
                 ModalWindowOutcome::Unhandled => {
                     let ev = crossterm::event::Event::Mouse(*mouse);
                     self.handle_connect_picker_input(&ev)
@@ -1784,6 +1834,20 @@ impl AgentView {
                     InputOutcome::Changed
                 }
                 ModalWindowOutcome::Handled => InputOutcome::Changed,
+                ModalWindowOutcome::ShortcutActivated(id) => {
+                    use crate::views::keys_manager::{
+                        KeysManagerOutcome, handle_keys_manager_shortcut,
+                    };
+                    match handle_keys_manager_shortcut(state, id) {
+                        KeysManagerOutcome::Changed => InputOutcome::Changed,
+                        KeysManagerOutcome::Close => {
+                            self.active_modal = None;
+                            InputOutcome::Changed
+                        }
+                        KeysManagerOutcome::Unchanged => InputOutcome::Unchanged,
+                        KeysManagerOutcome::Action(action) => InputOutcome::Action(action),
+                    }
+                }
                 ModalWindowOutcome::Unhandled => {
                     use crate::views::keys_manager::{
                         KeysManagerOutcome, handle_keys_manager_mouse,
@@ -2615,19 +2679,24 @@ impl AgentView {
                 // (provider picker / placeholder adımlar — Task 8 ekranları).
                 let connect_shortcuts: Vec<Shortcut> = vec![
                     Shortcut {
-                        label: "\u{2191}/\u{2193} nav",
-                        clickable: false,
-                        id: 0,
+                        label: "\u{2191} up",
+                        clickable: true,
+                        id: CONNECT_SHORTCUT_UP,
+                    },
+                    Shortcut {
+                        label: "\u{2193} down",
+                        clickable: true,
+                        id: CONNECT_SHORTCUT_DOWN,
                     },
                     Shortcut {
                         label: "Enter select",
-                        clickable: false,
-                        id: 0,
+                        clickable: true,
+                        id: CONNECT_SHORTCUT_PRIMARY,
                     },
                     Shortcut {
                         label: "Esc back/close",
-                        clickable: false,
-                        id: 0,
+                        clickable: true,
+                        id: CONNECT_SHORTCUT_BACK,
                     },
                 ];
                 let compact = self.scrollback.appearance().prompt.compact;
@@ -2635,16 +2704,7 @@ impl AgentView {
                     title: "Connect provider",
                     tabs: None,
                     shortcuts: &connect_shortcuts,
-                    sizing: mw::ModalSizing {
-                        width_pct: 0.60,
-                        max_width: 90,
-                        min_width: 48,
-                        v_margin: 4,
-                        h_pad: 2,
-                        v_pad: 1,
-                        footer_lines: 2,
-                    }
-                    .with_compact(compact),
+                    sizing: connect_modal_sizing(area, &flow.step, compact),
                     fold_info: None,
                 };
                 if let Some(mca) = mw::render_modal_window(buf, area, window, &modal_config, &theme)
@@ -3328,7 +3388,6 @@ mod command_palette_vim_input_tests {
             let mut buf = Buffer::empty(area);
             agent.draw_active_modal(area, &mut buf, crate::theme::Theme::current(), false);
 
-            let theme = crate::theme::Theme::current();
             let search_bar = match agent.active_modal.as_ref() {
                 Some(ActiveModal::CommandPalette { state, .. }) => {
                     state
@@ -3345,8 +3404,7 @@ mod command_palette_vim_input_tests {
             for x in search_bar.x..search_bar.x + search_bar.width {
                 if let Some(cell) = buf.cell((x, y)) {
                     text.push_str(cell.symbol());
-                    // The cursor is an inverse-video cell (bg == text_primary).
-                    if cell.bg == theme.text_primary {
+                    if cell.modifier.contains(ratatui::style::Modifier::REVERSED) {
                         has_cursor = true;
                     }
                 }
@@ -3521,7 +3579,10 @@ mod connect_apply_base_url_tests {
         });
         let out = agent.handle_connect_picker_input(&apply_enter());
         match out {
-            crate::app::app_view::InputOutcome::Action(Action::ConnectProvider { base_url, .. }) => {
+            crate::app::app_view::InputOutcome::Action(Action::ConnectProvider {
+                base_url,
+                ..
+            }) => {
                 assert_eq!(
                     base_url.as_deref(),
                     Some("http://localhost:9999/v1"),
@@ -3530,5 +3591,76 @@ mod connect_apply_base_url_tests {
             }
             other => panic!("Action::ConnectProvider bekleniyor, got {other:?}"),
         }
+    }
+}
+
+#[cfg(test)]
+mod connect_modal_ux_regression_tests {
+    use super::*;
+    use crate::app::agent_view::test_fixtures::make_agent;
+    use crate::views::modal::ActiveModal;
+    use crate::views::modal_window::ModalWindowState;
+    use crate::views::provider_picker::ProviderConnectFlow;
+    use ratatui::buffer::Buffer;
+    use ratatui::layout::Rect;
+    use xai_grok_shell::util::models_dev::{CacheSource, CatalogCache};
+
+    fn open_connect(agent: &mut AgentView) {
+        agent.active_modal = Some(ActiveModal::ProviderConnect {
+            flow: Box::new(ProviderConnectFlow::new(
+                CatalogCache {
+                    providers: indexmap::IndexMap::new(),
+                    fetched_at: None,
+                    source: CacheSource::Offline,
+                },
+                vec![],
+            )),
+            window: ModalWindowState::new(),
+        });
+    }
+
+    #[test]
+    fn connect_method_step_uses_compact_centered_popup() {
+        let mut agent = make_agent();
+        open_connect(&mut agent);
+        let area = Rect::new(0, 0, 140, 45);
+        let mut buf = Buffer::empty(area);
+
+        agent.draw_active_modal(area, &mut buf, crate::theme::Theme::current(), false);
+
+        let popup = match agent.active_modal.as_ref() {
+            Some(ActiveModal::ProviderConnect { window, .. }) => {
+                window.popup_area.expect("connect popup rendered")
+            }
+            _ => panic!("connect modal must stay open"),
+        };
+        assert!(
+            popup.height <= 14,
+            "two-choice method step must not consume the whole terminal: {popup:?}"
+        );
+        assert!(popup.y > 0, "popup must be vertically centered: {popup:?}");
+    }
+
+    #[test]
+    fn connect_footer_exposes_clickable_keyboard_equivalents() {
+        let mut agent = make_agent();
+        open_connect(&mut agent);
+        let area = Rect::new(0, 0, 120, 36);
+        let mut buf = Buffer::empty(area);
+
+        agent.draw_active_modal(area, &mut buf, crate::theme::Theme::current(), false);
+
+        let clickable = match agent.active_modal.as_ref() {
+            Some(ActiveModal::ProviderConnect { window, .. }) => window
+                .shortcut_hits
+                .iter()
+                .filter(|hit| hit.clickable)
+                .count(),
+            _ => 0,
+        };
+        assert!(
+            clickable >= 3,
+            "mouse users need previous/next/select/back equivalents"
+        );
     }
 }

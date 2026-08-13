@@ -184,13 +184,6 @@ impl AgentView {
                 {
                     return InputOutcome::Action(Action::AnnouncementsHide);
                 }
-                if self.hit_announcement_cta.contains(mouse.column, mouse.row)
-                    && !self.pos_occluded(mouse.column, mouse.row)
-                {
-                    return InputOutcome::Action(Action::AnnouncementsOpenCta(
-                        xai_grok_telemetry::events::AnnouncementCtaSurface::Banner,
-                    ));
-                }
                 if self
                     .plugin_cta
                     .hit_dismiss
@@ -236,13 +229,6 @@ impl AgentView {
                 }
                 if self.hit_voice_stop_button.contains(mouse.column, mouse.row) {
                     return InputOutcome::Action(Action::VoiceToggle);
-                }
-                if self.hit_upgrade_cta.contains(mouse.column, mouse.row)
-                    && !self.pos_occluded(mouse.column, mouse.row)
-                {
-                    return InputOutcome::Action(Action::AnnouncementsOpenCta(
-                        xai_grok_telemetry::events::AnnouncementCtaSurface::Header,
-                    ));
                 }
                 if self.hit_cwd.contains(mouse.column, mouse.row) {
                     let path = self.session.cwd.display().to_string();
@@ -865,46 +851,6 @@ impl AgentView {
                             .scrollback
                             .entry_index_at_screen_row(click_row, self.pane_areas.scrollback);
                         if let Some(idx) = hit_idx {
-                            let credit_click = self
-                                .scrollback
-                                .entry(idx)
-                                .and_then(|entry| {
-                                    if let crate::scrollback::block::RenderBlock::CreditLimit(
-                                        ref blk,
-                                    ) = entry.block
-                                    {
-                                        use crate::scrollback::blocks::CreditLimitCardAction;
-                                        let choice = match blk.action {
-                                            CreditLimitCardAction::PurchaseCredits => {
-                                                xai_grok_telemetry::events::CreditLimitChoice::PurchaseCredits
-                                            }
-                                            CreditLimitCardAction::EnablePayg
-                                            | CreditLimitCardAction::IncreasePaygLimit => {
-                                                xai_grok_telemetry::events::CreditLimitChoice::PayAsYouGo
-                                            }
-                                        };
-                                        Some((blk.url.clone(), choice))
-                                    } else {
-                                        None
-                                    }
-                                });
-                            if let Some((url, choice)) = credit_click
-                                && let Some((area, _, _)) = self
-                                    .scrollback
-                                    .entry_screen_area(idx, self.pane_areas.scrollback)
-                            {
-                                let url_row = area.y + area.height.saturating_sub(2);
-                                if click_row >= url_row {
-                                    self.scrollback.set_selected(Some(idx));
-                                    xai_grok_telemetry::session_ctx::log_event(xai_grok_telemetry::events::CreditLimitUpsellClicked {
-                                        surface: xai_grok_telemetry::events::CreditLimitUpsellSurface::InlineCard,
-                                        choice,
-                                    });
-                                    self.open_url_or_show(&url);
-                                    self.last_click = None;
-                                    return InputOutcome::Changed;
-                                }
-                            }
                             let selectable = self
                                 .scrollback
                                 .get(idx)
@@ -1095,9 +1041,6 @@ impl AgentView {
                     .hit_announcement_hide
                     .update_hover(mouse.column, mouse.row);
                 changed |= self
-                    .hit_announcement_cta
-                    .update_hover(mouse.column, mouse.row);
-                changed |= self
                     .privacy_banner
                     .hit_accept
                     .update_hover(mouse.column, mouse.row);
@@ -1125,7 +1068,6 @@ impl AgentView {
                 changed |= self.hit_bg_close.update_hover(mouse.column, mouse.row);
                 changed |= self.hit_catalog_close.update_hover(mouse.column, mouse.row);
                 changed |= self.hit_cwd.update_hover(mouse.column, mouse.row);
-                changed |= self.hit_upgrade_cta.update_hover(mouse.column, mouse.row);
                 {
                     let new_kill = self
                         .tasks

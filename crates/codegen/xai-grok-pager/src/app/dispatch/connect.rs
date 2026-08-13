@@ -193,6 +193,7 @@ pub(super) fn dispatch_open_keys_manager(app: &mut AppView) -> Vec<Effect> {
     }
     // Açıkken (kilitli değilse) bilinmeyen bakiyeler için arka plan sorgusu.
     if !locked {
+        effects.extend(load_opencode_credentials_effect(app));
         effects.extend(probe_key_balances_effect(app));
     }
     effects
@@ -238,6 +239,27 @@ fn keys_manager_export_dir(app: &AppView) -> PathBuf {
         }
     }
     xai_grok_config::grok_home()
+}
+
+/// Modal override'ı veya kurulu OpenCode auth.json yolu.
+fn keys_manager_opencode_auth_path(app: &AppView) -> Option<PathBuf> {
+    use crate::views::modal::ActiveModal;
+    for agent in app.agents.values() {
+        if let Some(ActiveModal::KeysManager { state }) = &agent.active_modal
+            && let Some(path) = &state.opencode_auth_path
+        {
+            return Some(path.clone());
+        }
+    }
+    let def = xai_omni_keychain::find_stack_def("opencode")?;
+    xai_omni_keychain::resolve_stack_path(def)
+}
+
+fn load_opencode_credentials_effect(app: &AppView) -> Vec<Effect> {
+    keys_manager_opencode_auth_path(app)
+        .map(|auth_path| Effect::LoadOpenCodeCredentials { auth_path })
+        .into_iter()
+        .collect()
 }
 
 /// Keychain'den güncel kayıtları modal state'ine taşır.
@@ -301,8 +323,10 @@ pub(super) fn dispatch_keychain_unlock(
             app.keychain = Some(kc);
             reload_keys_manager_entries(app);
             with_keys_manager(app, |state| state.apply_unlocked());
-            // Açılışta bilinmeyen bakiyeleri arka planda sorgula.
-            return probe_key_balances_effect(app);
+            // OpenCode okuması ve bakiye sorguları event-loop dışında çalışır.
+            let mut effects = load_opencode_credentials_effect(app);
+            effects.extend(probe_key_balances_effect(app));
+            return effects;
         }
         Err(_) => {
             with_keys_manager(app, |state| {
@@ -311,6 +335,158 @@ pub(super) fn dispatch_keychain_unlock(
         }
     }
     vec![]
+}
+
+/// Async OpenCode tarama sonucunu şifreli keychain'e merge eder. Mevcut
+/// Omnitrix provider kayıtları korunur; tüm yeni API kayıtları tek save ile
+/// kalıcılaştırılır. Sonraki katalog sonucu kullanılabilir provider/model'i
+/// otomatik bağlar.
+pub(super) fn apply_opencode_credentials(
+    app: &mut AppView,
+    loaded: crate::app::actions::OpenCodeCredentials,
+) -> Vec<Effect> {
+    let Some(kc) = app.keychain.as_mut() else {
+        return vec![];
+    };
+    let provider_ids = loaded
+        .credentials
+        .iter()
+        .map(|credential| credential.provider_id.clone())
+        .collect::<Vec<_>>();
+    let provider_models = loaded.provider_models;
+    let mut imported = 0usize;
+    for credential in loaded.credentials {
+        match kc.import_api_key(
+            &credential.provider_id,
+            credential.api_key.as_str(),
+            None,
+            None,
+            false,
+        ) {
+            Ok(Some(_)) => imported += 1,
+            Ok(None) => {}
+            Err(error) => {
+                tracing::warn!(target: "keys", provider = %credential.provider_id, %error, "OpenCode key import failed");
+            }
+        }
+    }
+    if imported > 0
+        && let Err(error) = kc.save()
+    {
+        tracing::warn!(target: "keys", %error, "keychain save failed after OpenCode import");
+    }
+    reload_keys_manager_entries(app);
+    crate::omni_runtime::refresh();
+    with_keys_manager(app, |state| {
+        state.auto_activate_opencode = !provider_ids.is_empty();
+        state.opencode_provider_ids = provider_ids;
+        state.opencode_preferred_models = loaded.preferred_models;
+        state.opencode_provider_models = provider_models;
+        state.notice = Some(if imported > 0 {
+            format!("OpenCode: {imported} API key içe alındı · provider/model etkinleştiriliyor…")
+        } else {
+            "OpenCode: API key kayıtları güncel · provider/model doğrulanıyor…".to_string()
+        });
+    });
+    let mut effects = probe_key_balances_effect(app);
+    if opencode_activation_request(app).is_some() {
+        effects.push(Effect::FetchModelsCatalog);
+    }
+    effects
+}
+
+fn opencode_activation_request(app: &AppView) -> Option<(Vec<String>, Vec<String>)> {
+    use crate::views::modal::ActiveModal;
+    for agent in app.agents.values() {
+        if let Some(ActiveModal::KeysManager { state }) = &agent.active_modal
+            && state.auto_activate_opencode
+        {
+            return Some((
+                state.opencode_provider_ids.clone(),
+                state.opencode_preferred_models.clone(),
+            ));
+        }
+    }
+    None
+}
+
+fn split_provider_model(value: &str) -> Option<(&str, &str)> {
+    let (provider, model) = value.trim().split_once('/')?;
+    (!provider.is_empty() && !model.is_empty()).then_some((provider, model))
+}
+
+/// OpenCode tercih sırasını koruyarak katalogda gerçekten bulunan ilk
+/// provider/model'i etkinleştirir. Tercih yoksa import edilen provider'ların
+/// katalog sırasındaki ilk modeli kullanılır.
+pub(super) fn activate_imported_opencode_provider(
+    app: &mut AppView,
+    catalog: &xai_grok_shell::util::models_dev::CatalogCache,
+) -> Vec<Effect> {
+    let Some((providers, preferred_models, configured_models)) = opencode_activation_request(app)
+    else {
+        return vec![];
+    };
+    let provider_set = providers
+        .iter()
+        .map(String::as_str)
+        .collect::<std::collections::HashSet<_>>();
+    let preferred = preferred_models.iter().find_map(|value| {
+        let (provider_id, model_id) = split_provider_model(value)?;
+        if let Some(configured) = configured_models.iter().find(|configured| {
+            configured.provider_id == provider_id && configured.model_id == model_id
+        }) {
+            return provider_set.contains(provider_id).then(|| {
+                (
+                    provider_id.to_string(),
+                    model_id.to_string(),
+                    configured.base_url.clone(),
+                )
+            });
+        }
+        let provider = catalog.providers.get(provider_id)?;
+        (provider_set.contains(provider_id) && provider.models.contains_key(model_id))
+            .then(|| (provider_id.to_string(), model_id.to_string(), None))
+    });
+    let selection = preferred.or_else(|| {
+        configured_models.iter().find_map(|configured| {
+            provider_set
+                .contains(configured.provider_id.as_str())
+                .then(|| {
+                    (
+                        configured.provider_id.clone(),
+                        configured.model_id.clone(),
+                        configured.base_url.clone(),
+                    )
+                })
+        })
+    }).or_else(|| {
+        providers.iter().find_map(|provider_id| {
+            let provider = catalog.providers.get(provider_id)?;
+            let model_id = provider.models.keys().next()?.clone();
+            Some((provider_id.clone(), model_id, None))
+        })
+    });
+    with_keys_manager(app, |state| state.auto_activate_opencode = false);
+    let Some((provider_id, model_id, base_url)) = selection else {
+        with_keys_manager(app, |state| {
+            state.notice = Some(
+                "OpenCode key'leri içe alındı; katalogda etkinleştirilebilir model bulunamadı"
+                    .to_string(),
+            );
+        });
+        return vec![];
+    };
+    let effects = dispatch_connect_provider(
+        app,
+        provider_id.clone(),
+        None,
+        model_id.clone(),
+        base_url,
+    );
+    with_keys_manager(app, |state| {
+        state.notice = Some(format!("OpenCode bağlanıyor: {provider_id} / {model_id}"));
+    });
+    effects
 }
 
 /// Tam key'i keychain'den çözüp `Reveal` moduna taşır (RAM; `Zeroizing`).
@@ -622,10 +798,7 @@ pub(super) fn dispatch_keychain_stack_preview(
             lines.push(format!("  [{mark}] {}  {}", c.provider_id, c.masked));
         }
         if preview.candidates.len() > 12 {
-            lines.push(format!(
-                "  … +{} daha",
-                preview.candidates.len() - 12
-            ));
+            lines.push(format!("  … +{} daha", preview.candidates.len() - 12));
         }
         lines.push("Enter: çalıştır (merge, conflict skip)  ·  Esc: geri".into());
         Ok((
@@ -769,13 +942,7 @@ pub(super) fn dispatch_connect_provider(
 
     // 1) Key'i çöz.
     let (key, key_id, category_used, session_only) = match &snapshot {
-        Some(s) => match resolve_wizard_key(
-            app,
-            s,
-            &provider_id,
-            &model_id,
-            base_url.as_deref(),
-        ) {
+        Some(s) => match resolve_wizard_key(app, s, &provider_id, &model_id, base_url.as_deref()) {
             Ok(v) => v,
             Err(msg) => {
                 app.show_toast(&format!("\u{2717} {msg}"));
@@ -810,12 +977,14 @@ pub(super) fn dispatch_connect_provider(
     // 3) Config yazımı + `[models] default` (async IO — effects katmanı).
     //    Wizard yolunda backend flow'dan gelir (custom-anthropic → Messages);
     //    legacy yolunda `None` (katalogdan çözülür).
+    let mut activate_session = None;
     let mut effects = vec![Effect::ConnectProviderWrite {
         provider_id: provider_id.clone(),
         model_id: model_id.clone(),
         model_key: model_key.clone(),
         base_url,
         api_backend: snapshot.as_ref().and_then(|s| s.api_backend.clone()),
+        activate_session: None,
     }];
 
     // 4) Aktif oturumun modelini değiştir (router'daki `Action::SwitchModel`
@@ -839,6 +1008,21 @@ pub(super) fn dispatch_connect_provider(
         } else {
             agent.session.deferred_model_switch = Some((new_id, None));
         }
+    } else if let ActiveView::Agent(aid) = app.active_view
+        && let Some(agent) = app.agents.get(&aid)
+        && let Some(session_id) = agent.session.session_id.clone()
+    {
+        // OpenCode/custom model IDs are commonly absent from the pager's
+        // cached catalog. Persist first, reload the shell model registry,
+        // then switch the existing session using the canonical config key.
+        activate_session = Some((aid, session_id));
+    }
+    if let Some(Effect::ConnectProviderWrite {
+        activate_session: slot,
+        ..
+    }) = effects.first_mut()
+    {
+        *slot = activate_session;
     }
 
     let session_note = if session_only {
@@ -902,7 +1086,12 @@ fn resolve_wizard_key(
                 if let Err(e) = kc.save() {
                     tracing::warn!(target: "connect", error = %e, "keychain save failed for new wizard key");
                 }
-                Ok((key.to_string(), key_id, xai_omni_keychain::auto_category(provider_id), false))
+                Ok((
+                    key.to_string(),
+                    key_id,
+                    xai_omni_keychain::auto_category(provider_id),
+                    false,
+                ))
             } else {
                 Ok((
                     key.to_string(),

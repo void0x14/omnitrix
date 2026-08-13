@@ -1660,9 +1660,9 @@ mod permission_scope_key_tests {
 }
 #[cfg(test)]
 mod question_no_freeform_tests {
-    //! Freeform ("Other") gating for `no_freeform` question modals — e.g.
-    //! the SuperGrok upsell. Regression tests for the bug where clicking
-    //! under the last option of the upsell selected the (hidden) freeform
+    //! Freeform ("Other") gating for `no_freeform` fixed-choice modals.
+    //! Regression tests for the bug where clicking
+    //! under the last option selected the (hidden) freeform
     //! row and let the user type into a modal that offers no free text.
     use super::super::test_fixtures::make_agent;
     use crate::actions::ActionRegistry;
@@ -1677,8 +1677,8 @@ mod question_no_freeform_tests {
     use xai_grok_tools::implementations::grok_build::ask_user_question::{
         Question, QuestionOption,
     };
-    /// Fixed options, single-select — shaped like the free-usage upsell.
-    fn upsell_question() -> Question {
+    /// Fixed options, single-select.
+    fn fixed_question() -> Question {
         let opt = |label: &str, desc: &str| QuestionOption {
             label: label.into(),
             description: desc.into(),
@@ -1686,10 +1686,10 @@ mod question_no_freeform_tests {
             id: None,
         };
         Question {
-            question: "You hit your free usage limit.".into(),
+            question: "Choose a deployment target.".into(),
             options: vec![
-                opt("Upgrade to SuperGrok", "For everyday coding"),
-                opt("Upgrade to SuperGrok Heavy", "Highest usage limits"),
+                opt("Staging", "Deploy to staging"),
+                opt("Production", "Deploy to production"),
             ],
             multi_select: Some(false),
             id: None,
@@ -1697,8 +1697,8 @@ mod question_no_freeform_tests {
     }
     pub(super) fn open_question(agent: &mut AgentView, no_freeform: bool) {
         let state = QuestionViewState::new(
-            "tc-upsell".into(),
-            vec![upsell_question()],
+            "tc-fixed-choice".into(),
+            vec![fixed_question()],
             StashedPrompt::default(),
         );
         agent.question_view = Some(if no_freeform {

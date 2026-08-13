@@ -46,7 +46,10 @@ impl Drop for TestDir {
 
 fn open_fresh(dir: &TestDir) -> Keychain {
     Keychain::open(
-        KeychainOptions { path: Some(dir.keychain_path()), ttl: MasterKeyTtl::Session },
+        KeychainOptions {
+            path: Some(dir.keychain_path()),
+            ttl: MasterKeyTtl::Session,
+        },
         || TEST_MASTER_PW.to_string(),
     )
     .unwrap()
@@ -61,16 +64,29 @@ fn export_all_import_roundtrip() {
     let src_dir = TestDir::new();
     let dst_dir = TestDir::new();
     let mut src = open_fresh(&src_dir);
-    src.add_key("personal", "openai", TEST_KEY_OPENAI, Some("grok-3".to_string()), None)
+    src.add_key(
+        "personal",
+        "openai",
+        TEST_KEY_OPENAI,
+        Some("grok-3".to_string()),
+        None,
+    )
+    .unwrap();
+    src.add_key("work", "xai", TEST_KEY_XAI, None, None)
         .unwrap();
-    src.add_key("work", "xai", TEST_KEY_XAI, None, None).unwrap();
     let bytes = export_all_bytes(&mut src);
 
     let mut dst = open_fresh(&dst_dir);
     let summary = import_keychain(&mut dst, &bytes, TEST_EXPORT_PW, false).unwrap();
     assert_eq!(summary.imported_keys, 2);
-    assert!(summary.overwritten.is_empty(), "fresh keychain: nothing overwritten");
-    assert!(summary.skipped.is_empty(), "fresh keychain: nothing skipped");
+    assert!(
+        summary.overwritten.is_empty(),
+        "fresh keychain: nothing overwritten"
+    );
+    assert!(
+        summary.skipped.is_empty(),
+        "fresh keychain: nothing skipped"
+    );
     // Export gövdesi KeyId taşımaz; import tarafında her kayıt yeni bir id
     // alır, bu yüzden destination'ın kendi id'leri provider_id ile eşleşir.
     let dst_entries = dst.list_keys().unwrap();
@@ -95,8 +111,10 @@ fn export_category_scope_only_exports_that_category() {
     let src_dir = TestDir::new();
     let dst_dir = TestDir::new();
     let mut src = open_fresh(&src_dir);
-    src.add_key("personal", "openai", TEST_KEY_OPENAI, None, None).unwrap();
-    src.add_key("work", "xai", TEST_KEY_XAI, None, None).unwrap();
+    src.add_key("personal", "openai", TEST_KEY_OPENAI, None, None)
+        .unwrap();
+    src.add_key("work", "xai", TEST_KEY_XAI, None, None)
+        .unwrap();
     let bytes = export_keychain(
         &mut src,
         ExportScope::Categories(vec!["personal".to_string()]),
@@ -122,7 +140,8 @@ fn import_wrong_password_fails() {
     let src_dir = TestDir::new();
     let dst_dir = TestDir::new();
     let mut src = open_fresh(&src_dir);
-    src.add_key("personal", "openai", TEST_KEY_OPENAI, None, None).unwrap();
+    src.add_key("personal", "openai", TEST_KEY_OPENAI, None, None)
+        .unwrap();
     let bytes = export_all_bytes(&mut src);
 
     let mut dst = open_fresh(&dst_dir);
@@ -143,11 +162,13 @@ fn import_skips_conflicts_without_overwrite() {
     let src_dir = TestDir::new();
     let dst_dir = TestDir::new();
     let mut src = open_fresh(&src_dir);
-    src.add_key("personal", "openai", "sk-exported-9999", None, None).unwrap();
+    src.add_key("personal", "openai", "sk-exported-9999", None, None)
+        .unwrap();
     let bytes = export_all_bytes(&mut src);
 
     let mut dst = open_fresh(&dst_dir);
-    dst.add_key("personal", "openai", TEST_KEY_OPENAI, None, None).unwrap();
+    dst.add_key("personal", "openai", TEST_KEY_OPENAI, None, None)
+        .unwrap();
     let summary = import_keychain(&mut dst, &bytes, TEST_EXPORT_PW, false).unwrap();
     assert_eq!(summary.imported_keys, 0);
     assert!(summary.overwritten.is_empty());
@@ -165,7 +186,8 @@ fn import_overwrites_with_flag() {
     let src_dir = TestDir::new();
     let dst_dir = TestDir::new();
     let mut src = open_fresh(&src_dir);
-    src.add_key("personal", "openai", "sk-exported-9999", None, None).unwrap();
+    src.add_key("personal", "openai", "sk-exported-9999", None, None)
+        .unwrap();
     let bytes = export_all_bytes(&mut src);
 
     let mut dst = open_fresh(&dst_dir);
@@ -187,13 +209,10 @@ fn import_overwrites_with_flag() {
 fn export_with_empty_scope_errors() {
     let dir = TestDir::new();
     let mut kc = open_fresh(&dir);
-    kc.add_key("personal", "openai", TEST_KEY_OPENAI, None, None).unwrap();
-    let err = export_keychain(
-        &mut kc,
-        ExportScope::Categories(Vec::new()),
-        TEST_EXPORT_PW,
-    )
-    .unwrap_err();
+    kc.add_key("personal", "openai", TEST_KEY_OPENAI, None, None)
+        .unwrap();
+    let err =
+        export_keychain(&mut kc, ExportScope::Categories(Vec::new()), TEST_EXPORT_PW).unwrap_err();
     let msg = format!("{err}");
     assert!(
         msg.contains("empty"),

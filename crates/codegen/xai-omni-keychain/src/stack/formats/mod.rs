@@ -150,8 +150,8 @@ mod formats_export {
     }
 
     pub fn write_json_pretty(path: &Path, value: &serde_json::Value) -> anyhow::Result<()> {
-        let bytes = serde_json::to_vec_pretty(value)
-            .map_err(|e| anyhow::anyhow!("json serialize: {e}"))?;
+        let bytes =
+            serde_json::to_vec_pretty(value).map_err(|e| anyhow::anyhow!("json serialize: {e}"))?;
         atomic_write(path, &bytes)
             .map_err(|e| anyhow::anyhow!("yazılamadı ({}): {e}", path.display()))
     }

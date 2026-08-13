@@ -2375,11 +2375,13 @@ impl SessionActor {
                 let action = checkpoint.detail.trim_start_matches("system_async:");
                 prompt_text = self.flow_run_async_action(action, &summary, &stage).await;
             } else {
-                prompt_text = serde_json::to_string(&checkpoint)
-                    .unwrap_or_else(|_| checkpoint.directive);
+                prompt_text =
+                    serde_json::to_string(&checkpoint).unwrap_or_else(|_| checkpoint.directive);
             }
         }
-        self.flow_governor.lock().on_tool_success(effective_tool_name);
+        self.flow_governor
+            .lock()
+            .on_tool_success(effective_tool_name);
         let tool_chat = if inline_images.is_empty() {
             ConversationItem::tool_result(call_id.to_string(), prompt_text)
         } else {
@@ -2473,7 +2475,8 @@ impl SessionActor {
             crate::session::flow::judge::JudgeVerdict {
                 raw_output: raw.clone(),
                 accepted: true,
-                reason: "yargıç görevlendirmesi başarısız; fail-soft kabul (ihlal kayıtlı)".to_string(),
+                reason: "yargıç görevlendirmesi başarısız; fail-soft kabul (ihlal kayıtlı)"
+                    .to_string(),
             }
         } else {
             crate::session::flow::judge::parse_verdict(&raw)

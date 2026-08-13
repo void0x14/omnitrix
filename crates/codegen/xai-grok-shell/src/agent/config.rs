@@ -4897,9 +4897,8 @@ fn warn_if_resolved_key_not_live(model: &str, base_url: &str, key: &str) {
     if key.trim().is_empty() || crate::util::is_xai_api_url(base_url) {
         return;
     }
-    let memo = LIVE_KEY_PROBE_MEMO.get_or_init(|| {
-        std::sync::Mutex::new(std::collections::HashSet::new())
-    });
+    let memo =
+        LIVE_KEY_PROBE_MEMO.get_or_init(|| std::sync::Mutex::new(std::collections::HashSet::new()));
     let probe_key = (base_url.to_owned(), key.to_owned());
     {
         let guard = match memo.lock() {
@@ -6913,7 +6912,13 @@ reasoning_effort = "low"
         let model_id = "runtime-key-model-2";
         crate::auth::runtime_key::clear_runtime_keys();
         crate::auth::runtime_key::set_runtime_model_key(model_id, Some("kc-key".to_string()));
-        let model = test_model_entry(model_id, "https://example.com/v1", Some("cfg-key"), None, None);
+        let model = test_model_entry(
+            model_id,
+            "https://example.com/v1",
+            Some("cfg-key"),
+            None,
+            None,
+        );
         let creds = resolve_credentials(&model, None);
         assert_eq!(creds.api_key.as_deref(), Some("cfg-key"));
         crate::auth::runtime_key::clear_runtime_keys();
@@ -12842,10 +12847,22 @@ default = "grok-4.5"
     /// header selection can take (provider-detected and unknown keys).
     #[test]
     fn verify_key_live_returns_false_on_unreachable_endpoint() {
-        assert!(!verify_key_live("http://127.0.0.1:1/v1", "sk-ant-api03-test"));
-        assert!(!verify_key_live("http://127.0.0.1:1/v1", "AIzaSyA-test-key"));
-        assert!(!verify_key_live("http://127.0.0.1:1/v1", "sk-proj-test-key"));
-        assert!(!verify_key_live("http://127.0.0.1:1/v1", "undetectable-key"));
+        assert!(!verify_key_live(
+            "http://127.0.0.1:1/v1",
+            "sk-ant-api03-test"
+        ));
+        assert!(!verify_key_live(
+            "http://127.0.0.1:1/v1",
+            "AIzaSyA-test-key"
+        ));
+        assert!(!verify_key_live(
+            "http://127.0.0.1:1/v1",
+            "sk-proj-test-key"
+        ));
+        assert!(!verify_key_live(
+            "http://127.0.0.1:1/v1",
+            "undetectable-key"
+        ));
     }
 
     /// Liveness warning wiring skips first-party xAI endpoints without ever
@@ -12854,11 +12871,7 @@ default = "grok-4.5"
     fn warn_if_resolved_key_not_live_skips_first_party_endpoints() {
         // `crate::util::is_xai_api_url` covers api.x.ai and the cli-chat-proxy;
         // these must return without probing (no network, no panic).
-        warn_if_resolved_key_not_live(
-            "grok-build",
-            "https://api.x.ai/v1",
-            "xai-not-really-a-key",
-        );
+        warn_if_resolved_key_not_live("grok-build", "https://api.x.ai/v1", "xai-not-really-a-key");
         warn_if_resolved_key_not_live("grok-build", "https://api.x.ai/v1", "");
     }
 }

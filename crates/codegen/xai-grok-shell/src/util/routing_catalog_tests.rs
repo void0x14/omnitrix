@@ -88,16 +88,30 @@ fn missing_file_uses_builtin_fallback() {
 
     let modes = load_routing_modes(&path).expect("eksik dosya fallback ile yüklenmeli");
 
-    assert!(modes.len() >= 40, "fallback katalog en az 40 mod içermeli, {} bulundu", modes.len());
-    assert!(modes.iter().any(|m| m.id == "rr"), "fallback 'rr' modunu içermeli");
-    assert!(modes.iter().any(|m| m.id == "fallback-strict"), "fallback 'fallback-strict' modunu içermeli");
+    assert!(
+        modes.len() >= 40,
+        "fallback katalog en az 40 mod içermeli, {} bulundu",
+        modes.len()
+    );
+    assert!(
+        modes.iter().any(|m| m.id == "rr"),
+        "fallback 'rr' modunu içermeli"
+    );
+    assert!(
+        modes.iter().any(|m| m.id == "fallback-strict"),
+        "fallback 'fallback-strict' modunu içermeli"
+    );
 }
 
 #[test]
 fn builtin_catalog_has_40_plus_unique_ids() {
     let modes = builtin_modes();
 
-    assert!(modes.len() >= 40, "gömülü katalog en az 40 mod içermeli, {} bulundu", modes.len());
+    assert!(
+        modes.len() >= 40,
+        "gömülü katalog en az 40 mod içermeli, {} bulundu",
+        modes.len()
+    );
 
     let mut ids = std::collections::HashSet::new();
     for m in modes {
@@ -160,7 +174,10 @@ long_help = "Uzun yardım."
 
     let err = load_routing_modes(&path).expect_err("yinelenen id hata dönmeli");
     let msg = err.to_string();
-    assert!(msg.contains("rr"), "hata mesajı yinelenen id'yi içermeli: {msg}");
+    assert!(
+        msg.contains("rr"),
+        "hata mesajı yinelenen id'yi içermeli: {msg}"
+    );
     assert!(matches!(err, RoutingCatalogError::Validation { .. }));
 }
 
@@ -356,8 +373,7 @@ help = "Sonlu olmayan default."
 "#
             ),
         );
-        let err =
-            load_routing_modes(&path).expect_err("sonlu olmayan default hata dönmeli");
+        let err = load_routing_modes(&path).expect_err("sonlu olmayan default hata dönmeli");
         assert!(matches!(err, RoutingCatalogError::Validation { .. }));
     }
 }

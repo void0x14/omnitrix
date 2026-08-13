@@ -1119,6 +1119,7 @@ async fn set_session_model_invalidates_byok_memo_for_same_model_id() {
                 doom_loop_recovery: None,
                 header_injector: None,
                 fallback: None,
+                grounding: None,
             };
             let _ = actor
                 .handle_set_session_model(cfg, false, false, true, 85)
@@ -1213,6 +1214,7 @@ async fn switch_to_first_party_model_drops_minted_provider_token() {
                 doom_loop_recovery: None,
                 header_injector: None,
                 fallback: None,
+                grounding: None,
             };
             let _ = actor
                 .handle_set_session_model(cfg, false, false, true, 85)

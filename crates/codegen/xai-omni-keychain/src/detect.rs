@@ -24,41 +24,161 @@ struct Rule {
 /// Özgül (uzun) prefix kuralları — aynı aile içinde uzun prefix önce listelenir.
 /// Bu kuralardan biri eşleşirse genel `sk-` kuralları devreye girmez.
 const SPECIFIC_RULES: &[Rule] = &[
-    Rule { prefix: "sk-ant-api03-", provider_id: "anthropic", confidence: 100 },
-    Rule { prefix: "github_pat_", provider_id: "github", confidence: 100 },
-    Rule { prefix: "sk-or-v1-", provider_id: "openrouter", confidence: 100 },
-    Rule { prefix: "sk-svcacct-", provider_id: "openai", confidence: 100 },
-    Rule { prefix: "sk-proj-", provider_id: "openai", confidence: 100 },
-    Rule { prefix: "sk-realtime-", provider_id: "openai", confidence: 90 },
-    Rule { prefix: "sk-admin-", provider_id: "openai", confidence: 95 },
-    Rule { prefix: "sk-ant-", provider_id: "anthropic", confidence: 95 },
-    Rule { prefix: "sk-or-", provider_id: "openrouter", confidence: 90 },
-    Rule { prefix: "gsk_", provider_id: "groq", confidence: 100 },
-    Rule { prefix: "xai-", provider_id: "xai", confidence: 100 },
-    Rule { prefix: "AIza", provider_id: "google", confidence: 100 },
-    Rule { prefix: "hf_", provider_id: "huggingface", confidence: 100 },
-    Rule { prefix: "hf-", provider_id: "huggingface", confidence: 90 },
-    Rule { prefix: "ghp_", provider_id: "github", confidence: 100 },
-    Rule { prefix: "gho_", provider_id: "github", confidence: 100 },
-    Rule { prefix: "ghu_", provider_id: "github", confidence: 90 },
-    Rule { prefix: "ghs_", provider_id: "github", confidence: 90 },
-    Rule { prefix: "glpat-", provider_id: "gitlab", confidence: 100 },
-    Rule { prefix: "pplx-", provider_id: "perplexity", confidence: 100 },
-    Rule { prefix: "pplx_", provider_id: "perplexity", confidence: 90 },
-    Rule { prefix: "nvapi-", provider_id: "nvidia", confidence: 95 },
-    Rule { prefix: "tgp_", provider_id: "together", confidence: 95 },
-    Rule { prefix: "fw_", provider_id: "fireworks", confidence: 95 },
-    Rule { prefix: "r8_", provider_id: "replicate", confidence: 95 },
-    Rule { prefix: "pa-", provider_id: "voyage", confidence: 95 },
-    Rule { prefix: "rpk_", provider_id: "runpod", confidence: 90 },
-    Rule { prefix: "mt-", provider_id: "modal", confidence: 90 },
+    Rule {
+        prefix: "sk-ant-api03-",
+        provider_id: "anthropic",
+        confidence: 100,
+    },
+    Rule {
+        prefix: "github_pat_",
+        provider_id: "github",
+        confidence: 100,
+    },
+    Rule {
+        prefix: "sk-or-v1-",
+        provider_id: "openrouter",
+        confidence: 100,
+    },
+    Rule {
+        prefix: "sk-svcacct-",
+        provider_id: "openai",
+        confidence: 100,
+    },
+    Rule {
+        prefix: "sk-proj-",
+        provider_id: "openai",
+        confidence: 100,
+    },
+    Rule {
+        prefix: "sk-realtime-",
+        provider_id: "openai",
+        confidence: 90,
+    },
+    Rule {
+        prefix: "sk-admin-",
+        provider_id: "openai",
+        confidence: 95,
+    },
+    Rule {
+        prefix: "sk-ant-",
+        provider_id: "anthropic",
+        confidence: 95,
+    },
+    Rule {
+        prefix: "sk-or-",
+        provider_id: "openrouter",
+        confidence: 90,
+    },
+    Rule {
+        prefix: "gsk_",
+        provider_id: "groq",
+        confidence: 100,
+    },
+    Rule {
+        prefix: "xai-",
+        provider_id: "xai",
+        confidence: 100,
+    },
+    Rule {
+        prefix: "AIza",
+        provider_id: "google",
+        confidence: 100,
+    },
+    Rule {
+        prefix: "hf_",
+        provider_id: "huggingface",
+        confidence: 100,
+    },
+    Rule {
+        prefix: "hf-",
+        provider_id: "huggingface",
+        confidence: 90,
+    },
+    Rule {
+        prefix: "ghp_",
+        provider_id: "github",
+        confidence: 100,
+    },
+    Rule {
+        prefix: "gho_",
+        provider_id: "github",
+        confidence: 100,
+    },
+    Rule {
+        prefix: "ghu_",
+        provider_id: "github",
+        confidence: 90,
+    },
+    Rule {
+        prefix: "ghs_",
+        provider_id: "github",
+        confidence: 90,
+    },
+    Rule {
+        prefix: "glpat-",
+        provider_id: "gitlab",
+        confidence: 100,
+    },
+    Rule {
+        prefix: "pplx-",
+        provider_id: "perplexity",
+        confidence: 100,
+    },
+    Rule {
+        prefix: "pplx_",
+        provider_id: "perplexity",
+        confidence: 90,
+    },
+    Rule {
+        prefix: "nvapi-",
+        provider_id: "nvidia",
+        confidence: 95,
+    },
+    Rule {
+        prefix: "tgp_",
+        provider_id: "together",
+        confidence: 95,
+    },
+    Rule {
+        prefix: "fw_",
+        provider_id: "fireworks",
+        confidence: 95,
+    },
+    Rule {
+        prefix: "r8_",
+        provider_id: "replicate",
+        confidence: 95,
+    },
+    Rule {
+        prefix: "pa-",
+        provider_id: "voyage",
+        confidence: 95,
+    },
+    Rule {
+        prefix: "rpk_",
+        provider_id: "runpod",
+        confidence: 90,
+    },
+    Rule {
+        prefix: "mt-",
+        provider_id: "modal",
+        confidence: 90,
+    },
 ];
 
 /// Genel `sk-` kuralları — yalnızca hiçbir özgül `sk-*` kuralı eşleşmediğinde.
 /// `sk-` birden çok provider'da kullanıldığı için düşük confidence adaylardır.
 const GENERIC_SK_RULES: &[Rule] = &[
-    Rule { prefix: "sk-", provider_id: "openai", confidence: 40 },
-    Rule { prefix: "sk-", provider_id: "deepseek", confidence: 35 },
+    Rule {
+        prefix: "sk-",
+        provider_id: "openai",
+        confidence: 40,
+    },
+    Rule {
+        prefix: "sk-",
+        provider_id: "deepseek",
+        confidence: 35,
+    },
 ];
 
 /// Test'lerin kural sayısını doğrulayabildiği toplam.
@@ -110,7 +230,10 @@ pub fn detect_providers_from_key(api_key: &str) -> Vec<DetectCandidate> {
     // Aynı provider yalnızca en yüksek confidence'lı adayla kalır.
     let mut deduped: Vec<DetectCandidate> = Vec::new();
     for candidate in candidates {
-        if !deduped.iter().any(|c| c.provider_id == candidate.provider_id) {
+        if !deduped
+            .iter()
+            .any(|c| c.provider_id == candidate.provider_id)
+        {
             deduped.push(candidate);
         }
     }

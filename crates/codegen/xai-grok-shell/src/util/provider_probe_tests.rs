@@ -223,10 +223,7 @@ async fn probe_normalizes_base_url_and_preserves_order() {
     let addr = spawn_status_server(200, None).await;
     let results = probe_candidates(vec![req(
         "xai",
-        vec![
-            format!("http://{addr}/"),
-            format!("http://{addr}/v1/"),
-        ],
+        vec![format!("http://{addr}/"), format!("http://{addr}/v1/")],
         Duration::from_millis(1000),
     )])
     .await;
@@ -258,7 +255,10 @@ async fn probe_sends_bearer_header_and_never_key_in_url() {
     );
     // ...ama istek satırında (URL) asla görünmez.
     let request_line = raw.lines().next().unwrap_or_default().to_string();
-    assert!(request_line.contains("/v1/models"), "request line: {request_line}");
+    assert!(
+        request_line.contains("/v1/models"),
+        "request line: {request_line}"
+    );
     assert!(
         !request_line.contains(TEST_KEY),
         "API key URL'ye sızdı: {request_line}"
@@ -306,7 +306,10 @@ async fn probe_never_logs_or_exposes_api_key() {
     let logs = String::from_utf8_lossy(&log_buf.lock().unwrap().clone()).to_string();
     assert!(!logs.contains(key), "API key log çıktısına sızdı:\n{logs}");
     // ProbeResult Debug çıktısı da secret içermemeli.
-    assert!(!format!("{:?}", results).contains(key), "key Debug çıktısına sızdı");
+    assert!(
+        !format!("{:?}", results).contains(key),
+        "key Debug çıktısına sızdı"
+    );
 }
 
 #[tokio::test]
@@ -379,7 +382,10 @@ async fn probe_strips_userinfo_never_leaks_in_request_logs_or_debug() {
         "bearer header eksik:\n{raw}"
     );
     let request_line = raw.lines().next().unwrap_or_default().to_string();
-    assert!(request_line.contains("/models"), "request line: {request_line}");
+    assert!(
+        request_line.contains("/models"),
+        "request line: {request_line}"
+    );
 
     // Loglar ve ProbeResult Debug secret içermiyor.
     let logs = String::from_utf8_lossy(&log_buf.lock().unwrap().clone()).to_string();

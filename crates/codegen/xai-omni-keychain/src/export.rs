@@ -122,8 +122,8 @@ pub fn export_keychain(
         .collect();
 
     let body = ExportBody { entries };
-    let body_json = serde_json::to_vec(&body)
-        .map_err(|e| anyhow::anyhow!("serialize export body: {e}"))?;
+    let body_json =
+        serde_json::to_vec(&body).map_err(|e| anyhow::anyhow!("serialize export body: {e}"))?;
     let salt = crypto::random_salt();
     let kdf_params = KdfParams::default();
     let key = crypto::derive_key(export_password, &salt, &kdf_params);
@@ -139,8 +139,7 @@ pub fn export_keychain(
         kdf_params,
         ciphertext_b64,
     };
-    serde_json::to_vec_pretty(&envelope)
-        .map_err(|e| anyhow::anyhow!("serialize export file: {e}"))
+    serde_json::to_vec_pretty(&envelope).map_err(|e| anyhow::anyhow!("serialize export file: {e}"))
 }
 
 /// Export dosyasını keychain'e birleştirir (merge).
@@ -158,8 +157,8 @@ pub fn import_keychain(
     export_password: &str,
     overwrite: bool,
 ) -> anyhow::Result<ImportSummary> {
-    let envelope: ExportEnvelope = serde_json::from_slice(bytes)
-        .map_err(|e| anyhow::anyhow!("invalid export file: {e}"))?;
+    let envelope: ExportEnvelope =
+        serde_json::from_slice(bytes).map_err(|e| anyhow::anyhow!("invalid export file: {e}"))?;
     if envelope.format != EXPORT_FORMAT {
         anyhow::bail!(
             "not an omnitrix keychain export (format: {:?})",
@@ -235,7 +234,9 @@ fn valid_kdf_params(p: &KdfParams) -> bool {
 /// GCM auth hatası (→ wrong password) ile yapısal bozukluğu ayırt etmek için
 /// ciphertext'in yapısal olarak geçerli olduğunu önceden doğrula.
 fn structurally_valid_ciphertext(encoded: &str) -> bool {
-    B64.decode(encoded).map(|raw| raw.len() >= NONCE_LEN).unwrap_or(false)
+    B64.decode(encoded)
+        .map(|raw| raw.len() >= NONCE_LEN)
+        .unwrap_or(false)
 }
 
 #[cfg(test)]

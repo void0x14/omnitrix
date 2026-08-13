@@ -1346,16 +1346,7 @@ pub(super) fn apply_retry_state(
             }
         }
     }
-    if is_credit_limit {
-        xai_grok_telemetry::session_ctx::log_event(xai_grok_telemetry::events::CreditLimitHit {
-            model_id: session
-                .models
-                .current
-                .as_ref()
-                .map(|m| m.0.to_string())
-                .unwrap_or_default(),
-        });
-    } else if !is_reauth {
+    if !is_credit_limit && !is_reauth {
         session.in_flight_prompt = None;
     }
 }

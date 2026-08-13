@@ -52,9 +52,21 @@ pub async fn dispatch(config: &NotifyConfig, title: &str, body: &str) -> NotifyR
             let r = tokio::time::timeout(Duration::from_secs(15), send_one(channel, &title, &body))
                 .await;
             match r {
-                Ok(Ok(())) => NotifyChannelReport { label: label.clone(), ok: true, detail: "gönderildi".to_string() },
-                Ok(Err(e)) => NotifyChannelReport { label: label.clone(), ok: false, detail: e },
-                Err(_) => NotifyChannelReport { label: label.clone(), ok: false, detail: "15sn zaman aşımı".to_string() },
+                Ok(Ok(())) => NotifyChannelReport {
+                    label: label.clone(),
+                    ok: true,
+                    detail: "gönderildi".to_string(),
+                },
+                Ok(Err(e)) => NotifyChannelReport {
+                    label: label.clone(),
+                    ok: false,
+                    detail: e,
+                },
+                Err(_) => NotifyChannelReport {
+                    label: label.clone(),
+                    ok: false,
+                    detail: "15sn zaman aşımı".to_string(),
+                },
             }
         }));
     }
@@ -66,7 +78,11 @@ pub async fn dispatch(config: &NotifyConfig, title: &str, body: &str) -> NotifyR
     }
     let sent = reports.iter().filter(|r| r.ok).count();
     let failed = reports.len() - sent;
-    NotifyReport { sent, failed, channels: reports }
+    NotifyReport {
+        sent,
+        failed,
+        channels: reports,
+    }
 }
 
 async fn send_one(channel: NotifyChannel, title: &str, body: &str) -> Result<(), String> {
@@ -106,7 +122,9 @@ async fn send_webhook(channel: &NotifyChannel, title: &str, body: &str) -> Resul
         "source": "omnitrix-flow",
     }));
     if let Some(headers_json) = channel.params.get("headers_json") {
-        if let Ok(headers) = serde_json::from_str::<serde_json::Map<String, serde_json::Value>>(headers_json) {
+        if let Ok(headers) =
+            serde_json::from_str::<serde_json::Map<String, serde_json::Value>>(headers_json)
+        {
             for (k, v) in headers {
                 if let Some(v) = v.as_str() {
                     req = req.header(&k, v);
@@ -114,7 +132,10 @@ async fn send_webhook(channel: &NotifyChannel, title: &str, body: &str) -> Resul
             }
         }
     }
-    let resp = req.send().await.map_err(|e| format!("webhook istek hatası: {e}"))?;
+    let resp = req
+        .send()
+        .await
+        .map_err(|e| format!("webhook istek hatası: {e}"))?;
     if resp.status().is_success() {
         Ok(())
     } else {
@@ -131,7 +152,14 @@ async fn send_sms(channel: &NotifyChannel, _title: &str, body: &str) -> Result<(
         .form(&[
             ("usercode", param(channel, "username")?.to_string()),
             ("password", param(channel, "password")?.to_string()),
-            ("msgheader", channel.params.get("msgheader").cloned().unwrap_or_else(|| "OMNITRIX".to_string())),
+            (
+                "msgheader",
+                channel
+                    .params
+                    .get("msgheader")
+                    .cloned()
+                    .unwrap_or_else(|| "OMNITRIX".to_string()),
+            ),
             ("gsmno", param(channel, "gsmno")?.to_string()),
             ("message", body.to_string()),
         ])
@@ -183,7 +211,10 @@ mod tests {
     #[test]
     fn no_channels_is_soft_success() {
         let cfg = NotifyConfig::default();
-        let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
         let report = rt.block_on(dispatch(&cfg, "t", "b"));
         assert_eq!(report.sent, 0);
         assert_eq!(report.failed, 0);
@@ -200,7 +231,10 @@ mod tests {
                 params: std::collections::HashMap::new(),
             }],
         };
-        let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
         let report = rt.block_on(dispatch(&cfg, "t", "b"));
         assert_eq!(report.sent, 0);
         assert_eq!(report.failed, 1);

@@ -43,9 +43,8 @@ pub fn build_judge_prompt(work_summary: &str, evidence_files: &[String]) -> Stri
 /// Çıktı boşsa → red (kanıtsız kabul yoktur).
 pub fn parse_verdict(raw_output: &str) -> JudgeVerdict {
     let upper = raw_output.to_uppercase();
-    let accepted = !raw_output.trim().is_empty()
-        && upper.contains("KABUL")
-        && !upper.contains("RED");
+    let accepted =
+        !raw_output.trim().is_empty() && upper.contains("KABUL") && !upper.contains("RED");
     let reason = if accepted {
         "Yargıç onayladı (kanıt zorunluluğu karşılandı).".to_string()
     } else {
@@ -62,15 +61,17 @@ pub fn parse_verdict(raw_output: &str) -> JudgeVerdict {
             .unwrap_or_else(|| "yargıç reddetti; gerekçe çıktıda yok".to_string());
         after.chars().take(400).collect()
     };
-    JudgeVerdict { raw_output: raw_output.to_string(), accepted, reason }
+    JudgeVerdict {
+        raw_output: raw_output.to_string(),
+        accepted,
+        reason,
+    }
 }
 
 /// Task aracı (`run_in_background: false`) sonucundan alt ajanın çıktı
 /// metnini çıkarır. TaskOutput değilse `prompt_text` döner (modelin
 /// göreceği metin — yargıç için yeterli).
-pub fn extract_task_output_text(
-    run: &xai_grok_tools::types::output::ToolRunResult,
-) -> String {
+pub fn extract_task_output_text(run: &xai_grok_tools::types::output::ToolRunResult) -> String {
     use xai_grok_tools::types::output::ToolOutput;
     use xai_tool_types::TaskOutputOutput;
     match &run.output {
@@ -86,7 +87,9 @@ mod tests {
 
     #[test]
     fn accept_parsed() {
-        let v = parse_verdict("Grounding 22, plan 20, format 21, güven 20 → 83. KABUL: kanıtlar yeterli.");
+        let v = parse_verdict(
+            "Grounding 22, plan 20, format 21, güven 20 → 83. KABUL: kanıtlar yeterli.",
+        );
         assert!(v.accepted);
     }
 

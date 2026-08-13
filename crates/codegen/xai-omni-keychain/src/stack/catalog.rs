@@ -41,7 +41,9 @@ pub fn all_stack_defs() -> &'static [StackDef] {
 
 pub fn find_stack_def(id: &str) -> Option<&'static StackDef> {
     let needle = id.trim().to_ascii_lowercase();
-    STACKS.iter().find(|s| s.id == needle || s.id.eq_ignore_ascii_case(id.trim()))
+    STACKS
+        .iter()
+        .find(|s| s.id == needle || s.id.eq_ignore_ascii_case(id.trim()))
 }
 
 /// Kurulu/tespit edilen stack'ler (path var veya ProcessEnv).

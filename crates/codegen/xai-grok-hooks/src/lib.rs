@@ -50,4 +50,4 @@ pub mod runner;
 mod test_support;
 pub mod trust;
 
-pub use notify::{dispatch_event, install, NotifyConfig, NotifyError};
+pub use notify::{NotifyConfig, NotifyError, dispatch_event, install};

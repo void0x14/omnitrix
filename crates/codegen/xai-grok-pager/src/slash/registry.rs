@@ -237,10 +237,10 @@ impl CommandRegistry {
     ///
     /// Entries are normalized via [`Self::normalize_deny_name`]. Restricted
     /// commands stay visible in the dropdown/completion (discoverability)
-    /// but disappear from `get()` — invoking one shows the SuperGrok upsell
-    /// instead of executing (see the `dispatch_send_prompt_inner` hook).
+    /// but disappear from `get()` — invoking one reports a local capability
+    /// error instead of executing (see the `dispatch_send_prompt_inner` hook).
     /// Pass an empty slice to clear the deny list (e.g. after a tier
-    /// upgrade mid-session).
+    /// account-capability change mid-session).
     pub fn set_restricted_commands(&mut self, names: &[String]) {
         self.restricted = names
             .iter()
@@ -252,14 +252,14 @@ impl CommandRegistry {
 
     /// True when `key` (canonical name or alias, `/` and case ignored)
     /// names a command the tier deny list blocks from [`Self::get`]. Lets
-    /// the dispatcher distinguish a restricted invocation (upsell) from a
+    /// the dispatcher distinguish a restricted invocation from a
     /// genuinely unknown one (pass through to the shell/model).
     ///
     /// Deliberately scans `commands` instead of `key_to_index`: a
     /// restricted command can still be missing from the key map for
     /// *other* reasons (`tools_satisfied` drops tool-gated commands until
-    /// the toolset handshake lands), and a typed invocation must upsell
-    /// even then.
+    /// the toolset handshake lands), and a typed invocation must still be
+    /// blocked.
     pub fn is_restricted(&self, key: &str) -> bool {
         if self.restricted.is_empty() {
             return false;
@@ -552,7 +552,7 @@ impl CommandRegistry {
             // triggers/key entries so the dropdown, ghost completion, and
             // palette show them like any other command (discoverability).
             // Execution is blocked by `get()`'s `restricted_match` filter —
-            // invoking one shows the SuperGrok upsell instead.
+            // invoking one reports the local capability restriction instead.
 
             // Insert canonical key.
             self.key_to_index.insert(canonical.to_string(), idx);
@@ -767,7 +767,7 @@ mod tests {
         // Execution is blocked …
         assert!(registry.get("usage").is_none());
         // … but the command stays listed (dropdown/completion
-        // discoverability — invoking shows the upsell instead).
+        // discoverability — invoking reports the capability restriction).
         assert!(registry.triggers().iter().any(|t| t.canonical == "usage"));
         // Other commands unaffected.
         assert!(registry.get("exit").is_some());
@@ -1227,7 +1227,7 @@ mod tests {
         assert!(reg.get_for_dispatch("share").is_none(), "hidden stays hard");
         assert!(
             reg.get_for_dispatch("usage").is_none(),
-            "restricted stays blocked (upsell path owns it)"
+            "restricted stays blocked (capability path owns it)"
         );
         assert!(
             reg.get_for_dispatch("loop").is_none(),

@@ -886,8 +886,8 @@ pub struct RemoteSettings {
     pub sharing_enabled: Option<bool>,
     /// Voice mode (STT dictation). Client default is **on** when absent.
     /// `Some(false)` is a remote kill switch; `Some(true)` forces on.
-    /// Overridable locally via `GROK_VOICE_MODE`. Free-tier SuperGrok upsell
-    /// is a separate client tier gate.
+    /// Overridable locally via `GROK_VOICE_MODE`. Account capability is a
+    /// separate client gate.
     #[serde(default)]
     pub voice_mode_enabled: Option<bool>,
     /// Whether ZDR (Zero Data Retention) users are allowed to use the product.
@@ -959,10 +959,6 @@ pub struct RemoteSettings {
     pub subscription_tier: Option<String>,
     #[serde(default)]
     pub gate_message: Option<String>,
-    #[serde(default)]
-    pub gate_url: Option<String>,
-    #[serde(default)]
-    pub gate_label: Option<String>,
     /// Whether the session picker groups entries by repo name.
     /// When `None` or `Some(false)`, sessions are shown in a flat list.
     #[serde(default)]
@@ -983,13 +979,6 @@ pub struct RemoteSettings {
     /// billing extension blocks on-demand cap changes.
     #[serde(default)]
     pub on_demand_enabled: Option<bool>,
-    /// When set to a non-empty URL, the pager's `/usage` command shows a link
-    /// to that URL instead of fetching billing data from the backend.
-    /// Server-controlled via the remote settings `grok_build_usage_redirect_url`
-    /// feature flag (target it at personal-team users). `None`/empty keeps the
-    /// default behaviour of fetching usage from the backend.
-    #[serde(default)]
-    pub usage_billing_redirect_url: Option<String>,
     /// Enable the shell command suggestion pipeline remotely.
     #[serde(default)]
     pub suggestions_enabled: Option<bool>,

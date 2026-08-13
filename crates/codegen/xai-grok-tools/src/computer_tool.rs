@@ -49,7 +49,7 @@ use crate::types::output::{DynamicOutput, ToolOutput};
 use crate::types::requirements::{Expr, ToolRequirement};
 use crate::types::tool::{ToolKind, ToolNamespace};
 use crate::types::tool_io::ToolInput;
-use crate::types::tool_metadata::{shared_resources, ToolMetadata};
+use crate::types::tool_metadata::{ToolMetadata, shared_resources};
 
 // ---------------------------------------------------------------------------
 // Goruntu sunucusu (omni-tools `DisplayServer::detect` mantiginin tasinmasi)
@@ -280,10 +280,7 @@ async fn run_first(candidates: &[&[&str]]) -> Result<(), String> {
             Err(err) => failures.push(err),
         }
     }
-    Err(format!(
-        "hicbir surucu calismadi: {}",
-        failures.join("; ")
-    ))
+    Err(format!("hicbir surucu calismadi: {}", failures.join("; ")))
 }
 
 /// X11 giris komutu: `run_cmd` + kurulum ipucu.
@@ -302,9 +299,9 @@ async fn wayland_run(args: &[&str]) -> Result<(), String> {
 
 /// Wayland metin komutu: `run_cmd` + kurulum ipucu.
 async fn wayland_type_run(args: &[&str]) -> Result<(), String> {
-    run_cmd(args).await.map_err(|err| {
-        format!("{err} (Wayland metin girisleri icin 'wtype' kurulu olmalidir)")
-    })
+    run_cmd(args)
+        .await
+        .map_err(|err| format!("{err} (Wayland metin girisleri icin 'wtype' kurulu olmalidir)"))
 }
 
 /// Yerlesik adaptor: ortam tespiti + yaygin CLI suruculeri.
@@ -429,15 +426,21 @@ impl ComputerBackend for EnvComputerBackend {
 pub struct GrokComputerInput {
     /// Masaustu eylemi: `detect` | `screenshot` | `click` | `type` |
     /// `scroll` | `move`.
-    #[schemars(description = "Desktop action: \"detect\", \"screenshot\", \"click\", \"type\", \"scroll\" or \"move\".")]
+    #[schemars(
+        description = "Desktop action: \"detect\", \"screenshot\", \"click\", \"type\", \"scroll\" or \"move\"."
+    )]
     pub action: String,
     /// Yatay piksel — `click` ve `move` icin zorunlu, `scroll` icin opsiyonel.
     #[serde(default)]
-    #[schemars(description = "X coordinate in pixels (required for click/move, optional for scroll).")]
+    #[schemars(
+        description = "X coordinate in pixels (required for click/move, optional for scroll)."
+    )]
     pub x: Option<i32>,
     /// Dikey piksel — `click` ve `move` icin zorunlu, `scroll` icin opsiyonel.
     #[serde(default)]
-    #[schemars(description = "Y coordinate in pixels (required for click/move, optional for scroll).")]
+    #[schemars(
+        description = "Y coordinate in pixels (required for click/move, optional for scroll)."
+    )]
     pub y: Option<i32>,
     /// Yazilacak metin — `type` icin zorunlu.
     #[serde(default)]
@@ -445,7 +448,9 @@ pub struct GrokComputerInput {
     pub text: Option<String>,
     /// Kaydirma miktari — `scroll` icin zorunlu; pozitif = asagi, negatif = yukari.
     #[serde(default)]
-    #[schemars(description = "Scroll amount for \"scroll\": positive scrolls down, negative scrolls up.")]
+    #[schemars(
+        description = "Scroll amount for \"scroll\": positive scrolls down, negative scrolls up."
+    )]
     pub scroll_delta: Option<i32>,
 }
 
@@ -483,7 +488,10 @@ pub enum ComputerExecError {
 
 impl ComputerExecError {
     /// Tool katmanina donen hata sekli.
-    pub fn into_tool_error(self, tool_id: &xai_tool_protocol::ToolId) -> xai_tool_runtime::ToolError {
+    pub fn into_tool_error(
+        self,
+        tool_id: &xai_tool_protocol::ToolId,
+    ) -> xai_tool_runtime::ToolError {
         match self {
             ComputerExecError::NoDisplay(msg) => {
                 xai_tool_runtime::ToolError::service_unavailable(msg)
@@ -578,8 +586,7 @@ fn validate_action(
         ComputerAction::Scroll => match input.scroll_delta {
             Some(0) | None => {
                 return Err(xai_tool_runtime::ToolError::invalid_arguments(
-                    "grok_computer: 'scroll' icin sifir olmayan 'scroll_delta' gerekli"
-                        .to_string(),
+                    "grok_computer: 'scroll' icin sifir olmayan 'scroll_delta' gerekli".to_string(),
                 ));
             }
             Some(_) => {}
@@ -631,10 +638,7 @@ async fn execute_computer(
         }
         ComputerAction::Click => {
             let info = backend.detect().await.map_err(no_display)?;
-            backend
-                .click(input.x, input.y)
-                .await
-                .map_err(backend_err)?;
+            backend.click(input.x, input.y).await.map_err(backend_err)?;
             let position = match (input.x, input.y) {
                 (Some(x), Some(y)) => format!("({x}, {y})"),
                 _ => "current cursor position".to_string(),
@@ -760,9 +764,8 @@ fn tool_id() -> xai_tool_protocol::ToolId {
     ID.get_or_init(|| {
         xai_tool_protocol::ToolId::new("grok_computer").unwrap_or_else(|_| {
             xai_tool_protocol::ToolId::new("grok_computer_tool").unwrap_or_else(|_| {
-                xai_tool_protocol::ToolId::new("computer").unwrap_or_else(|_| {
-                    unreachable!("statik tool id adaylari gecerlidir")
-                })
+                xai_tool_protocol::ToolId::new("computer")
+                    .unwrap_or_else(|_| unreachable!("statik tool id adaylari gecerlidir"))
             })
         })
     })
@@ -936,7 +939,12 @@ mod tests {
             Ok(())
         }
 
-        async fn scroll(&self, _x: Option<i32>, _y: Option<i32>, _delta: i32) -> Result<(), String> {
+        async fn scroll(
+            &self,
+            _x: Option<i32>,
+            _y: Option<i32>,
+            _delta: i32,
+        ) -> Result<(), String> {
             self.scrolls.fetch_add(1, Ordering::SeqCst);
             Ok(())
         }
@@ -954,10 +962,8 @@ mod tests {
 
     #[test]
     fn sunucu_tespiti_session_type_onceliklidir() {
-        let env: std::collections::HashMap<&str, &str> = std::collections::HashMap::from([
-            ("XDG_SESSION_TYPE", "wayland"),
-            ("DISPLAY", ":0"),
-        ]);
+        let env: std::collections::HashMap<&str, &str> =
+            std::collections::HashMap::from([("XDG_SESSION_TYPE", "wayland"), ("DISPLAY", ":0")]);
         let detected = ServerKind::from_env(|key| env.get(key).map(|v| (*v).to_owned()));
         assert_eq!(detected, Some(ServerKind::Wayland));
     }
@@ -993,7 +999,10 @@ mod tests {
             assert_eq!(ComputerAction::parse(action.as_str()), Some(action));
         }
         assert_eq!(ComputerAction::parse("TIKLA"), Some(ComputerAction::Click));
-        assert_eq!(ComputerAction::parse("  scroll  "), Some(ComputerAction::Scroll));
+        assert_eq!(
+            ComputerAction::parse("  scroll  "),
+            Some(ComputerAction::Scroll)
+        );
         assert_eq!(ComputerAction::parse("kayip"), None);
         assert_eq!(ComputerAction::parse(""), None);
     }
@@ -1014,8 +1023,8 @@ mod tests {
 
         let mut scroll = input("scroll");
         scroll.scroll_delta = Some(0);
-        let err = validate_action(ComputerAction::Scroll, &scroll)
-            .expect_err("sifir delta reddedilmeli");
+        let err =
+            validate_action(ComputerAction::Scroll, &scroll).expect_err("sifir delta reddedilmeli");
         assert!(err.to_string().contains("scroll_delta"));
 
         assert!(validate_action(ComputerAction::Detect, &input("detect")).is_ok());
@@ -1115,7 +1124,8 @@ mod tests {
     #[tokio::test]
     async fn tool_enjekte_edilen_arka_ucu_kullanir() {
         let mut resources = Resources::new();
-        let backend: Arc<dyn ComputerBackend> = Arc::new(StubBackend::new("host", Some(ServerKind::X11)));
+        let backend: Arc<dyn ComputerBackend> =
+            Arc::new(StubBackend::new("host", Some(ServerKind::X11)));
         resources.insert(backend);
         let tool = GrokComputerTool;
 

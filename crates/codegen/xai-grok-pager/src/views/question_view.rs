@@ -105,21 +105,6 @@ pub enum LocalQuestionKind {
     /// On submit, the selected option index is translated into an
     /// [`crate::app::actions::Action::NewSessionAnswered`].
     NewSession,
-    /// Modal shown when the user hits the credit/rate limit (403).
-    /// Options map to upsell URLs: upgrade tier or enable on-demand.
-    /// `choices` maps each option index to a telemetry choice variant.
-    CreditLimitUpsell {
-        choices: Vec<xai_grok_telemetry::events::CreditLimitChoice>,
-    },
-    /// SuperGrok upsell modal: the free-usage paywall (429 +
-    /// `subscription:free-usage-exhausted`) or a tier-restricted slash
-    /// command invocation. Upgrade options carry their URL in the option
-    /// `id`.
-    FreeUsageUpsell {
-        /// Telemetry source for `SuperGrokUpsellClicked` — distinguishes
-        /// the paywall from the restricted-command upsell.
-        source: xai_grok_telemetry::events::SuperGrokUpsell,
-    },
     /// Modal shown when the shell rejects a model switch due to agent
     /// type incompatibility. Carries the target model + effort so the
     /// answer handler can create a new session with it.
@@ -201,7 +186,7 @@ pub struct QuestionViewState {
     /// question view is subtracted from the turn elapsed display.
     pub opened_at: Instant,
     /// When `true`, the freeform "Other" input row is hidden. Used by
-    /// locally-driven questions (e.g. credit-limit upsell) that only
+    /// locally-driven questions that only
     /// offer fixed options with no free-text fallback.
     pub no_freeform: bool,
 }
@@ -743,7 +728,7 @@ impl QuestionViewState {
     /// the current freeform text so the caller can load it into the prompt.
     ///
     /// No-op returning an empty string when `no_freeform` is set: such
-    /// questions (e.g. the SuperGrok upsell) have no freeform row, so
+    /// fixed-choice questions have no freeform row, so
     /// `InputMode` must be unreachable. Callers gate on `no_freeform` /
     /// [`Self::is_on_freeform_row`] too; this is defense in depth.
     pub fn activate_freeform_input(&mut self) -> String {
@@ -2564,10 +2549,10 @@ mod tests {
 
     // ── no_freeform ────────────────────────────────────────────────────
 
-    /// `no_freeform` questions (e.g. the SuperGrok upsell) have no "Other"
+    /// `no_freeform` questions have no "Other"
     /// row, so activating freeform input must be impossible: focus stays in
     /// Navigation and nothing gets marked selected. Regression test for the
-    /// upsell modal letting the user type after clicking under the last
+    /// fixed-choice modal letting the user type after clicking under the last
     /// option.
     #[test]
     fn activate_freeform_input_is_noop_when_no_freeform() {
@@ -2589,7 +2574,7 @@ mod tests {
 
     /// The panel height for a `no_freeform` question must not reserve the
     /// (never rendered) freeform row — that dead row was clickable and
-    /// activated freeform input on the upsell modal.
+    /// activated freeform input on the fixed-choice modal.
     #[test]
     fn question_view_height_excludes_freeform_row_when_no_freeform() {
         let q = make_question("Pick?", &["A", "B", "C"], false);

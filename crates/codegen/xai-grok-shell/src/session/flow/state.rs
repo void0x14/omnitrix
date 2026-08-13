@@ -86,7 +86,10 @@ impl FlowStateMachine {
         self.artifact_log.push((id, ok));
         if let Some(stage) = self.current_stage()
             && let Some(def) = self.stage_def(stage)
-            && def.produces.iter().all(|p| self.artifact_log.iter().any(|(a, k)| a == p && *k))
+            && def
+                .produces
+                .iter()
+                .all(|p| self.artifact_log.iter().any(|(a, k)| a == p && *k))
         {
             return self.try_advance();
         }
@@ -119,8 +122,10 @@ impl FlowStateMachine {
         }
         match self.current_stage() {
             None => false,
-            Some(stage) => self.stage_tool_groups(stage).contains(&group)
-                || self.stage_tool_groups(stage).contains(&ToolGroup::All),
+            Some(stage) => {
+                self.stage_tool_groups(stage).contains(&group)
+                    || self.stage_tool_groups(stage).contains(&ToolGroup::All)
+            }
         }
     }
 

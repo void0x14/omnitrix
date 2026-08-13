@@ -204,11 +204,10 @@ fn voice_ctrl_space_release_leaves_toggle_recording_running() {
     );
 }
 
-/// A free-tier user hitting the voice keybinding gets the SuperGrok upsell
-/// instead of a doomed voice session — the keybinding bypasses the slash
-/// registry, so this dispatcher is the enforcement point.
+/// An account without voice capability gets a neutral local error instead of
+/// a purchase flow or a doomed voice session.
 #[test]
-fn voice_keybinding_on_restricted_tier_opens_upsell() {
+fn voice_keybinding_on_restricted_tier_reports_neutral_error() {
     if !xai_grok_voice::AUDIO_SUPPORTED {
         return; // The tier check runs after the AUDIO_SUPPORTED gate.
     }
@@ -221,9 +220,10 @@ fn voice_keybinding_on_restricted_tier_opens_upsell() {
     dispatch(Action::EnableVoiceMode, &mut app);
 
     assert!(
-        app.agents.get(&AgentId(0)).unwrap().question_view.is_some(),
-        "restricted-tier voice keybinding must open the SuperGrok upsell"
+        app.agents.get(&AgentId(0)).unwrap().question_view.is_none(),
+        "restricted-tier voice keybinding must not open a purchase modal"
     );
+    assert!(last_system_text(&app, AgentId(0)).contains("unavailable"));
     assert!(
         !app.voice_listening(),
         "voice must not start on a restricted tier"
@@ -247,7 +247,7 @@ fn voice_keybinding_on_paid_tier_not_gated() {
 
     dispatch(Action::EnableVoiceMode, &mut app);
 
-    // No upsell modal — the paid user proceeds down the normal voice path.
+    // The capable user proceeds down the normal voice path.
     assert!(
         app.agents.get(&AgentId(0)).unwrap().question_view.is_none(),
         "paid-tier voice must not be intercepted by the tier gate"

@@ -1741,8 +1741,8 @@ mod tests {
                 command: KeysCommand::List,
             }))
         ));
-        let show = PagerArgs::try_parse_from(["grok", "keys", "show", "k_abc"])
-            .expect("keys show parses");
+        let show =
+            PagerArgs::try_parse_from(["grok", "keys", "show", "k_abc"]).expect("keys show parses");
         assert!(matches!(
             show.command,
             Some(Command::Keys(KeysArgs {
@@ -1826,8 +1826,9 @@ mod tests {
                 },
             })) if p == std::path::Path::new("/tmp/out.omx") && cats == &["work".to_string(), "personal".to_string()]
         ));
-        let import = PagerArgs::try_parse_from(["grok", "keys", "import", "/tmp/in.omx", "--overwrite"])
-            .expect("keys import parses");
+        let import =
+            PagerArgs::try_parse_from(["grok", "keys", "import", "/tmp/in.omx", "--overwrite"])
+                .expect("keys import parses");
         assert!(matches!(
             import.command,
             Some(Command::Keys(KeysArgs {
@@ -1842,7 +1843,10 @@ mod tests {
                 command: KeysCommand::Categories,
             }))
         ));
-        assert!(PagerArgs::try_parse_from(["grok", "keys"]).is_err(), "bare keys must fail");
+        assert!(
+            PagerArgs::try_parse_from(["grok", "keys"]).is_err(),
+            "bare keys must fail"
+        );
     }
     #[test]
     fn agent_args_omni_provider_flags_parse() {
@@ -1866,10 +1870,16 @@ mod tests {
         };
         assert_eq!(agent.provider.as_deref(), Some("openai"));
         assert_eq!(agent.api_key.as_deref(), Some("sk-test"));
-        assert_eq!(agent.base_url.as_deref(), Some("https://gateway.example/v1"));
+        assert_eq!(
+            agent.base_url.as_deref(),
+            Some("https://gateway.example/v1")
+        );
         assert_eq!(agent.keychain_id.as_deref(), Some("k_999"));
         assert_eq!(agent.category.as_deref(), Some("work"));
-        assert!(agent.model.is_none(), "unrelated model flag must stay unset");
+        assert!(
+            agent.model.is_none(),
+            "unrelated model flag must stay unset"
+        );
     }
     #[test]
     fn agent_args_omni_flags_default_to_none() {

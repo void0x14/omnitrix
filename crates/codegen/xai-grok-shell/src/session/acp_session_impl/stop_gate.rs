@@ -256,7 +256,9 @@ impl SessionActor {
         // Flow Governor (S4): akış aşaması tamamlanmadıysa stop reddedilir;
         // model aşama direktifiyle devam etmeye zorlanır (görünmez düzeltme).
         if let Some(directive) = self.flow_governor.lock().stop_decision() {
-            return StopGateDecision::KeepWorking { feedback: directive };
+            return StopGateDecision::KeepWorking {
+                feedback: directive,
+            };
         }
         let event = if self.startup_hints.is_subagent {
             event::HookEventName::SubagentStop

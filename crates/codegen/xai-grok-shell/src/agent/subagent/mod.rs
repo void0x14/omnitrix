@@ -1480,7 +1480,11 @@ fn omni_persona_validation_outcome(
     }
     match allowed_subagent_types {
         None => Some(SubagentValidateTypeOutcome::Ok),
-        Some(allowed) if allowed.iter().any(|candidate| candidate.eq_ignore_ascii_case(id)) => {
+        Some(allowed)
+            if allowed
+                .iter()
+                .any(|candidate| candidate.eq_ignore_ascii_case(id)) =>
+        {
             Some(SubagentValidateTypeOutcome::Ok)
         }
         Some(allowed) => Some(SubagentValidateTypeOutcome::NotAllowed {

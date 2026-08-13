@@ -221,22 +221,58 @@ pub fn check_evidence_claims_with(
 /// taninir (kullanici vizyonundaki "oldugunu / edildi / -dir" ornekleri).
 const FACTUAL_PATTERNS: &[&str] = &[
     // Copular (Ingilizce).
-    " is ", " are ", " was ", " were ", " has been ", " have been ", " had been ",
-    " will be ", " would be ", " is now ", " are now ",
+    " is ",
+    " are ",
+    " was ",
+    " were ",
+    " has been ",
+    " have been ",
+    " had been ",
+    " will be ",
+    " would be ",
+    " is now ",
+    " are now ",
     // Dogrulama/raporlama fillerleri.
-    "confirmed", "verified", "shows", "showed", "reports", "reported", "found",
-    "indicates", "indicated", "resulted", "failed", "succeeded", "completed",
-    "contains", "contained", "returned", "states", "stated", "says", "said",
+    "confirmed",
+    "verified",
+    "shows",
+    "showed",
+    "reports",
+    "reported",
+    "found",
+    "indicates",
+    "indicated",
+    "resulted",
+    "failed",
+    "succeeded",
+    "completed",
+    "contains",
+    "contained",
+    "returned",
+    "states",
+    "stated",
+    "says",
+    "said",
     // Turkce olgusal yuklemler.
-    "oldugunu", "oldugu", "edildi", "edildigini", "edilmistir", "tamamlandi",
-    "basarisiz", "basariyla", "bulundu", "belirtiyor", "belirtilmektedir",
-    "gosteriyor", "gosteriyor ki", "raporlandi", "dogrulandi",
+    "oldugunu",
+    "oldugu",
+    "edildi",
+    "edildigini",
+    "edilmistir",
+    "tamamlandi",
+    "basarisiz",
+    "basariyla",
+    "bulundu",
+    "belirtiyor",
+    "belirtilmektedir",
+    "gosteriyor",
+    "gosteriyor ki",
+    "raporlandi",
+    "dogrulandi",
 ];
 
 /// Turkce copula ekleri ("dogrudur", "tamamlanmistir" ...).
-const TURKISH_COPULA_SUFFIXES: &[&str] = &[
-    "dır", "dir", "dur", "dür", "tır", "tir", "tur", "tür",
-];
+const TURKISH_COPULA_SUFFIXES: &[&str] = &["dır", "dir", "dur", "dür", "tır", "tir", "tur", "tür"];
 
 /// Bir token Turkce copula ekiyle mi bitiyor ("doğrudur" -> "dur").
 fn has_turkish_copula_suffix(token: &str) -> bool {
@@ -326,9 +362,7 @@ fn claim_supported(claim: &str, refs: &[EvidenceRef], config: &GroundingConfig) 
         true
     } else {
         // Gevsek: tek ortusen terim ya da sayi referansi dogrular.
-        terms
-            .iter()
-            .any(|t| word_boundary_contains(&span_lower, t))
+        terms.iter().any(|t| word_boundary_contains(&span_lower, t))
             || numbers
                 .iter()
                 .any(|n| word_boundary_contains(&span_lower, n))
@@ -497,7 +531,10 @@ mod tests {
     #[test]
     fn supported_when_every_claim_matches_the_cited_span() {
         let text = "The listen address is 192.168.1.10 and the port is 8080.";
-        let refs = refs_for(&[("read_file", "listen address is 192.168.1.10 and the port is 8080")]);
+        let refs = refs_for(&[(
+            "read_file",
+            "listen address is 192.168.1.10 and the port is 8080",
+        )]);
         let verdict = check_evidence_claims(text, &refs);
         assert!(verdict.passed(), "verdict: {:?}", verdict);
         assert_eq!(verdict.verdict, Verdict::Supported);
@@ -628,7 +665,10 @@ mod tests {
     #[test]
     fn turkish_copula_sentence_is_detected() {
         let text = "Sema uygulamasi tamamlanmistir, port 8080 olarak ayarlandi.";
-        let refs = refs_for(&[("dogrulama", "sema uygulamasi tamamlanmistir, port 8080 olarak ayarlandi")]);
+        let refs = refs_for(&[(
+            "dogrulama",
+            "sema uygulamasi tamamlanmistir, port 8080 olarak ayarlandi",
+        )]);
         assert!(check_evidence_claims(text, &refs).passed());
     }
 }

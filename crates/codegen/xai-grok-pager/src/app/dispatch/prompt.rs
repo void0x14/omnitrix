@@ -477,7 +477,6 @@ pub(super) fn dispatch_send_prompt_inner(
     // shown after the agent borrow ends so we can re-enter via the tip helper.
     let mut tip_send_now_after_queue = false;
     let voice_stt_language_from_app = app.voice_config.language.clone();
-    let login_method_id_from_app = app.login_method_id.as_ref().map(|id| id.0.to_string());
     let Some(agent) = app.agents.get_mut(&id) else {
         return vec![];
     };
@@ -501,12 +500,12 @@ pub(super) fn dispatch_send_prompt_inner(
 
     let mut effects = Vec::new();
 
-    // ── Tier-restricted command upsell ─────────────────────────────
+    // ── Tier-restricted command guard ──────────────────────────────
     // Restricted commands (`/usage`, `/imagine`, …) are hidden from the
     // registry's `get()`, so a typed invocation would otherwise fall
     // through the unknown-command path below and leak to the model as a
-    // raw prompt. Upsell instead; genuinely unknown commands still pass
-    // through (shell/ACP commands depend on that).
+    // raw prompt. Consume them locally; genuinely unknown commands still
+    // pass through (shell/ACP commands depend on that).
     if !literal
         && trimmed.starts_with('/')
         && let Some(invocation) = crate::slash::parse_invocation(trimmed)
@@ -516,20 +515,13 @@ pub(super) fn dispatch_send_prompt_inner(
             .registry()
             .is_restricted(invocation.token)
     {
-        // Only consume the composer when the upsell can actually open: with
-        // another question modal already up, `open_supergrok_upsell` would
-        // no-op and wiping the composer here would silently drop the typed
-        // text. Keep it instead so the user can resubmit after closing the
-        // modal — and never fall through to passthrough for restricted
-        // commands.
-        if agent.question_view.is_none() {
-            if consume_input {
-                agent.prompt.set_text("");
-            }
-            let opened =
-                super::billing::open_restricted_command_upsell(agent, login_method_id_from_app);
-            debug_assert!(opened, "no modal was open, so the upsell must open");
+        if consume_input {
+            agent.prompt.set_text("");
         }
+        agent.scrollback.push_block(RenderBlock::system(format!(
+            "/{} is unavailable for the current provider or account.",
+            invocation.token
+        )));
         return vec![];
     }
 
@@ -1491,11 +1483,10 @@ pub(super) fn handle_prompt_response(
             return vec![];
         }
 
-        // Credit-limit (403 legacy / 402 pool): strip stale error
-        // blocks, then do a one-shot subscription re-check. If the
-        // tier changed (user upgraded mid-session), the stashed
-        // prompt is retried automatically; otherwise the upsell
-        // is shown.
+        // Credit-limit (403 legacy / 402 pool): strip stale error blocks,
+        // then do a one-shot subscription re-check. If account capabilities
+        // changed mid-session the stashed prompt can be retried; otherwise a
+        // neutral provider-limit error is shown.
         if credit_limit_blocked {
             // Strip stale "Retry failed" / "Turn failed" error blocks
             // that were pushed before the credit-limit was detected.
@@ -1523,8 +1514,8 @@ pub(super) fn handle_prompt_response(
                 agent.scrollback.remove_from(idx);
             }
 
-            // Defer the upsell until the subscription re-check
-            // completes. Queue drain + billing fetch happen in the
+            // Defer the result until the subscription re-check completes.
+            // Queue drain + billing fetch happen in the
             // CreditLimitRecheckComplete handler.
             if let Some(p) = pending_adoption {
                 agent.discard_pending_adoption_updates(&p.prompt_id);
@@ -1532,14 +1523,12 @@ pub(super) fn handle_prompt_response(
             return vec![Effect::CreditLimitRecheck { agent_id }];
         }
 
-        // Free-usage paywall (429 + subscription:free-usage-exhausted): the
-        // RetryState handler set the flag and suppressed the generic
-        // rate-limit block; show the upsell modal. Driver-only by
-        // construction — viewers never receive a PromptResponse. No queue
-        // drain: queued prompts would fail on the same exhausted quota.
+        // Free-usage exhaustion: keep it a neutral provider-limit error. No
+        // queue drain because queued prompts would fail on the same quota.
         if free_usage_blocked {
-            let auth_method = app.login_method_id.as_ref().map(|id| id.0.to_string());
-            super::billing::open_free_usage_upsell(agent, auth_method);
+            agent.scrollback.push_block(RenderBlock::system(
+                "The provider rejected this request because its usage limit was reached.",
+            ));
             if let Some(p) = pending_adoption {
                 agent.discard_pending_adoption_updates(&p.prompt_id);
             }

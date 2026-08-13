@@ -931,7 +931,6 @@ pub fn build_hints(
     has_queued_follow_up: bool,
     selected_is_user_prompt: bool,
     selected_is_agent_message: bool,
-    selected_is_credit_limit: bool,
     shift_enter_unavailable: bool,
     scrollback_search: Option<&ScrollbackSearchState>,
 ) -> Vec<HintItem> {
@@ -1074,17 +1073,10 @@ pub fn build_hints(
             let mut hints = Vec::new();
             let nothing_special = !selected_is_agent_message
                 && !selected_is_user_prompt
-                && !selected_is_credit_limit
                 && fold_label.is_none()
                 && group_header_label.is_none()
                 && !selected_supports_fullscreen;
             if nothing_special {
-                hints.push(space_prompt_hint());
-            }
-            if selected_is_credit_limit {
-                if let Some(key) = registry.key_for(ActionId::OpenBlockViewer) {
-                    hints.push(HintItem::new(key, "open"));
-                }
                 hints.push(space_prompt_hint());
             }
             if selected_is_agent_message {
@@ -1270,7 +1262,6 @@ mod tests {
             selected_is_user_prompt,
             selected_is_agent_message,
             false,
-            false,
             None,
         )
     }
@@ -1296,7 +1287,6 @@ mod tests {
             false,
             false,
             true,
-            false,
             false,
             false,
             false,
@@ -1331,7 +1321,6 @@ mod tests {
             false,
             false,
             true,
-            false,
             false,
             false,
             false,
@@ -1503,7 +1492,6 @@ mod tests {
             false,
             false,
             false,
-            false,
             Some(&search),
         )
     }
@@ -1607,7 +1595,6 @@ mod tests {
             false,
             false,
             false,
-            false,
             None,
         );
         assert!(
@@ -1647,7 +1634,6 @@ mod tests {
             true,
             false,
             is_turn_running,
-            false,
             false,
             false,
             false,
@@ -1712,7 +1698,6 @@ mod tests {
                 false,
                 false,
                 false,
-                false,
                 None,
             );
             let labels: Vec<&str> = hints.iter().map(|h| h.label.as_ref()).collect();
@@ -1759,7 +1744,6 @@ mod tests {
                 false,
                 false,
                 false,
-                false,
                 None,
             );
             let cancel = hints
@@ -1799,7 +1783,6 @@ mod tests {
             false,
             false,
             true,
-            false,
             false,
             false,
             false,
@@ -1850,7 +1833,6 @@ mod tests {
             false,
             false,
             true,
-            false,
             false,
             false,
             false,

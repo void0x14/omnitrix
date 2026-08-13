@@ -337,6 +337,11 @@ pub(crate) async fn create_test_actor_ex(
                 "/tmp/test-session",
             )),
         )),
+        flow_governor: Arc::new(parking_lot::Mutex::new(
+            crate::session::flow::governor::FlowGovernor::new(std::path::Path::new(
+                "/tmp/test-session",
+            )),
+        )),
         goal_enabled: false,
         background_workflows_enabled: false,
         goal_harness_enabled: std::sync::atomic::AtomicBool::new(false),

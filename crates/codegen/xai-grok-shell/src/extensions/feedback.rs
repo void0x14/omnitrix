@@ -81,9 +81,8 @@ async fn handle_btw(agent: &MvpAgent, args: &acp::ExtRequest) -> ExtResult {
 
 async fn handle_feedback(agent: &MvpAgent, args: &acp::ExtRequest) -> ExtResult {
     if !agent.cfg.borrow().is_feedback_enabled() {
-        return Err(acp::Error::internal_error().data(
-            "Feedback is permanently disabled in this no-telemetry fork.",
-        ));
+        return Err(acp::Error::internal_error()
+            .data("Feedback is permanently disabled in this no-telemetry fork."));
     }
 
     match args.method.as_ref() {

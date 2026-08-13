@@ -2,7 +2,7 @@
 #
 # Regenerate TypeScript announcement ACP types from this crate's ts-rs derives.
 #
-# The Rust structs (RemoteAnnouncement, AnnouncementCta, AnnouncementsRefreshed)
+# The Rust structs (RemoteAnnouncement, AnnouncementsRefreshed)
 # are the single source of truth for the `x.ai/announcements/update` payload.
 # Pipeline:
 #   1. cargo test --features ts → ts-rs writes every binding to a temp dir

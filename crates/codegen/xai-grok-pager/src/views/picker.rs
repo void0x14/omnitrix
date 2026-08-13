@@ -445,7 +445,7 @@ fn render_search_bar_with_label_viewport(
     label: &str,
     query: &str,
     active: bool,
-    show_hint: bool,
+    _show_hint: bool,
     query_cursor: usize,
     bg: Option<ratatui::style::Color>,
     viewport: Option<xai_ratatui_textarea::SingleLineViewport>,
@@ -458,10 +458,7 @@ fn render_search_bar_with_label_viewport(
     };
     let bg_style = |style: Style| -> Style { if let Some(c) = bg { style.bg(c) } else { style } };
 
-    // "Always-active" mode: cursor always visible (Floating mode search).
-    let always_active = !active && !show_hint;
-
-    if active || !query.is_empty() || always_active {
+    if active || !query.is_empty() {
         let label_w = label.len() as u16;
         buf.set_line(
             x,
@@ -525,19 +522,18 @@ fn render_search_bar_with_label_viewport(
 
         let cursor_display_w = (cursor_col as u16).min(cursor_limit as u16);
 
-        if active || always_active {
+        if active {
             let cursor_x = input_x + cursor_display_w;
             if cursor_x < x + width {
-                // Inverse-video the cell at the cursor position so the
-                // character underneath remains visible (matching the
-                // rename overlay's cursor style).
+                // REVERSED remains visible even with NO_COLOR or the
+                // terminal-native palette, where foreground/background
+                // tokens both resolve to Reset.
                 if let Some(cell) = buf.cell_mut((cursor_x, y)) {
-                    let cursor_fg = if let Some(c) = bg { c } else { theme.bg_base };
-                    cell.set_style(Style::default().fg(cursor_fg).bg(theme.text_primary));
+                    cell.modifier.insert(Modifier::REVERSED);
                 }
             }
         }
-    } else if show_hint {
+    } else {
         buf.set_line(
             x,
             y,
@@ -1706,7 +1702,8 @@ pub struct PickerConfig<'a> {
     /// Title shown in fullscreen mode's title row (e.g. "Resume session").
     pub title: Option<&'a str>,
     /// When true, show "/ to search" hint; user must activate search explicitly.
-    /// When false, search is always active (cursor always visible).
+    /// When false, printable input may start filtering immediately, but the
+    /// cursor is rendered only while `search_active` is true.
     pub show_search_hint: bool,
     /// Whether the picker supports e:expand and y:copy.
     pub expandable: bool,
@@ -3384,7 +3381,7 @@ mod tests {
             for x in hit.search_bar.x..hit.search_bar.x + hit.search_bar.width {
                 if let Some(cell) = buf.cell((x, y)) {
                     text.push_str(cell.symbol());
-                    if cell.bg == theme.text_primary {
+                    if cell.modifier.contains(Modifier::REVERSED) {
                         has_cursor = true;
                     }
                 }

@@ -58,7 +58,7 @@ use crate::types::output::{DynamicOutput, ToolOutput};
 use crate::types::requirements::{Expr, ToolRequirement};
 use crate::types::tool::{ToolKind, ToolNamespace};
 use crate::types::tool_io::ToolInput;
-use crate::types::tool_metadata::{shared_resources, ToolMetadata};
+use crate::types::tool_metadata::{ToolMetadata, shared_resources};
 
 // ---------------------------------------------------------------------------
 // Tool girdisi
@@ -218,7 +218,9 @@ fn normalize_url(raw: &str) -> String {
         .strip_prefix("https://")
         .or_else(|| lower.strip_prefix("http://"))
         .unwrap_or(&lower);
-    let without_www = without_scheme.strip_prefix("www.").unwrap_or(without_scheme);
+    let without_www = without_scheme
+        .strip_prefix("www.")
+        .unwrap_or(without_scheme);
     without_www.trim_end_matches('/').to_string()
 }
 
@@ -289,11 +291,7 @@ pub trait McpToolCaller: Send + Sync {
 
     /// Tek bir MCP arac cagrisi. Donen deger `CallToolResult`'un yapisal
     /// govdesi (veya duz metin icerigi) olarak JSON'dur.
-    async fn call_tool(
-        &self,
-        tool: &str,
-        args: JsonValue,
-    ) -> Result<JsonValue, String>;
+    async fn call_tool(&self, tool: &str, args: JsonValue) -> Result<JsonValue, String>;
 }
 
 /// Saglayici yanitindaki alan adlari. Her alan icin aday listesi tutulur; ilk
@@ -371,10 +369,7 @@ pub struct McpResearchProvider {
 impl McpResearchProvider {
     /// Verilmis tasima uzerine saglayici kurar. Arac adi bos olamaz (I6:
     /// hata `Err` ile doner, panik yok).
-    pub fn new(
-        cfg: McpResearchConfig,
-        caller: Arc<dyn McpToolCaller>,
-    ) -> Result<Self, String> {
+    pub fn new(cfg: McpResearchConfig, caller: Arc<dyn McpToolCaller>) -> Result<Self, String> {
         if cfg.server_name.trim().is_empty() {
             return Err("grok_research: MCP saglayici sunucu adi bos".to_string());
         }
@@ -767,7 +762,10 @@ fn render_markdown(
             out.push_str(&format!("- **URL:** <{}>\n", inline(&f.url)));
             out.push_str(&format!("- **Source:** {}\n", inline(&f.source)));
         }
-        out.push_str(&format!("- **Score:** {:.3} · **Round:** {}\n", f.score, f.round));
+        out.push_str(&format!(
+            "- **Score:** {:.3} · **Round:** {}\n",
+            f.score, f.round
+        ));
         if !f.snippet.trim().is_empty() {
             out.push_str(&format!("{}\n", inline(&f.snippet)));
         }
@@ -825,9 +823,8 @@ fn tool_id() -> xai_tool_protocol::ToolId {
     ID.get_or_init(|| {
         xai_tool_protocol::ToolId::new("grok_research").unwrap_or_else(|_| {
             xai_tool_protocol::ToolId::new("grok_research_tool").unwrap_or_else(|_| {
-                xai_tool_protocol::ToolId::new("research").unwrap_or_else(|_| {
-                    unreachable!("statik tool id adaylari gecerlidir")
-                })
+                xai_tool_protocol::ToolId::new("research")
+                    .unwrap_or_else(|_| unreachable!("statik tool id adaylari gecerlidir"))
             })
         })
     })
@@ -985,7 +982,10 @@ mod tests {
         }
         assert_eq!(ResearchMode::parse("Okyanus"), Some(ResearchMode::Ocean));
         assert_eq!(ResearchMode::parse("derin"), Some(ResearchMode::Deep));
-        assert_eq!(ResearchMode::parse("  surface  "), Some(ResearchMode::Surface));
+        assert_eq!(
+            ResearchMode::parse("  surface  "),
+            Some(ResearchMode::Surface)
+        );
         assert_eq!(ResearchMode::parse("kayip"), None);
         assert_eq!(ResearchMode::parse(""), None);
     }
@@ -998,7 +998,9 @@ mod tests {
 
         assert!(s.max_sources < d.max_sources && d.max_sources < o.max_sources);
         assert!(s.crawl_depth < d.crawl_depth && d.crawl_depth < o.crawl_depth);
-        assert!(s.per_query_results < d.per_query_results && d.per_query_results < o.per_query_results);
+        assert!(
+            s.per_query_results < d.per_query_results && d.per_query_results < o.per_query_results
+        );
         assert!(s.refine_fanout < d.refine_fanout && d.refine_fanout < o.refine_fanout);
         assert!(s.max_queries < d.max_queries && d.max_queries < o.max_queries);
 
@@ -1099,7 +1101,11 @@ mod tests {
             assert_eq!(out.mode, mode.as_str());
             assert!(!out.findings.is_empty());
             // Tum bulgular tekillenmis olmali (URL'ler benzersiz).
-            let keys: Vec<String> = out.findings.iter().map(ResearchFinding::dedup_key).collect();
+            let keys: Vec<String> = out
+                .findings
+                .iter()
+                .map(ResearchFinding::dedup_key)
+                .collect();
             let uniq: std::collections::BTreeSet<String> = keys.iter().cloned().collect();
             assert_eq!(uniq.len(), keys.len(), "mod={mode:?} tekillik");
         }
@@ -1239,11 +1245,7 @@ mod tests {
             "stub"
         }
 
-        async fn call_tool(
-            &self,
-            _tool: &str,
-            _args: JsonValue,
-        ) -> Result<JsonValue, String> {
+        async fn call_tool(&self, _tool: &str, _args: JsonValue) -> Result<JsonValue, String> {
             Ok(serde_json::json!({ "results": [] }))
         }
     }
@@ -1284,7 +1286,11 @@ mod tests {
         assert_eq!(out.rounds_run, 3);
         // Kok sorgu + genisletilmis sorgular: hepsi kok sorguyla baslar.
         assert_eq!(out.queries[0], "tokio kanal aktor modeli");
-        assert!(out.queries[1..].iter().all(|q| q.starts_with("tokio kanal aktor modeli ")));
+        assert!(
+            out.queries[1..]
+                .iter()
+                .all(|q| q.starts_with("tokio kanal aktor modeli "))
+        );
         assert!(out.queries.len() > 1);
         assert!(out.queries.len() <= ResearchMode::Deep.params().max_queries);
     }

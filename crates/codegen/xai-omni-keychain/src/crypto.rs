@@ -23,7 +23,11 @@ pub struct KdfParams {
 
 impl Default for KdfParams {
     fn default() -> Self {
-        Self { m_cost: KDF_M_COST, t_cost: KDF_T_COST, p_cost: KDF_P_COST }
+        Self {
+            m_cost: KDF_M_COST,
+            t_cost: KDF_T_COST,
+            p_cost: KDF_P_COST,
+        }
     }
 }
 

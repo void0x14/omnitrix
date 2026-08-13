@@ -141,6 +141,12 @@ pub struct ProviderConnectFlow {
     /// AutoAmbiguous aday provider id'leri (P0.3 `Ambiguous`).
     pub auto_candidates: Vec<String>,
     pub auto_candidate_cursor: usize,
+    /// Mode selection rows rendered in the current frame. Mouse hit-testing
+    /// uses the same rows as keyboard selection; stale rectangles are cleared
+    /// at the beginning of every render.
+    pub mode_row_rects: Vec<Rect>,
+    /// Ambiguous-provider rows rendered in the current frame.
+    pub auto_candidate_row_rects: Vec<Rect>,
 }
 
 impl ProviderConnectFlow {
@@ -180,6 +186,8 @@ impl ProviderConnectFlow {
             auto_detect_pending: false,
             auto_candidates: Vec::new(),
             auto_candidate_cursor: 0,
+            mode_row_rects: Vec::new(),
+            auto_candidate_row_rects: Vec::new(),
         }
     }
 
