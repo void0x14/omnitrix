@@ -963,6 +963,11 @@ fn opencode_credentials_import_every_api_record_and_request_activation() {
                 },
             ],
             preferred_models: vec!["deepseek/deepseek-chat".to_string()],
+            provider_models: vec![crate::app::actions::OpenCodeProviderModel {
+                provider_id: "deepseek".to_string(),
+                model_id: "deepseek-chat".to_string(),
+                base_url: None,
+            }],
         },
     );
 
@@ -1000,6 +1005,11 @@ fn opencode_catalog_activation_uses_configured_model_and_runtime_key() {
                 )),
             }],
             preferred_models: vec!["deepseek/deepseek-chat".to_string()],
+            provider_models: vec![crate::app::actions::OpenCodeProviderModel {
+                provider_id: "deepseek".to_string(),
+                model_id: "deepseek-chat".to_string(),
+                base_url: None,
+            }],
         },
     );
     let cache = CatalogCache {

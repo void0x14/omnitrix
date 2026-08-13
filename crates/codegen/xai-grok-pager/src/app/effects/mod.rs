@@ -4548,10 +4548,13 @@ fn load_opencode_credentials(
     Ok(actions::OpenCodeCredentials {
         credentials,
         preferred_models: load_opencode_preferred_models(auth_path),
+        provider_models: load_opencode_provider_models(auth_path),
     })
 }
 
-fn load_opencode_preferred_models(auth_path: &Path) -> Vec<String> {
+/// OpenCode `opencode.json`'un aranacağı aday yollar (öncelik sırasıyla):
+/// `$XDG_CONFIG_HOME/opencode`, `$HOME/.config/opencode`, auth.json'ın yanı.
+fn opencode_config_paths(auth_path: &Path) -> Vec<PathBuf> {
     let mut paths = Vec::new();
     if let Some(config_dir) = std::env::var_os("XDG_CONFIG_HOME") {
         paths.push(PathBuf::from(config_dir).join("opencode/opencode.json"));
@@ -4562,7 +4565,11 @@ fn load_opencode_preferred_models(auth_path: &Path) -> Vec<String> {
     if let Some(data_dir) = auth_path.parent() {
         paths.push(data_dir.join("opencode.json"));
     }
-    paths.into_iter().find_map(|path| {
+    paths
+}
+
+fn load_opencode_preferred_models(auth_path: &Path) -> Vec<String> {
+    opencode_config_paths(auth_path).into_iter().find_map(|path| {
         let bytes = zeroize::Zeroizing::new(std::fs::read(path).ok()?);
         let value: serde_json::Value = serde_json::from_slice(bytes.as_slice()).ok()?;
         let mut models = Vec::new();
@@ -4572,6 +4579,41 @@ fn load_opencode_preferred_models(auth_path: &Path) -> Vec<String> {
                 && !models.iter().any(|seen| seen == model)
             {
                 models.push(model.to_string());
+            }
+        }
+        Some(models)
+    }).unwrap_or_default()
+}
+
+/// OpenCode config'indeki `provider` tanımlarından provider→model→base_url
+/// kayıtlarını çıkarır. Her provider'ın `options.baseURL` (veya `base_url`)
+/// değeri, o provider'ın tüm modellerine uygulanır; provider inline endpoint
+/// taşımıyorsa `None` kalır (katalog üzerinden çözülür). Config yoksa ya da
+/// parse edilemezse boş liste döner — zenginleştirme opsiyoneldir, kritik olan
+/// derleme ve katalog fallback'idir.
+fn load_opencode_provider_models(auth_path: &Path) -> Vec<actions::OpenCodeProviderModel> {
+    opencode_config_paths(auth_path).into_iter().find_map(|path| {
+        let bytes = zeroize::Zeroizing::new(std::fs::read(path).ok()?);
+        let value: serde_json::Value = serde_json::from_slice(bytes.as_slice()).ok()?;
+        let providers = value.get("provider").and_then(serde_json::Value::as_object)?;
+        let mut models = Vec::new();
+        for (provider_id, provider) in providers {
+            let base_url = provider
+                .get("options")
+                .and_then(|options| options.get("baseURL").or_else(|| options.get("base_url")))
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_owned);
+            if let Some(model_map) = provider
+                .get("models")
+                .and_then(serde_json::Value::as_object)
+            {
+                for model_id in model_map.keys() {
+                    models.push(actions::OpenCodeProviderModel {
+                        provider_id: provider_id.clone(),
+                        model_id: model_id.clone(),
+                        base_url: base_url.clone(),
+                    });
+                }
             }
         }
         Some(models)

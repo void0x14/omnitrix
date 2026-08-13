@@ -205,7 +205,7 @@ pub(super) fn dispatch_open_keys_manager(app: &mut AppView) -> Vec<Effect> {
 // ---------------------------------------------------------------------------
 
 /// Açık `KeysManager` modalını taşıyan ilk agent'ın state'ine erişim.
-fn with_keys_manager(app: &mut AppView, f: impl FnOnce(&mut KeysManagerState)) {
+pub(super) fn with_keys_manager(app: &mut AppView, f: impl FnOnce(&mut KeysManagerState)) {
     use crate::views::modal::ActiveModal;
     for agent in app.agents.values_mut() {
         if let Some(ActiveModal::KeysManager { state }) = &mut agent.active_modal {
@@ -395,7 +395,13 @@ pub(super) fn apply_opencode_credentials(
     effects
 }
 
-fn opencode_activation_request(app: &AppView) -> Option<(Vec<String>, Vec<String>)> {
+fn opencode_activation_request(
+    app: &AppView,
+) -> Option<(
+    Vec<String>,
+    Vec<String>,
+    Vec<crate::app::actions::OpenCodeProviderModel>,
+)> {
     use crate::views::modal::ActiveModal;
     for agent in app.agents.values() {
         if let Some(ActiveModal::KeysManager { state }) = &agent.active_modal
@@ -404,6 +410,7 @@ fn opencode_activation_request(app: &AppView) -> Option<(Vec<String>, Vec<String
             return Some((
                 state.opencode_provider_ids.clone(),
                 state.opencode_preferred_models.clone(),
+                state.opencode_provider_models.clone(),
             ));
         }
     }
