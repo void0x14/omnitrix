@@ -12,3 +12,6 @@
 .check.log
 .clippy.log
 .rustc.log
+
+#fastfilesearch
+.ffs
