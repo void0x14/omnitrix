@@ -3444,7 +3444,7 @@ mod tests {
             );
         }
         let cursor_x = (0..layout.render_width)
-            .find(|x| buffer[(*x, 0)].bg == theme.text_primary)
+            .find(|x| buffer[(*x, 0)].modifier.contains(Modifier::REVERSED))
             .expect("cursor inside search render width");
         assert!(cursor_x < layout.render_width);
     }
@@ -3483,7 +3483,7 @@ mod tests {
                 viewport,
             );
             let cursor_x = (0..width)
-                .find(|x| buffer[(*x, 0)].bg == theme.text_primary)
+                .find(|x| buffer[(*x, 0)].modifier.contains(Modifier::REVERSED))
                 .expect("active query keeps a visible caret");
             assert!(cursor_x < width);
 
@@ -3505,7 +3505,7 @@ mod tests {
                 viewport,
             );
             let cursor_x = (0..fit_layout.render_width)
-                .find(|x| fit_buffer[(*x, 0)].bg == theme.text_primary)
+                .find(|x| fit_buffer[(*x, 0)].modifier.contains(Modifier::REVERSED))
                 .expect("just-fit counter preserves one caret cell");
             assert!(cursor_x < fit_layout.render_width);
         }
@@ -4013,9 +4013,13 @@ mod tests {
             false,
             None,
         );
-        assert_eq!(
-            buffer.cell((11, 0)).expect("cursor cell").bg,
-            theme.text_primary
+        assert!(
+            buffer
+                .cell((11, 0))
+                .expect("cursor cell")
+                .modifier
+                .contains(Modifier::REVERSED),
+            "cursor cell must carry the REVERSED modifier (visible caret)"
         );
 
         handle_picker_input(

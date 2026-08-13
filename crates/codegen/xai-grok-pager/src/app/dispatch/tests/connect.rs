@@ -1616,6 +1616,7 @@ fn auto_connect_debug_redacts_api_key() {
 
 #[test]
 fn auto_winner_base_url_flows_to_connect_provider_write() {
+    runtime_key::clear_runtime_keys();
     // Auto outcome sonrası flow: builtin provider + winner base URL.
     // Apply → dispatch_connect_provider → Effect::ConnectProviderWrite
     // zincirinde winner URL kaybolmamalı.
@@ -1655,4 +1656,5 @@ fn auto_winner_base_url_flows_to_connect_provider_write() {
         }
         other => panic!("expected ConnectProviderWrite, got {other:?}"),
     }
+    runtime_key::clear_runtime_keys();
 }

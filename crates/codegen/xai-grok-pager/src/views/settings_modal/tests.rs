@@ -5145,8 +5145,10 @@ fn section_header_style_matches_palette() {
 
 /// Search bar renders the palette's prefix + cursor style:
 ///   * ` search: ` prefix in `gray`.
-///   * Inverse-video cursor (bg = text_primary, fg = bg_base)
-///     at the next-input position when focused.
+///   * REVERSED-modifier cursor cell at the next-input position
+///     when focused — visible even with NO_COLOR or the
+///     terminal-native palette, where fg/bg tokens both resolve
+///     to Reset.
 ///
 /// Hint path renders ` / to search` in `gray_dim`.
 #[test]
@@ -5180,17 +5182,15 @@ fn search_bar_focused_style_matches_palette() {
     );
 
     // Cursor cell at the input position (label is ` search: ` =
-    // 9 cells; cursor lands at col 9) is inverse-video: bg =
-    // text_primary, fg = bg_base.
+    // 9 cells; cursor lands at col 9) carries the REVERSED
+    // modifier — the inverse-video cursor, visible even when
+    // fg/bg tokens both resolve to Reset (NO_COLOR / native
+    // palette).
     let cursor_x = " search: ".width() as u16;
     let cursor_cell = buf.cell((area.x + cursor_x, area.y)).expect("cursor cell");
-    assert_eq!(
-        cursor_cell.bg, theme.text_primary,
-        "cursor cell bg must be text_primary (inverse-video)"
-    );
-    assert_eq!(
-        cursor_cell.fg, theme.bg_base,
-        "cursor cell fg must be bg_base (inverse-video)"
+    assert!(
+        cursor_cell.modifier.contains(Modifier::REVERSED),
+        "cursor cell must carry the REVERSED modifier (visible caret)"
     );
 }
 
@@ -5303,9 +5303,13 @@ fn filter_search_bar_keeps_narrow_graphemes_and_cursor_aligned() {
     }
     assert!(row.contains(grapheme), "ZWJ grapheme split: {row:?}");
     assert!(row.contains(combining), "combining grapheme split: {row:?}",);
-    assert_eq!(
-        buffer.cell((12, 0)).expect("cursor cell").bg,
-        theme.text_primary,
+    assert!(
+        buffer
+            .cell((12, 0))
+            .expect("cursor cell")
+            .modifier
+            .contains(Modifier::REVERSED),
+        "cursor cell must carry the REVERSED modifier (visible caret)"
     );
 }
 
