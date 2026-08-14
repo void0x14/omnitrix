@@ -170,6 +170,7 @@ infer = "0.19.0"
 insta = "1"
 itertools = "0.14"
 jsonschema = "0.30.0"
+keyring = { version = "3", features = ["linux-native-sync-persistent", "apple-native", "windows-native"] }
 libc = "0.2"
 maud = "0.27"
 linkify = "0.10"

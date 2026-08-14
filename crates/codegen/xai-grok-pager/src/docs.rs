@@ -174,7 +174,7 @@ pub static USER_GUIDE: &[Doc] = &[
     guide!(
         "26-provider-keys.md",
         "Providers and Keys",
-        "Native connect flow, encrypted keychain, and automatic OpenCode import"
+        "Keychain, keyring, /import, /export, /keys, /connect ve CLI anahtar komutları — tam kılavuz"
     ),
 ];
 

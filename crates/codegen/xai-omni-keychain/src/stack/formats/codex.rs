@@ -20,19 +20,19 @@ pub fn extract(path: &Path) -> anyhow::Result<Vec<RawKey>> {
             });
         }
     }
-    // bazı kurulumlarda nested
-    if let Some(key) = value
-        .pointer("/tokens/api_key")
-        .and_then(|v| v.as_str())
-        .filter(|k| !k.trim().is_empty())
-    {
-        if out.is_empty() {
+    // OAuth oturumu (`tokens` bloğu): access_token öncelikli, yoksa
+    // refresh_token. Provider adı `openai-codex` (pi stack'iyle tutarlı).
+    if let Some(tokens) = value.get("tokens").and_then(|v| v.as_object()) {
+        let token = ["access_token", "refresh_token"]
+            .iter()
+            .find_map(|f| tokens.get(*f).and_then(|v| v.as_str()).filter(|s| !s.trim().is_empty()));
+        if let Some(token) = token {
             out.push(RawKey {
-                provider_id: "openai".into(),
-                api_key: key.to_string(),
+                provider_id: "openai-codex".into(),
+                api_key: token.to_string(),
                 base_url: None,
                 model_id: None,
-                source_field: "tokens.api_key".into(),
+                source_field: "tokens.oauth".into(),
             });
         }
     }

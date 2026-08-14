@@ -33,6 +33,7 @@ pub mod history;
 pub mod home;
 pub mod imagine;
 pub mod imagine_video;
+pub mod import;
 pub mod import_claude;
 pub mod jump;
 pub mod keys;
@@ -151,6 +152,7 @@ pub fn builtin_commands() -> Vec<Arc<dyn SlashCommand>> {
         Arc::new(login::LoginCommand),
         Arc::new(logout::LogoutCommand),
         Arc::new(connect::ConnectCommand),
+Arc::new(import::ImportCommand),
         Arc::new(keys::KeysCommand),
         Arc::new(import_claude::ImportClaudeCommand),
         Arc::new(usage::UsageCommand),
@@ -311,6 +313,7 @@ mod tests {
             "howto",
             "imagine",
             "imagine-video",
+            "import",
             "import-claude",
             "jump",
             "keys",

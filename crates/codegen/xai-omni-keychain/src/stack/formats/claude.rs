@@ -85,18 +85,10 @@ pub fn merge_export(
     entries: &[(String, String, Option<String>, Option<String>)],
     overwrite: bool,
 ) -> anyhow::Result<ExportWriteSummary> {
-    // Claude'a export: settings.json env bloğuna yaz (credentials oauth'u bozma)
-    let settings_path = if path
-        .file_name()
-        .and_then(|s| s.to_str())
-        .is_some_and(|n| n.contains("settings"))
-    {
-        path.to_path_buf()
-    } else if let Some(parent) = path.parent() {
-        parent.join("settings.json")
-    } else {
-        path.to_path_buf()
-    };
+    // Claude'a export: settings.json env bloğuna yaz (credentials oauth'u bozma).
+    // Verilen path birebir hedeftir — çağıran (TUI `/export` / CLI `--path`)
+    // doğru dosyayı seçer; varsayılan path zaten `settings.json` içerir.
+    let settings_path = path.to_path_buf();
 
     let mut summary = ExportWriteSummary::default();
     let mut value = if settings_path.exists() {

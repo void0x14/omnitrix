@@ -15,28 +15,52 @@ pub fn extract(path: &Path) -> anyhow::Result<Vec<RawKey>> {
             continue;
         };
         let ty = obj.get("type").and_then(|v| v.as_str()).unwrap_or("api");
-        // type yoksa ama key varsa api kabul et
-        if ty != "api" && obj.get("key").is_none() {
+
+        if ty == "wellknown" {
             continue;
         }
-        if ty == "oauth" || ty == "wellknown" {
+        // API kaydı: `key` alanı.
+        if let Some(key) = obj.get("key").and_then(|v| v.as_str()) {
+            if key.trim().is_empty() {
+                continue;
+            }
+            out.push(RawKey {
+                provider_id: provider.clone(),
+                api_key: key.to_string(),
+                base_url: None,
+                model_id: None,
+                source_field: format!("{provider}.key"),
+            });
             continue;
         }
-        let Some(key) = obj.get("key").and_then(|v| v.as_str()) else {
-            continue;
-        };
-        if key.trim().is_empty() {
-            continue;
+        // OAuth kaydı (type: oauth ya da pi tarzı type'siz): access/refresh
+        // token'ı taşınır — access öncelikli.
+        if let Some(token) = oauth_token(obj) {
+            out.push(RawKey {
+                provider_id: provider.clone(),
+                api_key: token,
+                base_url: None,
+                model_id: None,
+                source_field: format!("{provider}.oauth"),
+            });
         }
-        out.push(RawKey {
-            provider_id: provider.clone(),
-            api_key: key.to_string(),
-            base_url: None,
-            model_id: None,
-            source_field: format!("{provider}.key"),
-        });
     }
     Ok(out)
+}
+
+/// OAuth kayıtlarından taşınabilir token: access öncelikli, yoksa refresh.
+fn oauth_token(obj: &Map<String, Value>) -> Option<String> {
+    for field in ["access", "access_token", "accessToken"] {
+        if let Some(s) = obj.get(field).and_then(|v| v.as_str()) {
+            if !s.trim().is_empty() {
+                return Some(s.to_string());
+            }
+        }
+    }
+    obj.get("refresh")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.trim().is_empty())
+        .map(str::to_string)
 }
 
 pub fn merge_export(

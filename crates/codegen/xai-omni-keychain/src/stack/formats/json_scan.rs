@@ -22,6 +22,14 @@ const KEY_FIELD_NAMES: &[&str] = &[
     "togetherApiKey",
     "fireworksApiKey",
     "cerebrasApiKey",
+    "apiToken",
+    "accessToken",
+    "refreshToken",
+    "authToken",
+    "access_token",
+    "refresh_token",
+    "auth_token",
+    "token",
     "key",
 ];
 
@@ -29,6 +37,19 @@ pub fn extract_scan(path: &Path) -> anyhow::Result<Vec<RawKey>> {
     let value = read_json(path)?;
     let mut out = Vec::new();
     walk(&value, "", &mut out);
+    // İpucu olmayan kayıtlara dizin adından provider türet
+    // (`~/.config/higgsfield/credentials.json` → `higgsfield`).
+    let fallback = path
+        .parent()
+        .and_then(|p| p.file_name())
+        .and_then(|s| s.to_str())
+        .unwrap_or("unknown")
+        .to_ascii_lowercase();
+    for k in &mut out {
+        if k.provider_id == "unknown" {
+            k.provider_id = fallback.clone();
+        }
+    }
     Ok(dedupe(out))
 }
 
@@ -120,9 +141,9 @@ pub fn merge_export_continue(
 fn walk(value: &Value, path: &str, out: &mut Vec<RawKey>) {
     match value {
         Value::Object(map) => {
-            // type=oauth ise bu objedeki token'ları atla
+            // OAuth kayıtlarının token'ları da taşınır (access/refresh).
             let ty = map.get("type").and_then(|v| v.as_str()).unwrap_or("");
-            if ty == "oauth" || ty == "wellknown" {
+            if ty == "wellknown" {
                 return;
             }
             for (k, v) in map {
@@ -171,10 +192,43 @@ fn looks_like_secret(s: &str) -> bool {
             || t.starts_with("xai-")
             || t.starts_with("AIza")
             || t.starts_with("nvapi-")
+            || t.starts_with("sky_")
+            || t.starts_with("oat_")
+            || t.starts_with("ya29.")
+            || t.starts_with("eyJ")
+            || t.starts_with("rt.")
             || t.len() >= 20)
 }
-
 fn infer_provider(field: &str, path: &str, map: &serde_json::Map<String, Value>) -> String {
+    if let Some(p) = map.get("provider").and_then(|v| v.as_str()) {
+        return p.to_ascii_lowercase();
+    }
+    if let Some(p) = map.get("title").and_then(|v| v.as_str()) {
+        if p.len() < 40 {
+            return p.to_ascii_lowercase().replace(' ', "-");
+        }
+    }
+    // apiUrl / resource_url / baseUrl hostname'inden provider türet
+    // (poolside credentials.json, qwen oauth_creds.json gibi yapılar).
+    for url_field in ["apiUrl", "resource_url", "baseUrl", "api_base", "base_url"] {
+        if let Some(url) = map.get(url_field).and_then(|v| v.as_str()) {
+            if let Some(host) = hostname(url) {
+                let lower = host.to_ascii_lowercase();
+                for known in [
+                    "poolside", "higgsfield", "context7", "qwen", "openai", "anthropic",
+                    "google", "gemini", "openrouter", "groq", "deepseek", "mistral",
+                    "togetherai", "fireworks", "cerebras", "moonshot", "minimax", "zhipu",
+                    "kimi", "crush", "nvidia",
+                ] {
+                    if lower.contains(known) {
+                        return known.to_string();
+                    }
+                }
+                return lower;
+            }
+        }
+    }
+    let fl = field.to_ascii_lowercase();
     if let Some(p) = map.get("provider").and_then(|v| v.as_str()) {
         return p.to_ascii_lowercase();
     }
@@ -230,6 +284,20 @@ fn dedupe(keys: Vec<RawKey>) -> Vec<RawKey> {
         }
     }
     out
+}
+
+/// URL'den hostname çıkarır (`https://api.poolside.ai/v1` → `api.poolside.ai`).
+fn hostname(url: &str) -> Option<String> {
+    let cleaned = url
+        .trim()
+        .trim_start_matches("https://")
+        .trim_start_matches("http://");
+    let host = cleaned.split(['/', ':', '?']).next().unwrap_or("");
+    if host.is_empty() {
+        None
+    } else {
+        Some(host.to_string())
+    }
 }
 
 fn read_json(path: &Path) -> anyhow::Result<Value> {

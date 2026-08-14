@@ -9,7 +9,7 @@ use super::connect::{
     dispatch_keychain_import, dispatch_keychain_remove, dispatch_keychain_remove_category,
     dispatch_keychain_reveal, dispatch_keychain_stack_preview, dispatch_keychain_stack_sync,
     dispatch_keychain_unlock, dispatch_keychain_update, dispatch_open_connect_picker,
-    dispatch_open_keys_manager, dispatch_open_routing_picker,
+    dispatch_open_keys_manager, dispatch_open_routing_picker, dispatch_stack_import_export,
 };
 use super::ctx::{
     active_agent_session_id, get_active_agent_mut, navigate_clearing_selection, open_url_or_show,
@@ -868,6 +868,12 @@ pub(crate) fn dispatch(action: Action, app: &mut AppView) -> Vec<Effect> {
             stack_id,
             into_omnitrix,
         } => dispatch_keychain_stack_sync(app, stack_id, into_omnitrix),
+        Action::ImportStackKeys { stack_id } => {
+            dispatch_stack_import_export(app, stack_id, true)
+        }
+        Action::ExportStackKeys { stack_id } => {
+            dispatch_stack_import_export(app, stack_id, false)
+        }
         Action::SwitchModel { model_id, effort } => {
             let ActiveView::Agent(id) = app.active_view else {
                 return vec![];

@@ -441,3 +441,35 @@ Built-in commands always win over a skill with the same name. Name a skill "comp
 ## Autocomplete
 
 The menu supports fuzzy search: start typing after `/` to filter. Each entry shows the command name, its description, an argument hint when it takes arguments, and its source (builtin, skill scope, or plugin name). Press `Tab` or `Enter` to accept the highlighted command.
+
+---
+
+## `/import` ve `/export` — anahtar taşıma
+
+> **Not:** Bu kılavuz bölümü Türkçedir; tam anlatım için [Sağlayıcılar ve Anahtarlar](26-provider-keys.md) bölümüne bakın.
+
+Bu iki komut, harici kodlama araçlarının (OpenCode, Claude Code, Codex, …) credential dosyalarıyla omnitrix'in şifreli keychain'i arasında çift yönlü anahtar senkronu yapar.
+
+### `/import <araç>`
+
+Bir aracın credential dosyasındaki API key'lerini keychain'e **içe aktarır** (araç → omnitrix). Desteklenen araçların tam listesi için `grok keys stacks` komutunu kullanın.
+
+```
+/import opencode
+/import claude-code
+/import dotenv
+```
+
+### `/export <araç>`
+
+Keychain'deki key'leri bir aracın credential dosyasına **dışa aktarır** (omnitrix → araç). Yalnızca dışa aktarma destekleyen araçlar yazılır; örn. `claude-code` `settings.json` içine `env` bloğu, `dotenv` `OPENAI_API_KEY=…` satırları, `opencode` `auth.json` içine provider haritası yazar.
+
+```
+/export dotenv
+/export opencode
+```
+
+- **Argümansız çağrı** (`/import` veya `/export` tek başına) desteklenen stack'leri ve yön kapasitelerini listeler.
+- Keychain kilitliyse önce master password istenir; sistem anahtarlığında (OS keyring) kayıtlıysa **otomatik açılır** ve prompt gösterilmez.
+- Birleştirme her zaman **çakışma-güvenli**dir: mevcut kayıtlar asla ezilmez, gelen kopya atlanır.
+- Sonuç, aktif oturumun scrollback'ine system bloğu olarak yazılır (ör. `stack → omnitrix [opencode]: 3 key · conflict atlandı: 1 · …`).

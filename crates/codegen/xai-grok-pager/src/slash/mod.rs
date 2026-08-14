@@ -1925,6 +1925,8 @@ mod tests {
             "/model",
             "/plan",
             "/multiline",
+            "/export",
+            "/import",
         ] {
             assert!(
                 names.contains(&keep),
@@ -1939,8 +1941,6 @@ mod tests {
             "/share",
             "/context",
             "/copy",
-            "/export",
-            "/rename",
             "/btw",
             "/session-info",
             "/find",

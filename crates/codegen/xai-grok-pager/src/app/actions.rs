@@ -545,6 +545,18 @@ pub enum Action {
         stack_id: String,
         into_omnitrix: bool,
     },
+    /// `/import <stack>`: harici kodlama aracının credential'larını
+    /// (API key'leri) şifreli keychain'e çeker. Keychain kilitliyse
+    /// önce unlock akışını açar; sonra merge eder (conflict skip) ve
+    /// sonucu scrollback'e yazar.
+    ImportStackKeys {
+        stack_id: String,
+    },
+    /// `/export <stack>`: keychain'deki tüm key'leri harici kodlama
+    /// aracının credential dosyasına yazar (merge; conflict skip).
+    ExportStackKeys {
+        stack_id: String,
+    },
     /// Fetch a custom provider's `/models` list for the connect wizard's
     /// Model step (offline/custom fallback: Model adımına boş liste
     /// girildiğinde bir kez tetiklenir). Dispatch resolves the optional key

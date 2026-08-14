@@ -52,6 +52,19 @@ pub struct SyncSummary {
 
 impl SyncSummary {
     pub fn format_tr(&self) -> String {
+        // Hepsi zaten kayıtlıysa kafa karıştıran "0 key" yerine net özet.
+        if self.transferred == 0
+            && !self.skipped_conflicts.is_empty()
+            && self.overwritten.is_empty()
+        {
+            return format!(
+                "{} [{}]: güncel — {} key zaten kayıtlı (üzerine yazılmadı) · {}",
+                self.direction.label(),
+                self.stack_id,
+                self.skipped_conflicts.len(),
+                self.path,
+            );
+        }
         format!(
             "{} [{}]: {} key · conflict atlandı: {} · diğer atlanan: {} · üzerine yazılan: {} · {}",
             self.direction.label(),

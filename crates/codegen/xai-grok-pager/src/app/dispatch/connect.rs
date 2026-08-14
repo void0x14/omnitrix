@@ -22,6 +22,7 @@ use std::path::PathBuf;
 use xai_grok_shell::sampling::ApiBackend;
 use xai_omni_keychain::{
     ExportScope, ImportSummary, Keychain, KeychainError, KeychainOptions, MasterKeyTtl,
+    keyring_store,
 };
 use zeroize::Zeroizing;
 
@@ -321,11 +322,19 @@ pub(super) fn dispatch_keychain_unlock(
     ) {
         Ok(kc) => {
             app.keychain = Some(kc);
+            // Şifre anahtarlığa yazılır — bir sonraki açılışta prompt atlanır
+            // (hata sessizce geçilir; anahtarlık yoksa normal akış sürer).
+            let _ = keyring_store::master_password_set(password.as_str());
             reload_keys_manager_entries(app);
             with_keys_manager(app, |state| state.apply_unlocked());
             // OpenCode okuması ve bakiye sorguları event-loop dışında çalışır.
             let mut effects = load_opencode_credentials_effect(app);
             effects.extend(probe_key_balances_effect(app));
+            // `/import <stack>` / `/export <stack>` bekliyorsa unlock sonrası
+            // senkronu sürdür (sonuç scrollback'e system bloğu olarak yazılır).
+            if let Some((stack_id, into_omnitrix)) = take_pending_stack_sync(app) {
+                effects.extend(dispatch_stack_import_export(app, stack_id, into_omnitrix));
+            }
             return effects;
         }
         Err(_) => {
@@ -335,6 +344,37 @@ pub(super) fn dispatch_keychain_unlock(
         }
     }
     vec![]
+}
+
+/// Anahtarlıkta saklı master password ile keychain'i sessizce açar (prompt
+/// yok — silent auto-unlock). Keychain zaten açıksa true döner. Başarılıysa
+/// `app.keychain` set edilir ve true döner; herhangi bir hatada (anahtarlık
+/// yok, kayıt yok, şifre değişmiş, bozuk dosya) false döner — çağıran manuel
+/// prompt akışına düşer.
+fn keyring_unlock(app: &mut AppView) -> bool {
+    if app.keychain.is_some() {
+        return true;
+    }
+    let Ok(password) = keyring_store::master_password_get() else {
+        return false;
+    };
+    if password.is_empty() {
+        return false;
+    }
+    let path = keys_manager_keychain_path(app);
+    match Keychain::open(
+        KeychainOptions {
+            path: Some(path),
+            ttl: MasterKeyTtl::default(),
+        },
+        || password,
+    ) {
+        Ok(kc) => {
+            app.keychain = Some(kc);
+            true
+        }
+        Err(_) => false,
+    }
 }
 
 /// Async OpenCode tarama sonucunu şifreli keychain'e merge eder. Mevcut
@@ -835,38 +875,13 @@ pub(super) fn dispatch_keychain_stack_preview(
     vec![]
 }
 
-/// Harici stack senkronu (merge-only).
+/// Harici stack senkronu (merge-only) — `/keys` modalının `S` akışı.
 pub(super) fn dispatch_keychain_stack_sync(
     app: &mut AppView,
     stack_id: String,
     into_omnitrix: bool,
 ) -> Vec<Effect> {
-    let result: Result<String, String> = (|| {
-        let def = xai_omni_keychain::find_stack_def(&stack_id)
-            .ok_or_else(|| format!("bilinmeyen stack: {stack_id}"))?;
-        let policy = xai_omni_keychain::MergePolicy::SkipConflicts;
-        if into_omnitrix {
-            let kc = app
-                .keychain
-                .as_mut()
-                .ok_or_else(|| KEYCHAIN_LOCKED_MSG.to_string())?;
-            let summary = xai_omni_keychain::import_from_stack(def, None, kc, policy)
-                .map_err(|e| format!("sync-from: {e}"))?;
-            if let Err(e) = kc.save() {
-                tracing::warn!(target: "keys", error = %e, "keychain save failed after stack sync");
-            }
-            Ok(summary.format_tr())
-        } else {
-            let kc = app
-                .keychain
-                .as_ref()
-                .ok_or_else(|| KEYCHAIN_LOCKED_MSG.to_string())?;
-            let summary = xai_omni_keychain::export_to_stack(def, None, kc, policy)
-                .map_err(|e| format!("sync-to: {e}"))?;
-            Ok(summary.format_tr())
-        }
-    })();
-    match result {
+    match run_stack_sync(app, &stack_id, into_omnitrix) {
         Ok(message) => {
             if into_omnitrix {
                 reload_keys_manager_entries(app);
@@ -881,6 +896,171 @@ pub(super) fn dispatch_keychain_stack_sync(
         }
     }
     vec![]
+}
+
+/// `/import <stack>` / `/export <stack>` slash komutlarının dispatch'i.
+///
+/// Keychain açıksa (veya anahtarlıkta saklı şifre ile sessizce açılabiliyorsa)
+/// senkronu hemen çalıştırır ve sonucu `push_active_system_block` ile HER
+/// DURUMDA toast olarak gösterir; aktif ajans varsa scrollback'ine de system
+/// bloğu yazar (anahtar teslim: tek komut; toast kaçırılmaz geri bildirim,
+/// scrollback kalıcı kayıttır). Kilitliyse keys manager'ı unlock modunda açar
+/// ve `pending_stack_sync` alanına işi kuyruğa alır; master password girilince
+/// `dispatch_keychain_unlock` senkronu sürdürür ve aynı şekilde sonucu
+/// toast + scrollback olarak yazar. Tüm dallar (bilinmeyen stack, desteklenmeyen
+/// yön, başarı, hata, güncel) bu ortak yüzeyden geçer.
+///
+pub(super) fn dispatch_stack_import_export(
+    app: &mut AppView,
+    stack_id: String,
+    into_omnitrix: bool,
+) -> Vec<Effect> {
+    let def = match xai_omni_keychain::find_stack_def(&stack_id) {
+        Some(def) => def,
+        None => {
+            push_active_system_block(app, format!("bilinmeyen stack: {stack_id} — /import ya da /export argümansız çağırarak listeyi görün"));
+            return vec![];
+        }
+    };
+    let supported = if into_omnitrix {
+        def.capability.import
+    } else {
+        def.capability.export
+    };
+    if !supported {
+        push_active_system_block(
+            app,
+            format!("{} stack'i bu yönde desteklenmiyor", def.id),
+        );
+        return vec![];
+    }
+    if app.keychain.is_none() {
+        // Anahtarlıkta saklı master password varsa sessizce açar; başarılıysa
+        // şifre ekranı hiç açılmaz, senkron anında çalışır.
+        if !keyring_unlock(app) {
+            // Kilitli: sadece şifre prompt'u aç (keys yöneticisi değil) —
+            // unlock sonrası senkron otomatik sürer ve modal kapanır.
+            let effects = dispatch_open_keys_manager(app);
+            with_keys_manager(app, |state| {
+                state.title_override = Some(if into_omnitrix {
+                    format!("/import {stack_id} — keychain şifresi")
+                } else {
+                    format!("/export {stack_id} — keychain şifresi")
+                });
+                state.pending_stack_sync = Some((stack_id, into_omnitrix));
+            });
+            return effects;
+        }
+    }
+    match run_stack_sync(app, &stack_id, into_omnitrix) {
+        Ok(message) => {
+            if into_omnitrix {
+                reload_keys_manager_entries(app);
+                crate::omni_runtime::refresh();
+            }
+            // Komut akışı: modal kapanır, sonuç scrollback'te görünür.
+            close_keys_manager_modal(app);
+            push_active_system_block(app, message);
+        }
+        Err(msg) => {
+            close_keys_manager_modal(app);
+            push_active_system_block(app, format!("/{dir} başarısız: {msg}", dir = if into_omnitrix { "import" } else { "export" }));
+        }
+    }
+    vec![]
+}
+
+/// Stack senkronunun ortak çekirdeği (merge-only; conflict skip).
+/// Dönüş: `Ok(özet)` ya da `Err(türkçe hata mesajı)`.
+fn run_stack_sync(
+    app: &mut AppView,
+    stack_id: &str,
+    into_omnitrix: bool,
+) -> Result<String, String> {
+    let def = xai_omni_keychain::find_stack_def(stack_id)
+        .ok_or_else(|| format!("bilinmeyen stack: {stack_id}"))?;
+    let policy = xai_omni_keychain::MergePolicy::SkipConflicts;
+    if into_omnitrix {
+        let kc = app
+            .keychain
+            .as_mut()
+            .ok_or_else(|| KEYCHAIN_LOCKED_MSG.to_string())?;
+        let summary = xai_omni_keychain::import_from_stack(def, None, kc, policy)
+            .map_err(|e| format!("sync-from: {e}"))?;
+        if let Err(e) = kc.save() {
+            tracing::warn!(target: "keys", error = %e, "keychain save failed after stack sync");
+        }
+        Ok(if summary.transferred > 0 {
+            import_summary_tr(&summary)
+        } else {
+            summary.format_tr()
+        })
+    } else {
+        let kc = app
+            .keychain
+            .as_ref()
+            .ok_or_else(|| KEYCHAIN_LOCKED_MSG.to_string())?;
+        let summary = xai_omni_keychain::export_to_stack(def, None, kc, policy)
+            .map_err(|e| format!("sync-to: {e}"))?;
+        Ok(summary.format_tr())
+    }
+}
+
+/// Import özetini tek satırlık zengin Türkçe mesaja biçimlendirir: kullanıcı
+/// kaç key'in YENİ eklendiğini, kaçının zaten kayıtlı olduğunu (conflict —
+/// üzerine yazılmadı) ve kaçının üzerine yazıldığını net görür. `transferred > 0`
+/// olan import başarıları için `format_tr()` yerine kullanılır; sıfır transfer
+/// (güncel) durumunda `format_tr()` korunur.
+fn import_summary_tr(summary: &xai_omni_keychain::SyncSummary) -> String {
+    let new = summary.transferred.saturating_sub(summary.overwritten.len());
+    format!(
+        "{} [{}]: {} yeni eklendi · {} zaten kayıtlı · üzerine yazılan: {}",
+        summary.direction.label(),
+        summary.stack_id,
+        new,
+        summary.skipped_conflicts.len(),
+        summary.overwritten.len(),
+    )
+}
+/// `/import` / `/export` akışı: keys manager modalını kapatır (işlem
+/// tamamlandı; sonuç scrollback'te system bloğu olarak görünür).
+fn close_keys_manager_modal(app: &mut AppView) {
+    use crate::views::modal::ActiveModal;
+    for agent in app.agents.values_mut() {
+        if matches!(agent.active_modal, Some(ActiveModal::KeysManager { .. })) {
+            agent.active_modal = None;
+            return;
+        }
+    }
+}
+
+/// Keys manager state'inden bekleyen stack senkronu isteğini alır.
+fn take_pending_stack_sync(app: &mut AppView) -> Option<(String, bool)> {
+    use crate::views::modal::ActiveModal;
+    for agent in app.agents.values_mut() {
+        if let Some(ActiveModal::KeysManager { state }) = &mut agent.active_modal {
+            return state.pending_stack_sync.take();
+        }
+    }
+    None
+}
+
+/// `/import` / `/export` gibi slash komut sonuçlarının ortak geri bildirim
+/// yüzeyi: mesaj HER DURUMDA toast olarak gösterilir (kaçırılmaz geri
+/// bildirim — `CommandResult::Message` ile aynı görsel yüzey); aktif ajan
+/// varsa scrollback'ine de system bloğu yazılır (kalıcı kayıt). Aktif ajan
+/// yoksa (örn. welcome ekranı) yalnızca toast gösterilir — komut çıktısı
+/// her durumda görünür kalır.
+fn push_active_system_block(app: &mut AppView, msg: String) {
+    use crate::app::app_view::ActiveView;
+    app.show_toast(&msg);
+    if let ActiveView::Agent(id) = app.active_view {
+        if let Some(agent) = app.agents.get_mut(&id) {
+            agent
+                .scrollback
+                .push_block(crate::scrollback::block::RenderBlock::system(msg));
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------

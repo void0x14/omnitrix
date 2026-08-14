@@ -7,6 +7,7 @@
 pub mod crypto;
 pub mod detect;
 mod export;
+pub mod keyring_store;
 pub mod stack;
 mod store;
 mod ttl;

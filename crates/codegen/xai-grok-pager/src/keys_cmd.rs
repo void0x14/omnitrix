@@ -1,6 +1,12 @@
 //! `grok keys` — şifreli API key keychain yönetimi.
 //!
 //! Her alt komut keychain'i [`xai_omni_keychain::Keychain::open`] ile açar;
+//! anahtarlıkta (OS keyring) saklı master password varsa sessizce kullanılır;
+//! yoksa master password gizli okunur (terminal echo kapatılarak). İlk açılışta
+//! dosya olmadığından yeni keychain yaratılır — Task 5 kapsamında master
+//! password yalnızca bir kez sorulur, onay tekrarı yoktur (brief'ten sapma,
+//! rapora işlendi). Başarılı manuel açılışta şifre anahtarlığa yazılır; sonraki
+//! açılışlar prompt göstermez.
 //! master password gizli okunur (terminal echo kapatılarak). İlk açılışta
 //! dosya olmadığından yeni keychain yaratılır — Task 5 kapsamında master
 //! password yalnızca bir kez sorulur, onay tekrarı yoktur (brief'ten sapma,
@@ -16,6 +22,7 @@ use xai_omni_keychain::{
     ExportScope, ImportSummary, Keychain, KeychainError, KeychainOptions, MasterKeyTtl,
     MergePolicy, all_stack_defs, detect_stacks, export_to_stack, find_stack_def, import_from_stack,
     preview_export, preview_import,
+    keyring_store,
 };
 
 use crate::app::cli::{KeysArgs, KeysCommand};
@@ -383,6 +390,23 @@ fn cmd_sync_to(
 /// `connect_cmd` de aynı açılışı kullanır (pub(crate)).
 pub(crate) fn prompt_and_open_keychain(grok_home: &Path) -> anyhow::Result<Keychain> {
     let path = grok_home.join(KEYCHAIN_FILE);
+
+    // Anahtarlıkta saklı master password varsa prompt göstermeden sessizce
+    // açmayı dener; yanlış/değişmiş şifrede (veya anahtarlık yoksa) prompt'a
+    // düşülür.
+    if let Ok(keyring_password) = keyring_store::master_password_get()
+        && !keyring_password.is_empty()
+        && let Ok(kc) = Keychain::open(
+            KeychainOptions {
+                path: Some(path.clone()),
+                ttl: MasterKeyTtl::default(),
+            },
+            || keyring_password,
+        )
+    {
+        return Ok(kc);
+    }
+
     let first_open = !path.exists();
     let prompt = if first_open {
         "yeni keychain: master password belirle: "
@@ -393,14 +417,18 @@ pub(crate) fn prompt_and_open_keychain(grok_home: &Path) -> anyhow::Result<Keych
     if password.is_empty() {
         anyhow::bail!("master password boş olamaz");
     }
-    Keychain::open(
+    let kc = Keychain::open(
         KeychainOptions {
             path: Some(path),
             ttl: MasterKeyTtl::default(),
         },
-        || password,
+        || password.clone(),
     )
-    .map_err(keychain_error)
+    .map_err(keychain_error)?;
+    // Başarılı manuel açılışta şifre anahtarlığa yazılır — bir sonraki
+    // açılışta prompt atlanır (hata sessizce geçilir).
+    let _ = keyring_store::master_password_set(&password);
+    Ok(kc)
 }
 
 /// Keychain hatalarını Türkçe/Türkçe-karışık anlaşılır mesajlara çevirir.

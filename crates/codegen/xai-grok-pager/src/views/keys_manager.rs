@@ -182,6 +182,14 @@ pub struct KeysManagerState {
     pub scope_cursor: usize,
     /// Stack pick satırları: (id, label, path_display).
     pub stack_rows: Vec<(String, String, String)>,
+    /// `/import <stack>` / `/export <stack>` slash komutu kilitli keychain
+    /// yüzünden beklerken kuyruğa alınan iş: `(stack_id, into_omnitrix)`.
+    /// Unlock başarılı olunca `dispatch_keychain_unlock` bu işi alır,
+    /// senkronu çalıştırır ve sonucu scrollback'e yazar.
+    pub pending_stack_sync: Option<(String, bool)>,
+    /// Modal başlık override'ı (`/import <stack>` / `/export <stack>`
+    /// akışında varsayılan "API Keys (Keychain)" yerine işlemi gösterir).
+    pub title_override: Option<String>,
     pub error: Option<String>,
     // ── mouse hit rects (render'da doldurulur) ──
     pub list_rect: Rect,
@@ -224,6 +232,8 @@ impl KeysManagerState {
             category_cursor: 0,
             scope_cursor: 0,
             stack_rows: Vec::new(),
+            pending_stack_sync: None,
+            title_override: None,
             error: None,
             list_rect: Rect::default(),
             row_rects: Vec::new(),
@@ -1433,7 +1443,10 @@ pub fn render_keys_manager(
         ],
     };
     let config = ModalWindowConfig {
-        title: "API Keys (Keychain)",
+        title: state
+            .title_override
+            .as_deref()
+            .unwrap_or("API Keys (Keychain)"),
         tabs: None,
         shortcuts: &shortcuts,
         sizing: keys_modal_sizing(area, state, compact),
