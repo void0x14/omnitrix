@@ -1,170 +1,265 @@
-//! omnitrix-tui/dialogs/command_palette.zig
-//!
-//! OpenCode stili Slash Komut Paleti Modalı (Command Palette Dialog).
-//! Kullanıcı `/` yazdığında veya `Ctrl+K` bastığında açılır;
-//! sistem komutlarını (/voice, /diff, /files, /model, /clear, /soak, /help, /quit)
-//! açıklamaları ve kısayollarıyla listeleyip filtreler.
-
 const std = @import("std");
-const modal_mod = @import("modal.zig");
-const geom_mod = @import("../core/geometry.zig");
-const buffer_mod = @import("../core/buffer.zig");
 const cell_mod = @import("../core/cell.zig");
-const keys_mod = @import("../input/keys.zig");
+const buffer_mod = @import("../core/buffer.zig");
+const theme_mod = @import("../core/theme.zig");
+const layout_mod = @import("../core/layout.zig");
+const box_mod = @import("../widgets/box.zig");
+const gap_mod = @import("../input/gap_buffer.zig");
+const Cell = cell_mod.Cell;
+const Style = cell_mod.Style;
+const Buffer = buffer_mod.Buffer;
+const Theme = theme_mod.Theme;
+const Rect = layout_mod.Rect;
+const BoxWidget = box_mod.BoxWidget;
+const BorderStyle = box_mod.BorderStyle;
+const GapBuffer = gap_mod.GapBuffer;
 
-pub const Modal = modal_mod.Modal;
-pub const Rect = geom_mod.Rect;
-pub const Buffer = buffer_mod.Buffer;
-pub const Style = cell_mod.Style;
-pub const KeyEvent = keys_mod.KeyEvent;
-
-pub const CommandItem = struct {
-    command: []const u8,
-    description: []const u8,
-    shortcut: []const u8,
+pub const Command = struct {
+    name: []const u8,
+    label: []const u8,
+    category: []const u8,
+    shortcut: ?[]const u8 = null,
 };
 
 pub const CommandPalette = struct {
     allocator: std.mem.Allocator,
-    modal: Modal,
-    commands: std.ArrayList(CommandItem),
-    selected_index: usize = 0,
-    is_open: bool = false,
+    commands: []const Command,
+    filtered_indices: std.ArrayList(usize),
+    selected: i32,
+    search: GapBuffer,
+    visible: bool,
+    theme: Theme,
 
-    pub fn init(allocator: std.mem.Allocator) !CommandPalette {
-        var commands = std.ArrayList(CommandItem).empty;
-        errdefer commands.deinit(allocator);
-
-        try commands.append(allocator, .{ .command = "/model", .description = "Aktif yapay zeka modelini seç", .shortcut = "Ctrl+P" });
-        try commands.append(allocator, .{ .command = "/voice", .description = "Grok Sesli Modunu aç/kapat", .shortcut = "Ctrl+V" });
-        try commands.append(allocator, .{ .command = "/diff", .description = "Değişiklik diff panelini aç", .shortcut = "Tab / 3" });
-        try commands.append(allocator, .{ .command = "/files", .description = "Değişen dosyalar listesini aç", .shortcut = "Tab / 2" });
-        try commands.append(allocator, .{ .command = "/clear", .description = "Sohbet geçmişini ve blokları temizle", .shortcut = "Ctrl+L" });
-        try commands.append(allocator, .{ .command = "/soak", .description = "24/7 Performans ve sızıntı testini başlat", .shortcut = "" });
-        try commands.append(allocator, .{ .command = "/help", .description = "Tüm kısayolları ve komutları göster", .shortcut = "?" });
-        try commands.append(allocator, .{ .command = "/quit", .description = "Omnitrix'ten çık", .shortcut = "q / Ctrl+C" });
-
+    pub fn init(allocator: std.mem.Allocator, commands: []const Command, theme: Theme) !CommandPalette {
         return .{
             .allocator = allocator,
-            .modal = Modal.init(.{
-                .title = "Command Palette",
-                .width_pct = 60,
-                .height_pct = 50,
-                .min_width = 45,
-                .min_height = 12,
-            }),
             .commands = commands,
-            .selected_index = 0,
-            .is_open = false,
+            .filtered_indices = .empty,
+            .selected = 0,
+            .search = try GapBuffer.init(allocator, 128),
+            .visible = false,
+            .theme = theme,
         };
     }
 
     pub fn deinit(self: *CommandPalette) void {
-        self.commands.deinit(self.allocator);
-        self.* = undefined;
+        self.filtered_indices.deinit(self.allocator);
+        self.search.deinit();
     }
 
-    pub fn open(self: *CommandPalette) void {
-        self.is_open = true;
-        self.selected_index = 0;
+    pub fn show(self: *CommandPalette) void {
+        self.visible = true;
+        self.search.clear();
+        self.selected = 0;
+        self.applyFilter();
     }
 
-    pub fn close(self: *CommandPalette) void {
-        self.is_open = false;
+    pub fn hide(self: *CommandPalette) void {
+        self.visible = false;
     }
 
-    /// Tuş olayını işler. Komut seçilirse komut metnini döner.
-    pub fn handleKey(self: *CommandPalette, event: KeyEvent) ?[]const u8 {
-        if (!self.is_open) return null;
+    pub fn toggle(self: *CommandPalette) void {
+        if (self.visible) self.hide() else self.show();
+    }
 
-        switch (event.code) {
-            .special => |s| {
-                switch (s) {
-                    .escape => {
-                        self.close();
-                        return null;
-                    },
-                    .up => {
-                        if (self.selected_index > 0) self.selected_index -= 1;
-                    },
-                    .down => {
-                        if (self.commands.items.len > 0 and self.selected_index + 1 < self.commands.items.len) {
-                            self.selected_index += 1;
-                        }
-                    },
-                    .enter => {
-                        if (self.commands.items.len > 0) {
-                            const cmd = self.commands.items[self.selected_index].command;
-                            self.close();
-                            return cmd;
-                        }
-                    },
-                    else => {},
+    fn applyFilter(self: *CommandPalette) void {
+        self.filtered_indices.clearRetainingCapacity();
+        var query_buf: [256]u8 = undefined;
+        const query = if (self.search.length() <= query_buf.len)
+            self.search.getText(&query_buf)
+        else
+            "";
+
+        if (query.len == 0) {
+            for (self.commands, 0..) |_, i| {
+                self.filtered_indices.append(self.allocator, i) catch break;
+            }
+        } else {
+            for (self.commands, 0..) |cmd, i| {
+                if (fuzzyMatch(query, cmd.name) or fuzzyMatch(query, cmd.label)) {
+                    self.filtered_indices.append(self.allocator, i) catch break;
                 }
-            },
-            else => {},
+            }
         }
+        self.selected = 0;
+    }
+
+    pub fn handleKey(self: *CommandPalette, key: struct {
+        char: ?u21 = null,
+        enter: bool = false,
+        escape: bool = false,
+        up: bool = false,
+        down: bool = false,
+        backspace: bool = false,
+    }) ?[]const u8 {
+        if (!self.visible) return null;
+
+        if (key.escape) {
+            self.hide();
+            return null;
+        }
+
+        if (key.up) {
+            self.selected = @max(0, self.selected - 1);
+            return null;
+        }
+        if (key.down) {
+            self.selected = @min(@as(i32, @intCast(self.filtered_indices.items.len)) - 1, self.selected + 1);
+            return null;
+        }
+
+        if (key.backspace) {
+            _ = self.search.deleteBackward();
+            self.applyFilter();
+            return null;
+        }
+
+        if (key.char) |ch| {
+            if (ch >= 0x20) {
+                self.search.insertCodepoint(ch) catch return null;
+                self.applyFilter();
+            }
+            return null;
+        }
+
+        if (key.enter) {
+            if (self.filtered_indices.items.len > 0 and self.selected >= 0) {
+                const idx: usize = @intCast(self.selected);
+                if (idx < self.filtered_indices.items.len) {
+                    const cmd_idx = self.filtered_indices.items[idx];
+                    const cmd = self.commands[cmd_idx];
+                    self.hide();
+                    return cmd.name;
+                }
+            }
+            self.hide();
+            return null;
+        }
+
         return null;
     }
 
-    /// Komut paletini modal çerçevesiyle çizer.
-    pub fn render(self: *CommandPalette, screen_area: Rect, buf: *Buffer) void {
-        if (!self.is_open) return;
+    pub fn render(self: *CommandPalette, buf: *Buffer, terminal_width: u16, terminal_height: u16) void {
+        if (!self.visible) return;
 
-        _ = self.modal.calculateArea(screen_area);
-        const inner = self.modal.renderFrame(screen_area, buf);
-        if (inner.isEmpty()) return;
+        const palette_w: u16 = @min(60, terminal_width - 4);
+        const palette_h: u16 = @min(20, terminal_height - 4);
+        const palette_x = (terminal_width - palette_w) / 2;
+        const palette_y = (terminal_height - palette_h) / 2;
 
-        var y = inner.top();
-
-        for (self.commands.items, 0..) |cmd, idx| {
-            if (y >= inner.bottom() - 1) break;
-
-            const is_selected = (idx == self.selected_index);
-            const prefix = if (is_selected) " ❯ " else "   ";
-
-            var line_buf: [256]u8 = undefined;
-            const line_str = std.fmt.bufPrint(&line_buf, "{s}{s: <10} {s}", .{
-                prefix,
-                cmd.command,
-                cmd.description,
-            }) catch cmd.command;
-
-            const style: Style = if (is_selected)
-                .{ .fg = .bright_white, .bg = .{ .indexed = 237 }, .modifier = .{ .bold = true } }
-            else
-                .{ .fg = .{ .indexed = 250 } };
-
-            _ = buf.setString(inner.left(), y, line_str, style, inner.width);
-
-            // Kısayol Etiketi (Sağa Yaslı)
-            if (cmd.shortcut.len > 0 and inner.width > 20) {
-                const sc_x = inner.right() - @as(u16, @intCast(cmd.shortcut.len)) - 2;
-                _ = buf.setString(sc_x, y, cmd.shortcut, .{ .fg = .{ .indexed = 244 } }, inner.width);
+        // Dim overlay
+        for (0..terminal_height) |row| {
+            for (0..terminal_width) |col| {
+                var existing = buf.getCell(@intCast(col), @intCast(row));
+                existing.style.bg = .{ .rgb = .{ .r = 0, .g = 0, .b = 0 } };
+                existing.style.attr.dim = true;
+                buf.setCell(@intCast(col), @intCast(row), existing);
             }
-
-            y += 1;
         }
 
-        const hint_y = inner.bottom() - 1;
-        _ = buf.setString(inner.left(), hint_y, " [↑/↓] Gezin  │  [Enter] Çalıştır  │  [Esc] Kapat", .{ .fg = .{ .indexed = 241 } }, inner.width);
+        // Border
+        const border_style = Style{ .fg = self.theme.border_active, .bg = self.theme.background_elevated };
+        const bg_style = Style{ .fg = self.theme.text, .bg = self.theme.background_elevated };
+        const box = BoxWidget.init(.single, border_style, bg_style);
+        box.render(buf, .{ .x = palette_x, .y = palette_y, .width = palette_w, .height = palette_h });
+
+        // Search input
+        const input_y = palette_y + 1;
+        var search_text: [256]u8 = undefined;
+        const query = self.search.getText(&search_text);
+        const input_style = Style{ .fg = self.theme.text, .bg = self.theme.background_panel };
+        for (0..palette_w - 2) |i| {
+            buf.setCell(palette_x + 1 + @as(u16, @intCast(i)), input_y, .{ .style = input_style });
+        }
+        _ = buf.writeStringBounded(palette_x + 2, input_y, query, input_style, palette_w -| 4);
+        buf.setCell(palette_x + 2 + @as(u16, @intCast(@min(query.len, palette_w -| 5))), input_y, .{
+            .char = .{ .char = '█' },
+            .style = Style{ .fg = self.theme.prompt_cursor, .bg = self.theme.background_panel },
+        });
+
+        // Separator
+        const sep_y = input_y + 1;
+        for (0..palette_w - 2) |i| {
+            buf.setCell(palette_x + 1 + @as(u16, @intCast(i)), sep_y, .{
+                .char = .{ .char = '─' },
+                .style = Style{ .fg = self.theme.border, .bg = self.theme.background_elevated },
+            });
+        }
+
+        // Command list
+        const list_y = sep_y + 1;
+        const list_h = palette_h -| 4;
+        const max_items = @min(self.filtered_indices.items.len, @as(usize, list_h));
+
+        if (self.selected >= 0) {
+            const sel: usize = @intCast(self.selected);
+            if (sel >= max_items and max_items > 0) {
+                self.selected = @intCast(max_items - 1);
+            }
+        }
+
+        for (0..max_items) |i| {
+            const row = list_y + @as(u16, @intCast(i));
+            const cmd_idx = self.filtered_indices.items[i];
+            const cmd = self.commands[cmd_idx];
+            const is_selected = @as(i32, @intCast(i)) == self.selected;
+
+            const row_style = if (is_selected)
+                Style{ .fg = self.theme.background_elevated, .bg = self.theme.accent }
+            else
+                bg_style;
+
+            for (0..palette_w - 2) |col| {
+                buf.setCell(palette_x + 1 + @as(u16, @intCast(col)), row, .{ .style = row_style });
+            }
+
+            if (is_selected) {
+                buf.setCell(palette_x + 1, row, .{ .char = .{ .char = '›' }, .style = Style{ .fg = self.theme.accent, .bg = self.theme.background_elevated } });
+            }
+
+            const cat_style = Style{
+                .fg = self.theme.accent_muted,
+                .bg = if (is_selected) self.theme.accent else self.theme.background_elevated,
+                .attr = .{ .bold = true },
+            };
+            const cat_w = @as(u16, @intCast(@min(cmd.category.len + 1, palette_w -| 6)));
+            _ = buf.writeStringBounded(palette_x + 3, row, cmd.category, cat_style, cat_w);
+
+            const label_style = Style{
+                .fg = self.theme.text,
+                .bg = if (is_selected) self.theme.accent else self.theme.background_elevated,
+            };
+            const label_x = palette_x + 3 + cat_w;
+            const label_w = palette_w -| 3 - cat_w;
+            _ = buf.writeStringBounded(label_x, row, cmd.label, label_style, label_w);
+
+            if (cmd.shortcut) |sc| {
+                const sc_style = Style{
+                    .fg = self.theme.text_muted,
+                    .bg = if (is_selected) self.theme.accent else self.theme.background_elevated,
+                };
+                const sc_w = @as(u16, @intCast(sc.len));
+                if (palette_w > sc_w + 3) {
+                    _ = buf.writeStringBounded(palette_x + palette_w - 1 - sc_w, row, sc, sc_style, sc_w);
+                }
+            }
+        }
+
+        // Footer hint
+        const footer_y = palette_y + palette_h -| 1;
+        const hint = "↑↓ navigate  Enter select  Esc cancel";
+        const hint_style = Style{ .fg = self.theme.text_dim, .bg = self.theme.background_elevated };
+        _ = buf.writeStringBounded(palette_x + 1, footer_y, hint, hint_style, palette_w -| 2);
     }
 };
 
-test "command palette: open, navigate, select" {
-    var cp = try CommandPalette.init(std.testing.allocator);
-    defer cp.deinit();
-
-    cp.open();
-    try std.testing.expect(cp.is_open);
-
-    // Aşağı in
-    _ = cp.handleKey(KeyEvent.special(.down, .none));
-    try std.testing.expectEqual(@as(usize, 1), cp.selected_index);
-
-    // Enter
-    const chosen = cp.handleKey(KeyEvent.special(.enter, .none));
-    try std.testing.expect(chosen != null);
-    try std.testing.expectEqualStrings("/voice", chosen.?);
-    try std.testing.expect(!cp.is_open);
+fn fuzzyMatch(query: []const u8, target: []const u8) bool {
+    if (query.len == 0) return true;
+    var qi: usize = 0;
+    for (target) |ch| {
+        if (qi < query.len and (ch == query[qi] or ch == std.ascii.toLower(query[qi]))) {
+            qi += 1;
+        }
+    }
+    return qi == query.len;
 }

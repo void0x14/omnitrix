@@ -1,198 +1,156 @@
-//! omnitrix-tui: Core Terminal Cell (Hücre Katmanı)
-//!
-//! Her terminal hücresi:
-//! - 1 adet Unicode karakteri (veya çok baytlı UTF-8 grapheme)
-//! - Görsel sütun genişliği (1: normal ASCII/Latin, 2: CJK/Emoji, 0: birleştirici karakterler)
-//! - Ön plan (fg) ve arka plan (bg) renkleri
-//! - Metin biçimlendirme niteleyicileri (bold, dim, italic, underline, reverse, hidden, crossed_out)
-
 const std = @import("std");
+const unicode_helper = @import("unicode.zig");
 
 pub const Color = union(enum) {
-    reset,
-    black,
-    red,
-    green,
-    yellow,
-    blue,
-    magenta,
-    cyan,
-    white,
-    bright_black,
-    bright_red,
-    bright_green,
-    bright_yellow,
-    bright_blue,
-    bright_magenta,
-    bright_cyan,
-    bright_white,
-    indexed: u8,
-    rgb: struct { r: u8, g: u8, b: u8 },
+    index: u8,
+    rgb: RGB,
+    named: NamedColor,
 
-    pub fn eql(self: Color, other: Color) bool {
-        const Tag = std.meta.Tag(Color);
-        if (@as(Tag, self) != @as(Tag, other)) return false;
+    pub const RGB = struct {
+        r: u8,
+        g: u8,
+        b: u8,
+    };
+
+    pub const NamedColor = enum {
+        black,
+        red,
+        green,
+        yellow,
+        blue,
+        magenta,
+        cyan,
+        white,
+        bright_black,
+        bright_red,
+        bright_green,
+        bright_yellow,
+        bright_blue,
+        bright_magenta,
+        bright_cyan,
+        bright_white,
+        default_bg,
+        default_fg,
+    };
+
+    pub fn toAnsiFg(self: Color, buf: *[32]u8) []const u8 {
         return switch (self) {
-            .indexed => |i| i == other.indexed,
-            .rgb => |rgb| rgb.r == other.rgb.r and rgb.g == other.rgb.g and rgb.b == other.rgb.b,
-            else => true,
+            .index => |i| std.fmt.bufPrint(buf, "\x1b[38;5;{d}m", .{i}) catch "\x1b[39m",
+            .rgb => |rgb| std.fmt.bufPrint(buf, "\x1b[38;2;{d};{d};{d}m", .{ rgb.r, rgb.g, rgb.b }) catch "\x1b[39m",
+            .named => |nc| switch (nc) {
+                .black => "\x1b[30m", .red => "\x1b[31m", .green => "\x1b[32m",
+                .yellow => "\x1b[33m", .blue => "\x1b[34m", .magenta => "\x1b[35m",
+                .cyan => "\x1b[36m", .white => "\x1b[37m", .bright_black => "\x1b[90m",
+                .bright_red => "\x1b[91m", .bright_green => "\x1b[92m", .bright_yellow => "\x1b[93m",
+                .bright_blue => "\x1b[94m", .bright_magenta => "\x1b[95m", .bright_cyan => "\x1b[96m",
+                .bright_white => "\x1b[97m", .default_bg => "\x1b[49m", .default_fg => "\x1b[39m",
+            },
         };
+    }
+
+    pub fn toAnsiBg(self: Color, buf: *[32]u8) []const u8 {
+        return switch (self) {
+            .index => |i| std.fmt.bufPrint(buf, "\x1b[48;5;{d}m", .{i}) catch "\x1b[49m",
+            .rgb => |rgb| std.fmt.bufPrint(buf, "\x1b[48;2;{d};{d};{d}m", .{ rgb.r, rgb.g, rgb.b }) catch "\x1b[49m",
+            .named => |nc| switch (nc) {
+                .black => "\x1b[40m", .red => "\x1b[41m", .green => "\x1b[42m",
+                .yellow => "\x1b[43m", .blue => "\x1b[44m", .magenta => "\x1b[45m",
+                .cyan => "\x1b[46m", .white => "\x1b[47m", .bright_black => "\x1b[100m",
+                .bright_red => "\x1b[101m", .bright_green => "\x1b[102m", .bright_yellow => "\x1b[103m",
+                .bright_blue => "\x1b[104m", .bright_magenta => "\x1b[105m", .bright_cyan => "\x1b[106m",
+                .bright_white => "\x1b[107m", .default_bg => "\x1b[49m", .default_fg => "\x1b[39m",
+            },
+        };
+    }
+
+    pub fn eq(self: Color, other: Color) bool {
+        return std.meta.eql(self, other);
     }
 };
 
-pub const Modifier = packed struct {
+pub const Attributes = packed struct {
     bold: bool = false,
     dim: bool = false,
     italic: bool = false,
     underline: bool = false,
+    blink: bool = false,
     reverse: bool = false,
-    hidden: bool = false,
-    crossed_out: bool = false,
-    _padding: u1 = 0,
+    strikethrough: bool = false,
+    _padding: u9 = 0,
 
-    pub const empty: Modifier = .{};
-
-    pub fn contains(self: Modifier, other: Modifier) bool {
-        if (other.bold and !self.bold) return false;
-        if (other.dim and !self.dim) return false;
-        if (other.italic and !self.italic) return false;
-        if (other.underline and !self.underline) return false;
-        if (other.reverse and !self.reverse) return false;
-        if (other.hidden and !self.hidden) return false;
-        if (other.crossed_out and !self.crossed_out) return false;
-        return true;
+    pub fn toAnsi(self: Attributes, buf: *[32]u8) []const u8 {
+        var parts: [8][]const u8 = undefined;
+        var count: usize = 0;
+        if (self.bold) { parts[count] = "1"; count += 1; }
+        if (self.dim) { parts[count] = "2"; count += 1; }
+        if (self.italic) { parts[count] = "3"; count += 1; }
+        if (self.underline) { parts[count] = "4"; count += 1; }
+        if (self.blink) { parts[count] = "5"; count += 1; }
+        if (self.reverse) { parts[count] = "7"; count += 1; }
+        if (self.strikethrough) { parts[count] = "9"; count += 1; }
+        if (count == 0) return "\x1b[0m";
+        var pos: usize = 0;
+        buf[pos] = '\x1b'; pos += 1;
+        buf[pos] = '['; pos += 1;
+        for (parts[0..count], 0..) |part, i| {
+            for (part) |ch| { buf[pos] = ch; pos += 1; }
+            if (i < count - 1) { buf[pos] = ';'; pos += 1; }
+        }
+        buf[pos] = 'm'; pos += 1;
+        return buf[0..pos];
     }
 
-    pub fn eql(self: Modifier, other: Modifier) bool {
-        return @as(u8, @bitCast(self)) == @as(u8, @bitCast(other));
+    pub fn eq(self: Attributes, other: Attributes) bool {
+        return @as(u16, @bitCast(self)) == @as(u16, @bitCast(other));
     }
 };
 
 pub const Style = struct {
-    fg: Color = .reset,
-    bg: Color = .reset,
-    modifier: Modifier = .empty,
-
+    fg: Color = .{ .named = .default_fg },
+    bg: Color = .{ .named = .default_bg },
+    attr: Attributes = .{},
     pub const default: Style = .{};
-
-    pub fn fgColor(color: Color) Style {
-        return .{ .fg = color };
-    }
-
-    pub fn bgColor(color: Color) Style {
-        return .{ .bg = color };
-    }
-
-    pub fn withBold(self: Style) Style {
-        var res = self;
-        res.modifier.bold = true;
-        return res;
-    }
-
-    pub fn withDim(self: Style) Style {
-        var res = self;
-        res.modifier.dim = true;
-        return res;
-    }
-
-    pub fn withItalic(self: Style) Style {
-        var res = self;
-        res.modifier.italic = true;
-        return res;
-    }
-
-    pub fn withUnderline(self: Style) Style {
-        var res = self;
-        res.modifier.underline = true;
-        return res;
-    }
-
-    pub fn withReverse(self: Style) Style {
-        var res = self;
-        res.modifier.reverse = true;
-        return res;
-    }
-
-    pub fn eql(self: Style, other: Style) bool {
-        return self.fg.eql(other.fg) and self.bg.eql(other.bg) and self.modifier.eql(other.modifier);
+    pub fn eq(self: Style, other: Style) bool {
+        return self.fg.eq(other.fg) and self.bg.eq(other.bg) and self.attr.eq(other.attr);
     }
 };
 
 pub const Cell = struct {
-    symbol: [8]u8 = [_]u8{ ' ', 0, 0, 0, 0, 0, 0, 0 },
-    symbol_len: u4 = 1,
-    width: u2 = 1,
-    style: Style = .default,
+    char: union(enum) {
+        empty,
+        char: u21,
+        wide_left,
+        wide_right,
+    } = .empty,
+    style: Style = Style.default,
+    width: u8 = 1,
 
-    pub const default: Cell = .{};
-
-    pub fn init(char: u8, style: Style) Cell {
-        var c = Cell{
-            .symbol_len = 1,
-            .width = 1,
-            .style = style,
-        };
-        c.symbol[0] = char;
-        return c;
+    pub fn isEmpty(self: Cell) bool {
+        return switch (self.char) { .empty => true, else => false };
     }
 
-    pub fn initUtf8(bytes: []const u8, width: u2, style: Style) Cell {
-        var c = Cell{
-            .symbol_len = @intCast(@min(bytes.len, 8)),
-            .width = width,
-            .style = style,
-        };
-        const copy_len = @min(bytes.len, 8);
-        @memcpy(c.symbol[0..copy_len], bytes[0..copy_len]);
-        return c;
-    }
-
-    pub fn reset(self: *Cell) void {
-        self.symbol = [_]u8{ ' ', 0, 0, 0, 0, 0, 0, 0 };
-        self.symbol_len = 1;
-        self.width = 1;
-        self.style = .default;
-    }
-
-    pub fn getSymbol(self: *const Cell) []const u8 {
-        return self.symbol[0..self.symbol_len];
-    }
-
-    pub fn setSymbol(self: *Cell, bytes: []const u8, width: u2) void {
-        const copy_len: usize = @min(bytes.len, 8);
-        @memcpy(self.symbol[0..copy_len], bytes[0..copy_len]);
-        self.symbol_len = @intCast(copy_len);
-        self.width = width;
-    }
-
-    pub fn setChar(self: *Cell, char: u8) void {
-        self.symbol[0] = char;
-        self.symbol_len = 1;
-        self.width = 1;
-    }
-
-    pub fn setStyle(self: *Cell, style: Style) void {
-        self.style = style;
-    }
-
-    pub fn eql(self: Cell, other: Cell) bool {
-        if (self.symbol_len != other.symbol_len) return false;
+    pub fn eq(self: Cell, other: Cell) bool {
+        if (!self.style.eq(other.style)) return false;
         if (self.width != other.width) return false;
-        if (!self.style.eql(other.style)) return false;
-        return std.mem.eql(u8, self.getSymbol(), other.getSymbol());
+        return switch (self.char) {
+            .empty => switch (other.char) { .empty => true, else => false },
+            .char => |c| switch (other.char) { .char => |oc| c == oc, else => false },
+            .wide_left => other.char == .wide_left,
+            .wide_right => other.char == .wide_right,
+        };
+    }
+
+    pub fn writeUtf8(self: Cell, buf: *[4]u8) []const u8 {
+        return switch (self.char) {
+            .empty => " ",
+            .char => |c| unicode_helper.encodeCodepoint(c, buf),
+            .wide_left, .wide_right => " ",
+        };
     }
 };
 
-test "cell init ve degisim" {
-    var c = Cell.init('A', .{ .fg = .green });
-    try std.testing.expectEqualStrings("A", c.getSymbol());
-    try std.testing.expectEqual(@as(u2, 1), c.width);
-    try std.testing.expect(c.style.fg.eql(.green));
-
-    c.setSymbol("🚀", 2);
-    try std.testing.expectEqualStrings("🚀", c.getSymbol());
-    try std.testing.expectEqual(@as(u2, 2), c.width);
-
-    c.reset();
-    try std.testing.expectEqualStrings(" ", c.getSymbol());
+test "Cell defaults" {
+    const cell = Cell{};
+    try std.testing.expect(cell.isEmpty());
+    try std.testing.expect(cell.width == 1);
 }

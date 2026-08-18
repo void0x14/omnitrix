@@ -1,199 +1,180 @@
-//! omnitrix-tui: Core Layout Engine (Constraint Tabanlı Yerleşim Motoru)
-//!
-//! Özellikler:
-//! - Constraint: Percentage, Length, Ratio, Min, Max, Fill
-//! - Direction: Horizontal (Yatay), Vertical (Dikey)
-//! - Margin ve Padding desteği
-//! - Flex modeli (start, center, end, space_between, space_around)
-//! - Kalan alanın ve yuvarlama farklarının deterministik dağıtımı
-
 const std = @import("std");
-const geom = @import("geometry.zig");
 
-pub const Rect = geom.Rect;
-pub const Margin = geom.Margin;
-pub const Padding = geom.Padding;
+pub const Rect = struct {
+    x: u16,
+    y: u16,
+    width: u16,
+    height: u16,
 
-pub const Direction = enum {
-    horizontal,
-    vertical,
-};
+    pub const empty: Rect = .{ .x = 0, .y = 0, .width = 0, .height = 0 };
 
-pub const Flex = enum {
-    start,
-    center,
-    end,
-    space_between,
-    space_around,
-};
+    pub fn contains(self: Rect, px: u16, py: u16) bool {
+        return px >= self.x and px < self.x + self.width and
+            py >= self.y and py < self.y + self.height;
+    }
 
-pub const Constraint = union(enum) {
-    percentage: u16,
-    length: u16,
-    ratio: struct { num: u32, den: u32 },
-    min: u16,
-    max: u16,
-    fill: u16,
+    pub fn intersect(self: Rect, other: Rect) ?Rect {
+        const x1 = @max(self.x, other.x);
+        const y1 = @max(self.y, other.y);
+        const x2 = @min(self.x + self.width, other.x + other.width);
+        const y2 = @min(self.y + self.height, other.y + other.height);
+        if (x1 >= x2 or y1 >= y2) return null;
+        return .{ .x = x1, .y = y1, .width = x2 - x1, .height = y2 - y1 };
+    }
 
-    pub fn apply(self: Constraint, total_space: u16) u16 {
-        return switch (self) {
-            .length => |l| @min(l, total_space),
-            .percentage => |p| @intCast((@as(u32, total_space) * @as(u32, p)) / 100),
-            .ratio => |r| if (r.den == 0) 0 else @intCast((@as(u64, total_space) * @as(u64, r.num)) / @as(u64, r.den)),
-            .min => |m| @max(m, total_space),
-            .max => |m| @min(m, total_space),
-            .fill => total_space,
-        };
+    pub fn shrink(self: Rect, top: u16, right: u16, bottom: u16, left: u16) Rect {
+        const x = self.x + left;
+        const y = self.y + top;
+        const w = self.width -| left -| right;
+        const h = self.height -| top -| bottom;
+        return .{ .x = x, .y = y, .width = w, .height = h };
     }
 };
 
-pub const Layout = struct {
+pub const Direction = enum { horizontal, vertical };
+
+pub const Align = enum { start, center, end };
+
+pub const LayoutOpts = struct {
     direction: Direction = .vertical,
-    margin: Margin = .{},
-    constraints: []const Constraint,
-    flex: Flex = .start,
+    padding_top: u16 = 0,
+    padding_right: u16 = 0,
+    padding_bottom: u16 = 0,
+    padding_left: u16 = 0,
+    gap: u16 = 0,
+    alignment: Align = .start,
+    justify: bool = false,
+};
 
-    pub fn init(direction: Direction, constraints: []const Constraint) Layout {
-        return .{
-            .direction = direction,
-            .margin = .{},
-            .constraints = constraints,
-            .flex = .start,
-        };
+pub const ChildLayout = struct {
+    /// Relative size: 0 = fit to content, 1+ = flex grow factor
+    flex_grow: u16 = 0,
+    /// If set, use this exact width instead of flex
+    width: ?u16 = null,
+    /// If set, use this exact height instead of flex
+    height: ?u16 = null,
+    /// Minimum width constraint
+    min_width: u16 = 0,
+    /// Minimum height constraint
+    min_height: u16 = 0,
+    /// Maximum width constraint
+    max_width: u16 = 65535,
+    /// Maximum height constraint
+    max_height: u16 = 65535,
+};
+
+pub const LayoutResult = struct {
+    rect: Rect,
+    children: []Rect,
+};
+
+/// Calculate layout for a container with children
+pub fn calculateLayout(
+    allocator: std.mem.Allocator,
+    container: Rect,
+    opts: LayoutOpts,
+    children: []const ChildLayout,
+    child_sizes: []const Rect,
+) !LayoutResult {
+    const child_count = children.len;
+    if (child_count == 0) {
+        return .{ .rect = container, .children = &.{} };
     }
 
-    pub fn withMargin(self: Layout, margin: Margin) Layout {
-        var res = self;
-        res.margin = margin;
-        return res;
-    }
+    const child_rects = try allocator.alloc(Rect, child_count);
+    errdefer allocator.free(child_rects);
 
-    pub fn split(self: Layout, area: Rect, allocator: std.mem.Allocator) ![]Rect {
-        const inner_area = area.inner(self.margin);
-        if (self.constraints.len == 0 or inner_area.isEmpty()) {
-            return allocator.alloc(Rect, 0);
-        }
+    const inner = container.shrink(opts.padding_top, opts.padding_right, opts.padding_bottom, opts.padding_left);
 
-        const total_size: u16 = switch (self.direction) {
-            .horizontal => inner_area.width,
-            .vertical => inner_area.height,
-        };
+    switch (opts.direction) {
+        .horizontal => {
+            const total_gap = if (child_count > 1) opts.gap * @as(u16, @intCast(child_count - 1)) else 0;
+            const available = inner.width -| total_gap;
 
-        const result = try allocator.alloc(Rect, self.constraints.len);
-        errdefer allocator.free(result);
-
-        // 1. Sabit ve oransal boyutları hesapla
-        var assigned_sizes = try allocator.alloc(u16, self.constraints.len);
-        defer allocator.free(assigned_sizes);
-        @memset(assigned_sizes, 0);
-
-        var used_space: u16 = 0;
-        var fill_count: usize = 0;
-
-        for (self.constraints, 0..) |c, idx| {
-            switch (c) {
-                .length => |l| {
-                    const s = @min(l, if (total_size > used_space) total_size - used_space else 0);
-                    assigned_sizes[idx] = s;
-                    used_space += s;
-                },
-                .percentage => |p| {
-                    const s: u16 = @intCast((@as(u32, total_size) * @as(u32, p)) / 100);
-                    assigned_sizes[idx] = s;
-                    used_space += s;
-                },
-                .ratio => |r| {
-                    if (r.den > 0) {
-                        const s: u16 = @intCast((@as(u64, total_size) * @as(u64, r.num)) / @as(u64, r.den));
-                        assigned_sizes[idx] = s;
-                        used_space += s;
-                    }
-                },
-                .min => |m| {
-                    assigned_sizes[idx] = m;
-                    used_space += m;
-                },
-                .max => |m| {
-                    assigned_sizes[idx] = @min(m, total_size);
-                    used_space += assigned_sizes[idx];
-                },
-                .fill => {
-                    fill_count += 1;
-                },
-            }
-        }
-
-        // Kalan alanı Fill (esnek) alanlara dağıt
-        if (fill_count > 0 and total_size > used_space) {
-            const remaining = total_size - used_space;
-            const per_fill = remaining / @as(u16, @intCast(fill_count));
-            var remainder = remaining % @as(u16, @intCast(fill_count));
-
-            for (self.constraints, 0..) |c, idx| {
-                if (c == .fill) {
-                    const extra: u16 = if (remainder > 0) 1 else 0;
-                    if (remainder > 0) remainder -= 1;
-                    assigned_sizes[idx] = per_fill + extra;
+            // First pass: calculate fixed sizes and total flex
+            var total_flex: u16 = 0;
+            var fixed_used: u16 = 0;
+            for (children, 0..) |child, i| {
+                if (child.width) |w| {
+                    fixed_used += w;
+                } else if (child.flex_grow > 0) {
+                    total_flex += child.flex_grow;
+                } else {
+                    // Auto: use content size
+                    const content_w = if (i < child_sizes.len) child_sizes[i].width else 0;
+                    fixed_used += @max(child.min_width, @min(content_w, child.max_width));
                 }
             }
-        }
 
-        // 2. Rect parçalarını oluştur
-        var offset: u16 = 0;
-        for (assigned_sizes, 0..) |s, idx| {
-            switch (self.direction) {
-                .horizontal => {
-                    result[idx] = Rect.init(
-                        inner_area.x + offset,
-                        inner_area.y,
-                        s,
-                        inner_area.height,
-                    );
-                },
-                .vertical => {
-                    result[idx] = Rect.init(
-                        inner_area.x,
-                        inner_area.y + offset,
-                        inner_area.width,
-                        s,
-                    );
-                },
+            const flex_space = available -| fixed_used;
+            var x = inner.x;
+
+            for (children, 0..) |child, i| {
+                const w: u16 = if (child.width) |cw|
+                    cw
+                else if (child.flex_grow > 0 and total_flex > 0)
+                    @max(child.min_width, @min(child.max_width, flex_space * child.flex_grow / total_flex))
+                else if (i < child_sizes.len)
+                    @max(child.min_width, @min(child_sizes[i].width, child.max_width))
+                else
+                    child.min_width;
+
+                const h: u16 = if (child.height) |ch|
+                    ch
+                else if (i < child_sizes.len)
+                    @max(child.min_height, @min(child_sizes[i].height, inner.height, child.max_height))
+                else
+                    @max(child.min_height, @min(inner.height, child.max_height));
+
+                child_rects[i] = .{ .x = x, .y = inner.y, .width = w, .height = h };
+                x += w;
+                if (i < child_count - 1) x += opts.gap;
             }
-            offset += s;
-        }
+        },
+        .vertical => {
+            const total_gap = if (child_count > 1) opts.gap * @as(u16, @intCast(child_count - 1)) else 0;
+            const available = inner.height -| total_gap;
 
-        return result;
+            // First pass
+            var total_flex: u16 = 0;
+            var fixed_used: u16 = 0;
+            for (children, 0..) |child, i| {
+                if (child.height) |h| {
+                    fixed_used += h;
+                } else if (child.flex_grow > 0) {
+                    total_flex += child.flex_grow;
+                } else {
+                    const content_h = if (i < child_sizes.len) child_sizes[i].height else 0;
+                    fixed_used += @max(child.min_height, @min(content_h, child.max_height));
+                }
+            }
+
+            const flex_space = available -| fixed_used;
+            var y = inner.y;
+
+            for (children, 0..) |child, i| {
+                const w: u16 = if (child.width) |cw|
+                    cw
+                else if (i < child_sizes.len)
+                    @max(child.min_width, @min(child_sizes[i].width, inner.width, child.max_width))
+                else
+                    @max(child.min_width, @min(inner.width, child.max_width));
+
+                const h: u16 = if (child.height) |ch|
+                    ch
+                else if (child.flex_grow > 0 and total_flex > 0)
+                    @max(child.min_height, @min(child.max_height, flex_space * child.flex_grow / total_flex))
+                else if (i < child_sizes.len)
+                    @max(child.min_height, @min(child_sizes[i].height, child.max_height))
+                else
+                    child.min_height;
+
+                child_rects[i] = .{ .x = inner.x, .y = y, .width = w, .height = h };
+                y += h;
+                if (i < child_count - 1) y += opts.gap;
+            }
+        },
     }
-};
 
-test "layout dikey ve yatay split" {
-    const area = Rect.init(0, 0, 100, 50);
-
-    // Dikey: Üst bar (1 satır), Ana gövde (Fill), Alt bar (3 satır)
-    const constraints = [_]Constraint{
-        .{ .length = 1 },
-        .{ .fill = 1 },
-        .{ .length = 3 },
-    };
-
-    const l = Layout.init(.vertical, &constraints);
-    const chunks = try l.split(area, std.testing.allocator);
-    defer std.testing.allocator.free(chunks);
-
-    try std.testing.expectEqual(@as(usize, 3), chunks.len);
-    try std.testing.expectEqual(@as(u16, 1), chunks[0].height);
-    try std.testing.expectEqual(@as(u16, 46), chunks[1].height);
-    try std.testing.expectEqual(@as(u16, 3), chunks[2].height);
-
-    // Yatay: Sol (30%), Sağ (70%)
-    const h_constraints = [_]Constraint{
-        .{ .percentage = 30 },
-        .{ .percentage = 70 },
-    };
-    const hl = Layout.init(.horizontal, &h_constraints);
-    const h_chunks = try hl.split(area, std.testing.allocator);
-    defer std.testing.allocator.free(h_chunks);
-
-    try std.testing.expectEqual(@as(u16, 30), h_chunks[0].width);
-    try std.testing.expectEqual(@as(u16, 70), h_chunks[1].width);
+    return .{ .rect = container, .children = child_rects };
 }

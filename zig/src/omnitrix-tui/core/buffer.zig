@@ -1,202 +1,199 @@
-//! omnitrix-tui: Core 2D Terminal Buffer (Tampon Matrisi)
-//!
-//! Özellikler:
-//! - 2 Boyutlu hücre matrisi (width x height)
-//! - Güvenli indeksleme, sınır denetimi ve kırpma (clipping)
-//! - UTF-8 metin yazma, geniş karakter (wide character / CJK / Emoji) desteği
-//! - Bölgesel stil uygulama (setStyle) ve tampon temizleme (clear)
-
 const std = @import("std");
 const cell_mod = @import("cell.zig");
-const geom_mod = @import("geometry.zig");
-const unicode_mod = @import("../unicode.zig");
-
-pub const Cell = cell_mod.Cell;
-pub const Style = cell_mod.Style;
-pub const Rect = geom_mod.Rect;
-pub const Position = geom_mod.Position;
+const Cell = cell_mod.Cell;
+const Style = cell_mod.Style;
+const unicode_helper = @import("unicode.zig");
 
 pub const Buffer = struct {
     allocator: std.mem.Allocator,
-    area: Rect,
-    content: []Cell,
+    cols: u16,
+    rows: u16,
+    front: []Cell,
+    back: []Cell,
 
-    pub fn init(allocator: std.mem.Allocator, area: Rect) !Buffer {
-        const total = area.area();
-        const content = try allocator.alloc(Cell, total);
-        @memset(content, Cell.default);
-
-        return .{
-            .allocator = allocator,
-            .area = area,
-            .content = content,
-        };
+    pub fn init(allocator: std.mem.Allocator, cols: u16, rows: u16) !Buffer {
+        const total = @as(usize, cols) * @as(usize, rows);
+        const front = try allocator.alloc(Cell, total);
+        const back = try allocator.alloc(Cell, total);
+        @memset(front, Cell{});
+        @memset(back, Cell{});
+        return .{ .allocator = allocator, .cols = cols, .rows = rows, .front = front, .back = back };
     }
 
     pub fn deinit(self: *Buffer) void {
-        self.allocator.free(self.content);
-        self.* = undefined;
+        self.allocator.free(self.front);
+        self.allocator.free(self.back);
     }
 
-    pub fn index(self: *const Buffer, x: u16, y: u16) ?usize {
-        if (x < self.area.left() or x >= self.area.right()) return null;
-        if (y < self.area.top() or y >= self.area.bottom()) return null;
-
-        const rel_x = x - self.area.x;
-        const rel_y = y - self.area.y;
-        return @as(usize, rel_y) * @as(usize, self.area.width) + @as(usize, rel_x);
+    pub fn resize(self: *Buffer, new_cols: u16, new_rows: u16) !void {
+        const new_total = @as(usize, new_cols) * @as(usize, new_rows);
+        const old_total = @as(usize, self.cols) * @as(usize, self.rows);
+        if (new_total == old_total) {
+            self.cols = new_cols;
+            self.rows = new_rows;
+            return;
+        }
+        const new_front = try self.allocator.alloc(Cell, new_total);
+        const new_back = try self.allocator.alloc(Cell, new_total);
+        @memset(new_front, Cell{});
+        @memset(new_back, Cell{});
+        const min_rows = @min(self.rows, new_rows);
+        const min_cols = @min(self.cols, new_cols);
+        for (0..min_rows) |row| {
+            const old_start = @as(usize, row) * self.cols;
+            const new_start = @as(usize, row) * new_cols;
+            for (0..min_cols) |col| {
+                new_back[new_start + col] = self.back[old_start + col];
+                new_front[new_start + col] = self.front[old_start + col];
+            }
+        }
+        self.allocator.free(self.front);
+        self.allocator.free(self.back);
+        self.front = new_front;
+        self.back = new_back;
+        self.cols = new_cols;
+        self.rows = new_rows;
     }
 
-    pub fn get(self: *const Buffer, x: u16, y: u16) ?Cell {
-        const idx = self.index(x, y) orelse return null;
-        return self.content[idx];
+    pub fn totalCells(self: Buffer) usize {
+        return @as(usize, self.cols) * @as(usize, self.rows);
     }
 
-    pub fn getMut(self: *Buffer, x: u16, y: u16) ?*Cell {
-        const idx = self.index(x, y) orelse return null;
-        return &self.content[idx];
+    pub fn setCell(self: *Buffer, col: u16, row: u16, c: Cell) void {
+        if (col >= self.cols or row >= self.rows) return;
+        const idx = @as(usize, row) * self.cols + col;
+        self.back[idx] = c;
     }
 
-    pub fn set(self: *Buffer, x: u16, y: u16, c: Cell) void {
-        const ptr = self.getMut(x, y) orelse return;
-        ptr.* = c;
+    pub fn getCell(self: Buffer, col: u16, row: u16) Cell {
+        if (col >= self.cols or row >= self.rows) return Cell{};
+        const idx = @as(usize, row) * self.cols + col;
+        return self.back[idx];
     }
 
     pub fn clear(self: *Buffer) void {
-        @memset(self.content, Cell.default);
+        @memset(self.back, Cell{});
     }
 
-    pub fn resize(self: *Buffer, new_area: Rect) !void {
-        if (self.area.eql(new_area)) return;
-
-        const total = new_area.area();
-        const new_content = try self.allocator.alloc(Cell, total);
-        @memset(new_content, Cell.default);
-
-        self.allocator.free(self.content);
-        self.area = new_area;
-        self.content = new_content;
+    pub fn fillRegion(self: *Buffer, x: u16, y: u16, w: u16, h: u16, c: Cell) void {
+        for (0..h) |dy| {
+            for (0..w) |dx| {
+                const col = x + @as(u16, @intCast(dx));
+                const row = y + @as(u16, @intCast(dy));
+                if (col < self.cols and row < self.rows) {
+                    self.setCell(col, row, c);
+                }
+            }
+        }
     }
 
-    /// Tampona UTF-8 metin yazar.
-    /// Döner: Yazılan toplam görsel sütun genişliği
-    pub fn setString(
-        self: *Buffer,
-        start_x: u16,
-        start_y: u16,
-        string: []const u8,
-        style: Style,
-        max_width: u16,
-    ) u16 {
-        if (start_y < self.area.top() or start_y >= self.area.bottom()) return 0;
-        if (start_x >= self.area.right()) return 0;
-
-        var cur_x = start_x;
-        var written_width: u16 = 0;
+    pub fn writeString(self: *Buffer, start_x: u16, y: u16, text: []const u8, style: Style) u16 {
+        var x = start_x;
         var i: usize = 0;
-
-        while (i < string.len and written_width < max_width and cur_x < self.area.right()) {
-            const byte = string[i];
-
-            // ANSI kaçış dizilerini doğrudan hücreye yazma (atla veya stil olarak uygula)
-            if (byte == '\x1b') {
-                while (i < string.len and string[i] != 'm') : (i += 1) {}
-                if (i < string.len) i += 1;
-                continue;
+        while (i < text.len) {
+            if (text[i] == '\n') {
+                while (x < self.cols) { self.setCell(x, y, .{ .style = style }); x += 1; }
+                return x;
             }
-
-            // UTF-8 kod noktasını çözümle
-            const seq_len = std.unicode.utf8ByteSequenceLength(byte) catch 1;
-            if (i + seq_len > string.len) break;
-
-            const char_slice = string[i .. i + seq_len];
-            const cp = std.unicode.utf8Decode(char_slice) catch ' ';
-            const char_w: u2 = @intCast(@min(unicode_mod.codepointWidth(cp), 2));
-
-            if (char_w == 0) {
-                // Sıfır genişlikli birleştirici karakter
-                i += seq_len;
-                continue;
+            const result = unicode_helper.decodeCodepoint(text, i);
+            const char_width = charWidth(result.cp);
+            if (x + @as(u16, @intCast(char_width)) > self.cols) break;
+            self.setCell(x, y, .{ .char = .{ .char = result.cp }, .style = style, .width = @intCast(char_width) });
+            if (char_width == 2) {
+                self.setCell(x + 1, y, .{ .char = .wide_right, .style = style, .width = 0 });
             }
-
-            if (written_width + char_w > max_width or cur_x + char_w > self.area.right()) {
-                break;
-            }
-
-            if (self.getMut(cur_x, start_y)) |c| {
-                c.setSymbol(char_slice, char_w);
-                c.setStyle(style);
-            }
-
-            // Geniş karakter (CJK / Emoji) ise sağındaki hücreyi boş bırak
-            if (char_w == 2 and cur_x + 1 < self.area.right()) {
-                if (self.getMut(cur_x + 1, start_y)) |next_c| {
-                    next_c.setSymbol("", 0);
-                    next_c.setStyle(style);
-                }
-            }
-
-            cur_x += char_w;
-            written_width += char_w;
-            i += seq_len;
+            x += @intCast(char_width);
+            i += result.len;
         }
-
-        return written_width;
+        return x;
     }
 
-    /// Belirtilen dikdörtgen alana stil uygular.
-    pub fn setStyle(self: *Buffer, rect: Rect, style: Style) void {
-        const clipped = self.area.intersection(rect);
-        if (clipped.isEmpty()) return;
-
-        var y = clipped.top();
-        while (y < clipped.bottom()) : (y += 1) {
-            var x = clipped.left();
-            while (x < clipped.right()) : (x += 1) {
-                if (self.getMut(x, y)) |c| {
-                    c.setStyle(style);
-                }
+    pub fn writeStringBounded(self: *Buffer, start_x: u16, y: u16, text: []const u8, style: Style, max_width: u16) u16 {
+        var x = start_x;
+        var remaining = max_width;
+        var i: usize = 0;
+        while (i < text.len and remaining > 0) {
+            if (text[i] == '\n') break;
+            const result = unicode_helper.decodeCodepoint(text, i);
+            const char_width = charWidth(result.cp);
+            if (@as(u16, @intCast(char_width)) > remaining) break;
+            self.setCell(x, y, .{ .char = .{ .char = result.cp }, .style = style, .width = @intCast(char_width) });
+            if (char_width == 2) {
+                self.setCell(x + 1, y, .{ .char = .wide_right, .style = style, .width = 0 });
             }
+            x += @intCast(char_width);
+            remaining -= @intCast(char_width);
+            i += result.len;
         }
+        while (remaining > 0) { self.setCell(x, y, .{ .style = style }); x += 1; remaining -= 1; }
+        return x;
     }
 
-    /// Tamponun herhangi bir satırında belirtilen metnin geçip geçmediğini kontrol eder.
-    pub fn containsText(self: *const Buffer, needle: []const u8) bool {
-        if (needle.len == 0 or self.area.isEmpty()) return true;
-
-        var y: u16 = self.area.top();
-        while (y < self.area.bottom()) : (y += 1) {
-            var row_bytes: [512]u8 = undefined;
-            var pos: usize = 0;
-
-            var x: u16 = self.area.left();
-            while (x < self.area.right()) : (x += 1) {
-                if (self.get(x, y)) |c| {
-                    const sym = c.getSymbol();
-                    if (pos + sym.len <= row_bytes.len) {
-                        @memcpy(row_bytes[pos .. pos + sym.len], sym);
-                        pos += sym.len;
-                    }
-                }
+    pub fn flush(self: *Buffer, writer: anytype) !void {
+        var buf: [128]u8 = undefined;
+        var last_style: ?Style = null;
+        var i: usize = 0;
+        const total = self.totalCells();
+        while (i < total) : (i += 1) {
+            if (self.front[i].eq(self.back[i])) continue;
+            const row: u16 = @intCast(i / self.cols);
+            const col: u16 = @intCast(i % self.cols);
+            const pos_str = std.fmt.bufPrint(&buf, "\x1b[{d};{d}H", .{ row + 1, col + 1 }) catch continue;
+            try writer.writeAll(pos_str);
+            if (last_style == null or !last_style.?.eq(self.back[i].style)) {
+                try writer.writeAll("\x1b[0m");
+                var fg_buf: [32]u8 = undefined;
+                try writer.writeAll(self.back[i].style.fg.toAnsiFg(&fg_buf));
+                try writer.writeAll(self.back[i].style.bg.toAnsiBg(&fg_buf));
+                var attr_buf: [32]u8 = undefined;
+                try writer.writeAll(self.back[i].style.attr.toAnsi(&attr_buf));
+                last_style = self.back[i].style;
             }
-
-            if (std.mem.indexOf(u8, row_bytes[0..pos], needle) != null) {
-                return true;
-            }
+            var char_buf: [4]u8 = undefined;
+            try writer.writeAll(self.back[i].writeUtf8(&char_buf));
+            self.front[i] = self.back[i];
         }
-        return false;
+        try writer.writeAll("\x1b[0m");
+    }
+
+    pub fn invalidate(self: *Buffer) void {
+        @memset(self.front, Cell{});
     }
 };
 
-test "buffer get, set, setString ve UTF8 destegi" {
-    const area = Rect.init(0, 0, 80, 24);
-    var buf = try Buffer.init(std.testing.allocator, area);
-    defer buf.deinit();
+pub fn charWidth(cp: u21) u8 {
+    if (cp < 0x20 or (cp >= 0x7f and cp < 0xa0)) return 0;
+    if (cp == 0x20 or cp == 0xa0 or cp == 0x200b) return 0;
+    if (cp == 0x08 or cp == 0x0a or cp == 0x0d) return 0;
+    if ((cp >= 0x1100 and cp <= 0x115f) or
+        (cp >= 0x2e80 and cp <= 0xa4cf and cp != 0x303f) or
+        (cp >= 0xac00 and cp <= 0xd7a3) or
+        (cp >= 0xf900 and cp <= 0xfaff) or
+        (cp >= 0xfe10 and cp <= 0xfe19) or
+        (cp >= 0xfe30 and cp <= 0xfe6f) or
+        (cp >= 0xff00 and cp <= 0xff60) or
+        (cp >= 0xffe0 and cp <= 0xffe6) or
+        (cp >= 0x20000 and cp <= 0x2fffd))
+        return 2;
+    return 1;
+}
 
-    const w = buf.setString(0, 0, "Omnitrix 🚀 Core", .{ .fg = .green }, 80);
-    try std.testing.expect(w > 10);
+pub fn stringWidth(text: []const u8) u16 {
+    var width: u16 = 0;
+    var i: usize = 0;
+    while (i < text.len) {
+        const result = unicode_helper.decodeCodepoint(text, i);
+        width += charWidth(result.cp);
+        i += result.len;
+    }
+    return width;
+}
 
-    const c0 = buf.get(0, 0).?;
-    try std.testing.expectEqualStrings("O", c0.getSymbol());
-    try std.testing.expect(c0.style.fg.eql(.green));
+test "unicodeWidth" {
+    try std.testing.expectEqual(@as(u8, 1), charWidth('A'));
+    try std.testing.expectEqual(@as(u8, 2), charWidth(0x4e16));
+}
+
+test "stringWidth" {
+    try std.testing.expectEqual(@as(u16, 5), stringWidth("Hello"));
 }
