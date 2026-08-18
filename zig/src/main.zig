@@ -191,8 +191,10 @@ fn runTui(allocator: std.mem.Allocator, io: std.Io) !void {
     var app = try omnitrix.tui.Tui.init(allocator, posix_term.backend(), 200);
     defer app.deinit();
 
-    _ = try app.blocks.addBlock(.system, "System", "Omnitrix Zig Runtime 0.1.0 başlatıldı. Tek-süreç yetkili durum motoru devrede.");
-    _ = try app.blocks.addBlock(.user, "Operator", "Hoş geldiniz. 'Tab' ile Changed Files / Diff panellerine geçebilir, 'q' ile çıkabilirsiniz.");
+    _ = try app.blocks.addBlock(.system, "System", "Omnitrix Autonomous Runtime v0.1.0 (single-process) initialized.");
+    _ = try app.blocks.addBlock(.user, "Operator", "Scan codebase and prepare multi-agent execution pipeline.");
+    _ = try app.blocks.addToolBlock("scan_project", "path: .", "Scanned 51 source files across 8 packages. 0 errors.");
+    _ = try app.blocks.addBlock(.agent, "Omnitrix", "Codebase mapped. EventLoop, FileMutationLedger and TaskScheduler ready.\n• Press Tab to switch panels (Files / Diff)\n• Press Ctrl+V or type /voice for Grok Voice Mode\n• Type / for command palette");
 
     // İlk taramayı changed panel'e aktar
     const cur_dir = std.Io.Dir.cwd();

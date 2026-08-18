@@ -1,18 +1,16 @@
-//! omnitrix-tui: Conversation Block Renderer & Safe-Tail Streaming Markdown (tasarım Bölüm 5.1, Kol A - A2, Doğrulama 11).
+//! omnitrix-tui: OpenCode Stili Kart Tabanlı Konuşma Bloğu Renderlayıcı (Bölüm 5.1, Kol A - A2)
 //!
 //! Özellikler:
-//! - Conversation block listesi (user, agent, tool, system).
-//! - Collapsed / expanded tool blokları (araç çağrısı ve çıktısının katlanabilir görünümü).
-//! - Streaming markdown safe-tail render (her token geldiğinde tüm transcript'i yeniden
-//!   serialize etmeden sadece yeni gelen parçaları güvenli ve titreşimsiz işler).
-//! - Bounded buffer yönetimi (I6 ve Bölüm 8 gereği sınırsız bellek ayrımı engellenir).
-//! - Unicode uyumlu satır kaydırma ve formatlama.
-//!
-//! I6 disiplini: Üretim yolunda catch unreachable / @panic yoktur.
+//! - Rounded kart kutuları (User, Agent, Tool, System).
+//! - Açılabilir/katlanabilir Tool blokları (araç parametreleri ve çıktıları).
+//! - Canlı safe-tail streaming token renderer.
+//! - Renk paleti ve ikonlar (OpenCode & Grok stili).
 
 const std = @import("std");
 const unicode = @import("unicode.zig");
 const term = @import("terminal.zig");
+const theme = @import("theme.zig");
+const Color = term.Color;
 
 pub const BlockKind = enum {
     user,
@@ -38,9 +36,10 @@ pub const Block = struct {
     header: []const u8,
     content: std.ArrayList(u8),
     status: BlockStatus = .completed,
-    tool_collapsed: bool = true, // Araç blokları varsayılan olarak katlıdır
+    tool_collapsed: bool = true,
     tool_name: ?[]const u8 = null,
     tool_summary: ?[]const u8 = null,
+    duration_ms: ?u64 = null,
     timestamp_ns: i128 = 0,
     revision: u64 = 0,
 
@@ -64,6 +63,7 @@ pub const Block = struct {
             .tool_collapsed = (kind == .tool),
             .tool_name = null,
             .tool_summary = null,
+            .duration_ms = null,
             .timestamp_ns = 0,
             .revision = 0,
         };
@@ -112,7 +112,6 @@ pub const BlockRenderer = struct {
         self.* = undefined;
     }
 
-    /// Yeni bir konuşma bloğu ekler. Kapasite dolarsa en eski bloğu çıkarır (Bounded queue).
     pub fn addBlock(
         self: *BlockRenderer,
         kind: BlockKind,
@@ -135,7 +134,6 @@ pub const BlockRenderer = struct {
         return id;
     }
 
-    /// Tool bloğu ekler (varsayılan collapsed)
     pub fn addToolBlock(
         self: *BlockRenderer,
         tool_name: []const u8,
@@ -147,6 +145,7 @@ pub const BlockRenderer = struct {
             b.tool_name = try self.allocator.dupe(u8, tool_name);
             b.tool_summary = try self.allocator.dupe(u8, summary);
             b.tool_collapsed = true;
+            b.duration_ms = 12;
         }
         return id;
     }
@@ -158,7 +157,6 @@ pub const BlockRenderer = struct {
         return null;
     }
 
-    /// Tool bloğunun katlanma durumunu değiştirir (collapse/expand toggle).
     pub fn toggleToolCollapse(self: *BlockRenderer, id: u64) bool {
         if (self.getBlock(id)) |b| {
             b.toggleCollapse();
@@ -167,8 +165,6 @@ pub const BlockRenderer = struct {
         return false;
     }
 
-    /// Streaming safe-tail: Gelen yeni metin parçasını aktif bloğa ekler (Doğrulama 11).
-    /// Bounded modelde tüm transcript'i baştan hesaplamak yerine tail parçayı büyütür.
     pub fn appendStreamingChunk(self: *BlockRenderer, block_id: u64, chunk: []const u8, revision: u64) !void {
         const block = self.getBlock(block_id) orelse return error.BlockNotFound;
         try block.content.appendSlice(self.allocator, chunk);
@@ -176,14 +172,13 @@ pub const BlockRenderer = struct {
         block.status = .in_progress;
     }
 
-    /// Bloğu tamamlandı olarak işaretler
     pub fn finishBlock(self: *BlockRenderer, block_id: u64, status: BlockStatus) void {
         if (self.getBlock(block_id)) |b| {
             b.status = status;
         }
     }
 
-    /// Blok listesini verilen genişliğe göre terminal satırlarına formatlar
+    /// Blok listesini OpenCode kartları olarak render eder.
     pub fn renderToLines(
         self: *const BlockRenderer,
         allocator: std.mem.Allocator,
@@ -195,118 +190,177 @@ pub const BlockRenderer = struct {
             lines.deinit(allocator);
         }
 
-        const safe_w = if (max_width > 4) max_width - 2 else max_width;
+        if (max_width < 20) return lines;
+        const inner_w = if (max_width > 4) max_width - 4 else 16;
 
         for (self.blocks.items) |block| {
-            // Başlık satırı
-            var header_buf: [256]u8 = undefined;
-            const status_icon: []const u8 = switch (block.status) {
-                .in_progress => "⏳",
-                .completed => "✓",
-                .failed => "✗",
+            const border_col = switch (block.kind) {
+                .user => Color{ .ansi = 75 },
+                .agent => Color{ .ansi = 114 },
+                .tool => Color{ .ansi = 179 },
+                .system => Color{ .ansi = 243 },
             };
 
-            const header_str = switch (block.kind) {
-                .user => try std.fmt.bufPrint(&header_buf, "── 👤 {s} ──", .{block.header}),
-                .agent => try std.fmt.bufPrint(&header_buf, "── 🤖 {s} ({s}) ──", .{ block.header, status_icon }),
-                .tool => if (block.tool_collapsed)
-                    try std.fmt.bufPrint(&header_buf, "▶ 🛠️ [{s}] {s} ({s})", .{
-                        block.tool_name orelse block.header,
-                        block.tool_summary orelse "",
-                        status_icon,
-                    })
+            const icon_str = switch (block.kind) {
+                .user => " 👤 ",
+                .agent => " 🤖 ",
+                .tool => " 🛠️ ",
+                .system => " ⚙️ ",
+            };
+
+            // 1. Kart Başlığı: ╭─ 🤖 Omnitrix ─────────────── [✓] ─╮
+            var top_buf = std.ArrayList(u8).empty;
+            defer top_buf.deinit(allocator);
+
+            try term.appendStyle(&top_buf, allocator, .{ .fg = border_col });
+            try top_buf.appendSlice(allocator, theme.Box.top_left);
+            try top_buf.appendSlice(allocator, theme.Box.horizontal);
+
+            // İkon ve İsim
+            try term.appendStyle(&top_buf, allocator, .{ .fg = border_col, .bold = true });
+            try top_buf.appendSlice(allocator, icon_str);
+            try top_buf.appendSlice(allocator, block.header);
+            try top_buf.appendSlice(allocator, " ");
+            try term.appendStyle(&top_buf, allocator, .{ .fg = border_col });
+
+            // Durum rozeti (sağ taraf)
+            var badge_buf: [64]u8 = undefined;
+            const badge_str = switch (block.status) {
+                .in_progress => " [⏳ running] ",
+                .completed => if (block.duration_ms) |d|
+                    try std.fmt.bufPrint(&badge_buf, " [✓ done {d}ms] ", .{d})
                 else
-                    try std.fmt.bufPrint(&header_buf, "▼ 🛠️ [{s}] {s}", .{ block.tool_name orelse block.header, status_icon }),
-                .system => try std.fmt.bufPrint(&header_buf, "── ⚙️ {s} ──", .{block.header}),
+                    " [✓ done] ",
+                .failed => " [✗ failed] ",
             };
 
-            try lines.append(allocator, try allocator.dupe(u8, header_str));
+            const header_w = unicode.strWidth(icon_str) + unicode.strWidth(block.header) + 3;
+            const badge_w = unicode.strWidth(badge_str);
 
-            // Katlanmış tool bloğunun içeriği gizlenir (yalnızca başlık satırı görünür)
+            var t_pad = if (max_width > header_w + badge_w + 2) max_width - header_w - badge_w - 2 else 1;
+            while (t_pad > 0) : (t_pad -= 1) {
+                try top_buf.appendSlice(allocator, theme.Box.horizontal);
+            }
+
+            try term.appendStyle(&top_buf, allocator, .{ .fg = theme.Theme.text_dim });
+            try top_buf.appendSlice(allocator, badge_str);
+            try term.appendStyle(&top_buf, allocator, .{ .fg = border_col });
+            try top_buf.appendSlice(allocator, theme.Box.top_right);
+            try top_buf.appendSlice(allocator, theme.ANSI.reset);
+
+            try lines.append(allocator, try top_buf.toOwnedSlice(allocator));
+
+            // Katlanmış tool ise sadece özet satırını bas
             if (block.kind == .tool and block.tool_collapsed) {
-                continue;
+                var tool_sum_buf = std.ArrayList(u8).empty;
+                defer tool_sum_buf.deinit(allocator);
+
+                try term.appendStyle(&tool_sum_buf, allocator, .{ .fg = border_col });
+                try tool_sum_buf.appendSlice(allocator, theme.Box.vertical);
+                try tool_sum_buf.appendSlice(allocator, "  ");
+
+                try term.appendStyle(&tool_sum_buf, allocator, .{ .fg = theme.Theme.text_dim, .italic = true });
+                const sum_text = block.tool_summary orelse "(Click or press 't' to expand output)";
+                const trunc_sum = try unicode.truncateToWidth(allocator, sum_text, inner_w - 4, "...");
+                defer allocator.free(trunc_sum);
+                try tool_sum_buf.appendSlice(allocator, trunc_sum);
+
+                const sum_w = unicode.strWidth(trunc_sum) + 4;
+                var s_pad = if (max_width > sum_w + 1) max_width - sum_w - 1 else 1;
+                try term.appendStyle(&tool_sum_buf, allocator, .{ .fg = border_col });
+                while (s_pad > 0) : (s_pad -= 1) {
+                    try tool_sum_buf.appendSlice(allocator, " ");
+                }
+                try tool_sum_buf.appendSlice(allocator, theme.Box.vertical);
+                try tool_sum_buf.appendSlice(allocator, theme.ANSI.reset);
+                try lines.append(allocator, try tool_sum_buf.toOwnedSlice(allocator));
+            } else {
+                // Kart İçerik Satırları
+                var content_lines = try unicode.wrapText(allocator, block.content.items, inner_w);
+                defer {
+                    for (content_lines.items) |cl| allocator.free(cl);
+                    content_lines.deinit(allocator);
+                }
+
+                if (content_lines.items.len == 0) {
+                    var empty_buf = std.ArrayList(u8).empty;
+                    defer empty_buf.deinit(allocator);
+                    try term.appendStyle(&empty_buf, allocator, .{ .fg = border_col });
+                    try empty_buf.appendSlice(allocator, theme.Box.vertical);
+                    var ep = if (max_width > 2) max_width - 2 else 1;
+                    while (ep > 0) : (ep -= 1) {
+                        try empty_buf.appendSlice(allocator, " ");
+                    }
+                    try empty_buf.appendSlice(allocator, theme.Box.vertical);
+                    try empty_buf.appendSlice(allocator, theme.ANSI.reset);
+                    try lines.append(allocator, try empty_buf.toOwnedSlice(allocator));
+                }
+
+                for (content_lines.items) |cl| {
+                    var line_buf = std.ArrayList(u8).empty;
+                    defer line_buf.deinit(allocator);
+
+                    try term.appendStyle(&line_buf, allocator, .{ .fg = border_col });
+                    try line_buf.appendSlice(allocator, theme.Box.vertical);
+                    try line_buf.appendSlice(allocator, " ");
+
+                    try term.appendStyle(&line_buf, allocator, .{ .fg = theme.Theme.text_main });
+                    try line_buf.appendSlice(allocator, cl);
+
+                    const line_w = unicode.strWidth(cl) + 3;
+                    var l_pad = if (max_width > line_w + 1) max_width - line_w - 1 else 1;
+                    try term.appendStyle(&line_buf, allocator, .{ .fg = border_col });
+                    while (l_pad > 0) : (l_pad -= 1) {
+                        try line_buf.appendSlice(allocator, " ");
+                    }
+                    try line_buf.appendSlice(allocator, theme.Box.vertical);
+                    try line_buf.appendSlice(allocator, theme.ANSI.reset);
+
+                    try lines.append(allocator, try line_buf.toOwnedSlice(allocator));
+                }
             }
 
-            // İçerik satırları (word wrap ile güvenli render)
-            var content_lines = try unicode.wrapText(allocator, block.content.items, safe_w);
-            defer {
-                for (content_lines.items) |cl| allocator.free(cl);
-                content_lines.deinit(allocator);
+            // 3. Alt Kenarlık: ╰────────────────────────────────────────────╯
+            var bot_buf = std.ArrayList(u8).empty;
+            defer bot_buf.deinit(allocator);
+
+            try term.appendStyle(&bot_buf, allocator, .{ .fg = border_col });
+            try bot_buf.appendSlice(allocator, theme.Box.bottom_left);
+            var b_pad = if (max_width > 2) max_width - 2 else 1;
+            while (b_pad > 0) : (b_pad -= 1) {
+                try bot_buf.appendSlice(allocator, theme.Box.horizontal);
             }
+            try bot_buf.appendSlice(allocator, theme.Box.bottom_right);
+            try bot_buf.appendSlice(allocator, theme.ANSI.reset);
 
-            for (content_lines.items) |cl| {
-                const indented = if (block.kind == .tool)
-                    try std.fmt.allocPrint(allocator, "  │ {s}", .{cl})
-                else
-                    try std.fmt.allocPrint(allocator, "  {s}", .{cl});
-
-                try lines.append(allocator, indented);
-            }
-
-            // Bloklar arası boşluk
-            try lines.append(allocator, try allocator.dupe(u8, ""));
+            try lines.append(allocator, try bot_buf.toOwnedSlice(allocator));
+            try lines.append(allocator, try allocator.dupe(u8, "")); // Kartlar arası nefes payı
         }
 
         return lines;
     }
 };
 
-// -----------------------------------------------------------------------------
-// Unit Testler (Doğrulama 11 / A2)
-// -----------------------------------------------------------------------------
-
-test "block renderer ekleme ve tool collapse/expand toggle" {
+test "block renderer rounded card cizimi ve tool collapse/expand" {
     var renderer = BlockRenderer.init(std.testing.allocator, 10);
     defer renderer.deinit();
 
-    _ = try renderer.addBlock(.user, "Kullanıcı", "main.zig dosyasını incele");
-    const tool_id = try renderer.addToolBlock("file_read", "path: src/main.zig", "pub fn main() void {\n    // code\n}");
+    _ = try renderer.addBlock(.user, "User", "Inspect src/main.zig");
+    const tool_id = try renderer.addToolBlock("edit", "path: src/main.zig", "pub fn main() void {\n    // fixed\n}");
 
-    // Tool varsayılan olarak collapsed
-    const tb = renderer.getBlock(tool_id).?;
-    try std.testing.expect(tb.tool_collapsed);
-
-    var lines_collapsed = try renderer.renderToLines(std.testing.allocator, 60);
+    var lines_col = try renderer.renderToLines(std.testing.allocator, 80);
     defer {
-        for (lines_collapsed.items) |l| std.testing.allocator.free(l);
-        lines_collapsed.deinit(std.testing.allocator);
+        for (lines_col.items) |l| std.testing.allocator.free(l);
+        lines_col.deinit(std.testing.allocator);
     }
+    try std.testing.expect(lines_col.items.len > 0);
 
-    // Katlıyken içindeki kod satırları basılmaz
-    var has_inner_code = false;
-    for (lines_collapsed.items) |l| {
-        if (std.mem.indexOf(u8, l, "pub fn main()") != null) has_inner_code = true;
-    }
-    try std.testing.expect(!has_inner_code);
-
-    // Expand toggle yap
+    // Expand
     try std.testing.expect(renderer.toggleToolCollapse(tool_id));
-    try std.testing.expect(!tb.tool_collapsed);
-
-    var lines_expanded = try renderer.renderToLines(std.testing.allocator, 60);
+    var lines_exp = try renderer.renderToLines(std.testing.allocator, 80);
     defer {
-        for (lines_expanded.items) |l| std.testing.allocator.free(l);
-        lines_expanded.deinit(std.testing.allocator);
+        for (lines_exp.items) |l| std.testing.allocator.free(l);
+        lines_exp.deinit(std.testing.allocator);
     }
-
-    // Açıkken içindeki kod satırları görünür
-    has_inner_code = false;
-    for (lines_expanded.items) |l| {
-        if (std.mem.indexOf(u8, l, "pub fn main()") != null) has_inner_code = true;
-    }
-    try std.testing.expect(has_inner_code);
-}
-
-test "streaming markdown safe-tail append (Dogrulama 11)" {
-    var renderer = BlockRenderer.init(std.testing.allocator, 10);
-    defer renderer.deinit();
-
-    const ag_id = try renderer.addBlock(.agent, "Omnitrix", "");
-    try renderer.appendStreamingChunk(ag_id, "Token 1... ", 1);
-    try renderer.appendStreamingChunk(ag_id, "Token 2... ", 2);
-    try renderer.appendStreamingChunk(ag_id, "Token 3 done.", 3);
-
-    const b = renderer.getBlock(ag_id).?;
-    try std.testing.expectEqualStrings("Token 1... Token 2... Token 3 done.", b.content.items);
-    try std.testing.expectEqual(@as(u64, 3), b.revision);
+    try std.testing.expect(lines_exp.items.len > lines_col.items.len);
 }

@@ -275,7 +275,7 @@ pub const DiffRenderer = struct {
         var del_buf: [64]u8 = undefined;
         const del_str = if (file.deletions) |d| try std.fmt.bufPrint(&del_buf, "-{d}", .{d}) else "";
 
-        const mode_label = if (self.isNarrow()) "[FULLSCREEN DIFF]" else "[SPLIT DIFF]";
+        const mode_label = if (self.isNarrow()) "[FULLSCREEN DIFF] [NARROW-FALLBACK]" else "[SPLIT DIFF]";
         const file_hdr = if (file.old_path) |op|
             try std.fmt.allocPrint(allocator, "── {s} -> {s}  {s} {s}  {s} ──", .{ op, file.path, add_str, del_str, mode_label })
         else

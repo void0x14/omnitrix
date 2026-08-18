@@ -274,11 +274,20 @@ pub const MockTerminal = struct {
             }
 
             if (data[i] == '\n') {
-                self.cursor_row += 1;
-                self.cursor_col = 0;
-                if (self.cursor_row >= self.size.rows) {
+                if (self.cursor_row + 1 >= self.size.rows) {
+                    if (self.size.rows > 1) {
+                        for (0..self.size.rows - 1) |r| {
+                            @memcpy(self.grid[r], self.grid[r + 1]);
+                        }
+                        for (self.grid[self.size.rows - 1]) |*c| {
+                            c.* = .{ .char = ' ', .style = .default };
+                        }
+                    }
                     self.cursor_row = if (self.size.rows > 0) self.size.rows - 1 else 0;
+                } else {
+                    self.cursor_row += 1;
                 }
+                self.cursor_col = 0;
                 i += 1;
                 continue;
             }
@@ -317,10 +326,11 @@ pub const MockTerminal = struct {
 
             self.cursor_col += w;
             if (self.cursor_col >= self.size.cols) {
-                self.cursor_row += 1;
-                self.cursor_col = 0;
-                if (self.cursor_row >= self.size.rows) {
-                    self.cursor_row = if (self.size.rows > 0) self.size.rows - 1 else 0;
+                if (self.cursor_row + 1 < self.size.rows) {
+                    self.cursor_row += 1;
+                    self.cursor_col = 0;
+                } else {
+                    self.cursor_col = if (self.size.cols > 0) self.size.cols - 1 else 0;
                 }
             }
 

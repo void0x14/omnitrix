@@ -58,11 +58,21 @@ pub fn codepointWidth(cp: u21) u8 {
     return 1;
 }
 
-/// UTF-8 dizisinin toplam görsel terminal sütun genişliğini hesaplar.
+/// UTF-8 dizisinin toplam görsel terminal sütun genişliğini hesaplar (ANSI kaçış dizileri 0 sütun sayılır).
 pub fn strWidth(text: []const u8) usize {
     var width: usize = 0;
     var i: usize = 0;
     while (i < text.len) {
+        // ANSI Escape dizisi atlama (\x1b[ ... m)
+        if (text[i] == 0x1b and i + 1 < text.len and text[i + 1] == '[') {
+            var j = i + 2;
+            while (j < text.len and text[j] >= 0x20 and text[j] <= 0x3f) : (j += 1) {}
+            if (j < text.len and text[j] >= 0x40 and text[j] <= 0x7e) {
+                i = j + 1;
+                continue;
+            }
+        }
+
         const len = std.unicode.utf8ByteSequenceLength(text[i]) catch 1;
         if (i + len > text.len) {
             width += 1;
@@ -81,7 +91,7 @@ pub fn strWidth(text: []const u8) usize {
 }
 
 /// Metni verilen görsel sütun genişliğine göre güvenli bir şekilde keser (multibyte bölmez).
-/// İsteğe bağlı olarak sonuna ellipsis ekler.
+/// İsteğe bağlı olarak sonuna ellipsis ekler. ANSI kaçış dizilerini korur.
 pub fn truncateToWidth(
     allocator: std.mem.Allocator,
     text: []const u8,
@@ -101,6 +111,17 @@ pub fn truncateToWidth(
     var i: usize = 0;
 
     while (i < text.len) {
+        // ANSI Escape dizisi kontrolü
+        if (text[i] == 0x1b and i + 1 < text.len and text[i + 1] == '[') {
+            var j = i + 2;
+            while (j < text.len and text[j] >= 0x20 and text[j] <= 0x3f) : (j += 1) {}
+            if (j < text.len and text[j] >= 0x40 and text[j] <= 0x7e) {
+                i = j + 1;
+                cut_byte_idx = i;
+                continue;
+            }
+        }
+
         const len = std.unicode.utf8ByteSequenceLength(text[i]) catch 1;
         if (i + len > text.len) break;
         const slice = text[i .. i + len];
