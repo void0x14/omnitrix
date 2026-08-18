@@ -14,6 +14,7 @@ const std = @import("std");
 
 pub const io = @import("omnitrix-io/io.zig");
 pub const task = @import("omnitrix-task/task.zig");
+pub const real_pty = @import("omnitrix-task/real_pty.zig");
 pub const net = @import("omnitrix-net/net.zig");
 pub const stream = @import("omnitrix-stream/stream.zig");
 

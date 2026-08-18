@@ -212,7 +212,7 @@ fn runTui(allocator: std.mem.Allocator, io: std.Io) !void {
     try app.changed_panel.addAgentChange("src/root.zig", .modified, 45, 2, "executor");
     try app.changed_panel.addAgentChange("src/omnitrix-io/epoll.zig", .added, 120, 0, "io_agent");
 
-    // Canlı etkileşim döngüsü
+    // Canlı etkileşim döngüsü (Event-Driven Zero-Flicker Loop)
     var input_buf: [32]u8 = undefined;
     while (app.is_running) {
         const sz = try posix_term.getSize();
@@ -222,12 +222,18 @@ fn runTui(allocator: std.mem.Allocator, io: std.Io) !void {
 
         try app.renderFrame();
 
-        const n = try posix_term.readInput(&input_buf);
-        if (n > 0) {
-            try app.handleKey(input_buf[0..n]);
-        }
+        // Stdin üzerinde Linux poll ile bekle (Sesli mod aktifse 80ms, değilse 250ms)
+        var fds: [1]std.os.linux.pollfd = .{
+            .{ .fd = 0, .events = std.os.linux.POLL.IN, .revents = 0 },
+        };
+        const timeout_ms: i32 = if (app.voice.state != .off) 80 else 250;
+        const poll_res = std.os.linux.poll(&fds, 1, timeout_ms);
 
-        const req = std.os.linux.timespec{ .sec = 0, .nsec = 30 * std.time.ns_per_ms };
-        _ = std.os.linux.nanosleep(&req, null);
+        if (poll_res > 0 and (fds[0].revents & std.os.linux.POLL.IN) != 0) {
+            const n = try posix_term.readInput(&input_buf);
+            if (n > 0) {
+                try app.handleKey(input_buf[0..n]);
+            }
+        }
     }
 }

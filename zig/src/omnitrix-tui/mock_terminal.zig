@@ -245,15 +245,23 @@ pub const MockTerminal = struct {
                         const seq = data[i .. end_idx + 1];
 
                         if (cmd == 'H') {
-                            // \x1b[row;colH imleç konumu
-                            var it = std.mem.splitScalar(u8, seq[2 .. seq.len - 1], ';');
-                            if (it.next()) |r_str| {
-                                const r = std.fmt.parseInt(u16, r_str, 10) catch 1;
-                                self.cursor_row = if (r > 0) r - 1 else 0;
-                            }
-                            if (it.next()) |c_str| {
-                                const c = std.fmt.parseInt(u16, c_str, 10) catch 1;
-                                self.cursor_col = if (c > 0) c - 1 else 0;
+                            self.cursor_row = 0;
+                            self.cursor_col = 0;
+                            const param_slice = seq[2 .. seq.len - 1];
+                            if (param_slice.len > 0) {
+                                var it = std.mem.splitScalar(u8, param_slice, ';');
+                                if (it.next()) |r_str| {
+                                    if (r_str.len > 0) {
+                                        const r = std.fmt.parseInt(u16, r_str, 10) catch 1;
+                                        self.cursor_row = if (r > 0) r - 1 else 0;
+                                    }
+                                }
+                                if (it.next()) |c_str| {
+                                    if (c_str.len > 0) {
+                                        const c = std.fmt.parseInt(u16, c_str, 10) catch 1;
+                                        self.cursor_col = if (c > 0) c - 1 else 0;
+                                    }
+                                }
                             }
                         } else if (cmd == 'J') {
                             self.clearGrid();

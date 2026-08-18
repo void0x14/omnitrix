@@ -228,18 +228,23 @@ pub const Tui = struct {
         }
     }
 
-    /// Tüm TUI ekranını OpenCode & Grok stili ile çizer (Pixel-Perfect Cursor Anchored Render)
+    /// Tüm TUI ekranını OpenCode & Grok stili ile çizer (Zero-Flicker Single Buffer Render)
     pub fn renderFrame(self: *Tui) !void {
         self.voice.tick();
-
-        try self.backend.clearScreen();
 
         const width = self.size.cols;
         const height = self.size.rows;
         if (width < 30 or height < 10) return;
 
+        var frame_buf = std.ArrayList(u8).empty;
+        defer frame_buf.deinit(self.allocator);
+
+        // İmleci gizle ve ana konuma dön (Ekranı sıfırlamadan sıfır titreşimle üzerine yaz)
+        try frame_buf.appendSlice(self.allocator, "\x1b[?25l\x1b[H");
+
+        const max_line_w = if (width > 1) width - 1 else width;
+
         // 1. ÜST BAŞLIK ÇUBUĞU (Row 0)
-        try self.backend.moveCursor(0, 0);
         var head_buf = std.ArrayList(u8).empty;
         defer head_buf.deinit(self.allocator);
 
@@ -273,7 +278,7 @@ pub const Tui = struct {
         const right_badge = " 🟢 READY │ single-process ";
         const head_content_w = unicode.strWidth(" ✦ OMNITRIX │ 🌿 ") + unicode.strWidth(self.branch_name) + unicode.strWidth(" │  [1: Chat]  [2: Files]  [3: Diff] ") + unicode.strWidth(right_badge);
 
-        var h_pad = if (width > head_content_w) width - head_content_w else 1;
+        var h_pad = if (max_line_w > head_content_w) max_line_w - head_content_w else 0;
         try term.appendStyle(&head_buf, self.allocator, .{ .bg = theme.Theme.header_bg });
         while (h_pad > 0) : (h_pad -= 1) {
             try head_buf.appendSlice(self.allocator, " ");
@@ -283,7 +288,8 @@ pub const Tui = struct {
         try head_buf.appendSlice(self.allocator, right_badge);
         try head_buf.appendSlice(self.allocator, theme.ANSI.reset);
 
-        try self.backend.write(head_buf.items);
+        try frame_buf.appendSlice(self.allocator, head_buf.items);
+        try frame_buf.appendSlice(self.allocator, "\x1b[K\n");
 
         // 2. GÖVDE VE İÇERİK HESAPLAMA
         var body_lines = std.ArrayList([]const u8).empty;
@@ -294,41 +300,39 @@ pub const Tui = struct {
 
         // Voice banner aktifse en üste ekle
         if (self.voice.state != .off) {
-            var v_lines = try self.voice.renderVoiceBanner(self.allocator, width);
+            var v_lines = try self.voice.renderVoiceBanner(self.allocator, max_line_w);
             defer v_lines.deinit(self.allocator);
             for (v_lines.items) |vl| try body_lines.append(self.allocator, vl);
-            try body_lines.append(self.allocator, try self.allocator.dupe(u8, ""));
         }
 
         // Goal tracker aktifse ekle
         if (self.focus == .conversation) {
-            var g_lines = try self.goal.renderToLines(self.allocator, width);
+            var g_lines = try self.goal.renderToLines(self.allocator, max_line_w);
             defer g_lines.deinit(self.allocator);
             for (g_lines.items) |gl| try body_lines.append(self.allocator, gl);
-            try body_lines.append(self.allocator, try self.allocator.dupe(u8, ""));
         }
 
         // Seçili panele göre ana içerik
         switch (self.focus) {
             .conversation => {
-                var c_lines = try self.blocks.renderToLines(self.allocator, width);
+                var c_lines = try self.blocks.renderToLines(self.allocator, max_line_w);
                 defer c_lines.deinit(self.allocator);
                 for (c_lines.items) |cl| try body_lines.append(self.allocator, cl);
             },
             .changed_files => {
-                var f_lines = try self.changed_panel.renderToLines(self.allocator, width);
+                var f_lines = try self.changed_panel.renderToLines(self.allocator, max_line_w);
                 defer f_lines.deinit(self.allocator);
                 for (f_lines.items) |fl| try body_lines.append(self.allocator, fl);
             },
             .diff => {
-                var d_lines = try self.diffs.renderActiveDiffToLines(self.allocator, width);
+                var d_lines = try self.diffs.renderActiveDiffToLines(self.allocator, max_line_w);
                 defer d_lines.deinit(self.allocator);
                 for (d_lines.items) |dl| try body_lines.append(self.allocator, dl);
             },
         }
 
         // 3. ALT GİRİŞ KUTUSU VE KISAYOLLAR
-        var input_lines = try self.input_box.renderToLines(self.allocator, width);
+        var input_lines = try self.input_box.renderToLines(self.allocator, max_line_w);
         defer {
             for (input_lines.items) |il| self.allocator.free(il);
             input_lines.deinit(self.allocator);
@@ -339,26 +343,31 @@ pub const Tui = struct {
 
         // Gövde satırlarını ekrana yaz (Row 1 .. max_body_rows)
         const start_row = if (body_lines.items.len > max_body_rows) body_lines.items.len - max_body_rows else 0;
-        var r: u16 = 1;
+        var r_count: usize = 0;
 
         for (body_lines.items[start_row..]) |line| {
-            if (r > max_body_rows) break;
-            try self.backend.moveCursor(r, 0);
-            try self.backend.write(line);
-            r += 1;
+            if (r_count >= max_body_rows) break;
+            const truncated = try unicode.truncateToWidth(self.allocator, line, max_line_w, "");
+            defer self.allocator.free(truncated);
+            try frame_buf.appendSlice(self.allocator, truncated);
+            try frame_buf.appendSlice(self.allocator, "\x1b[K\n");
+            r_count += 1;
         }
 
-        // 4. GİRİŞ KUTUSUNU YERLEŞTİR
-        var in_r: u16 = @intCast(height - reserved_bottom_rows);
+        // Kalan boşlukları temiz satırlarla doldur
+        while (r_count < max_body_rows) : (r_count += 1) {
+            try frame_buf.appendSlice(self.allocator, "\x1b[K\n");
+        }
+
+        // 4. GİRİŞ KUTUSUNU YAZ
         for (input_lines.items) |iline| {
-            if (in_r >= height - 1) break;
-            try self.backend.moveCursor(in_r, 0);
-            try self.backend.write(iline);
-            in_r += 1;
+            const truncated_in = try unicode.truncateToWidth(self.allocator, iline, max_line_w, "");
+            defer self.allocator.free(truncated_in);
+            try frame_buf.appendSlice(self.allocator, truncated_in);
+            try frame_buf.appendSlice(self.allocator, "\x1b[K\n");
         }
 
         // 5. EN ALT KISAYOL ÇUBUĞU (Row height - 1)
-        try self.backend.moveCursor(height - 1, 0);
         var foot_buf = std.ArrayList(u8).empty;
         defer foot_buf.deinit(self.allocator);
 
@@ -366,13 +375,16 @@ pub const Tui = struct {
         try foot_buf.appendSlice(self.allocator, " [Enter] Send │ [Tab] Panel │ [/] Commands │ [Ctrl+V] Voice │ [q] Quit");
 
         const foot_content_w = unicode.strWidth(" [Enter] Send │ [Tab] Panel │ [/] Commands │ [Ctrl+V] Voice │ [q] Quit");
-        var f_pad = if (width > foot_content_w) width - foot_content_w else 1;
+        var f_pad = if (max_line_w > foot_content_w) max_line_w - foot_content_w else 0;
         while (f_pad > 0) : (f_pad -= 1) {
             try foot_buf.appendSlice(self.allocator, " ");
         }
         try foot_buf.appendSlice(self.allocator, theme.ANSI.reset);
-        try self.backend.write(foot_buf.items);
+        try frame_buf.appendSlice(self.allocator, foot_buf.items);
+        try frame_buf.appendSlice(self.allocator, "\x1b[K");
 
+        // Tek seferde ekrana bas (Zero Flicker Atomic Write)
+        try self.backend.write(frame_buf.items);
         try self.backend.flush();
     }
 };
