@@ -228,7 +228,7 @@ pub const Tui = struct {
         }
     }
 
-    /// Tüm TUI ekranını OpenCode & Grok stili ile çizer (Zero-Flicker Single Buffer Render)
+    /// Tüm TUI ekranını OpenCode & Grok stili ile çizer (Zero-Flicker Spatial Render)
     pub fn renderFrame(self: *Tui) !void {
         self.voice.tick();
 
@@ -291,43 +291,77 @@ pub const Tui = struct {
         try frame_buf.appendSlice(self.allocator, head_buf.items);
         try frame_buf.appendSlice(self.allocator, "\x1b[K\n");
 
-        // 2. GÖVDE VE İÇERİK HESAPLAMA
-        var body_lines = std.ArrayList([]const u8).empty;
+        // 2. GÖVDE VE İÇERİK HESAPLAMA (Spatial Multi-Panel)
+        const is_spatial_split = (width >= 105 and self.focus == .conversation);
+        const sidebar_w: usize = if (is_spatial_split) 30 else 0;
+        const main_content_w: usize = if (is_spatial_split) max_line_w - sidebar_w - 1 else max_line_w;
+
+        var main_lines = std.ArrayList([]const u8).empty;
         defer {
-            for (body_lines.items) |l| self.allocator.free(l);
-            body_lines.deinit(self.allocator);
+            for (main_lines.items) |l| self.allocator.free(l);
+            main_lines.deinit(self.allocator);
         }
 
-        // Voice banner aktifse en üste ekle
+        var sidebar_lines = std.ArrayList([]const u8).empty;
+        defer {
+            for (sidebar_lines.items) |l| self.allocator.free(l);
+            sidebar_lines.deinit(self.allocator);
+        }
+
+        if (is_spatial_split) {
+            // Sol Yan Panel: Workspace & Subagents
+            var side_buf = std.ArrayList(u8).empty;
+            defer side_buf.deinit(self.allocator);
+
+            // Başlık
+            try term.appendStyle(&side_buf, self.allocator, .{ .fg = theme.Theme.text_cyan, .bold = true });
+            try side_buf.appendSlice(self.allocator, "╭─ 📂 Workspace ─────────╮");
+            try side_buf.appendSlice(self.allocator, theme.ANSI.reset);
+            try sidebar_lines.append(self.allocator, try self.allocator.dupe(u8, side_buf.items));
+            side_buf.clearRetainingCapacity();
+
+            try sidebar_lines.append(self.allocator, try self.allocator.dupe(u8, "│ 🌿 masterplan          │"));
+            try sidebar_lines.append(self.allocator, try self.allocator.dupe(u8, "│ 📁 src/                │"));
+            try sidebar_lines.append(self.allocator, try self.allocator.dupe(u8, "│   📄 root.zig          │"));
+            try sidebar_lines.append(self.allocator, try self.allocator.dupe(u8, "│   📁 omnitrix-tui/     │"));
+            try sidebar_lines.append(self.allocator, try self.allocator.dupe(u8, "│   📁 omnitrix-task/    │"));
+            try sidebar_lines.append(self.allocator, try self.allocator.dupe(u8, "├─ 🤖 Subagents ─────────┤"));
+            try sidebar_lines.append(self.allocator, try self.allocator.dupe(u8, "│  ◆ Kaşif       [idle]  │"));
+            try sidebar_lines.append(self.allocator, try self.allocator.dupe(u8, "│  ◆ Juryrigg    [run]   │"));
+            try sidebar_lines.append(self.allocator, try self.allocator.dupe(u8, "│  ◆ Bal Porsuğu [idle]  │"));
+            try sidebar_lines.append(self.allocator, try self.allocator.dupe(u8, "╰────────────────────────╯"));
+        }
+
+        // Voice banner aktifse ekle
         if (self.voice.state != .off) {
-            var v_lines = try self.voice.renderVoiceBanner(self.allocator, max_line_w);
+            var v_lines = try self.voice.renderVoiceBanner(self.allocator, main_content_w);
             defer v_lines.deinit(self.allocator);
-            for (v_lines.items) |vl| try body_lines.append(self.allocator, vl);
+            for (v_lines.items) |vl| try main_lines.append(self.allocator, vl);
         }
 
         // Goal tracker aktifse ekle
         if (self.focus == .conversation) {
-            var g_lines = try self.goal.renderToLines(self.allocator, max_line_w);
+            var g_lines = try self.goal.renderToLines(self.allocator, main_content_w);
             defer g_lines.deinit(self.allocator);
-            for (g_lines.items) |gl| try body_lines.append(self.allocator, gl);
+            for (g_lines.items) |gl| try main_lines.append(self.allocator, gl);
         }
 
         // Seçili panele göre ana içerik
         switch (self.focus) {
             .conversation => {
-                var c_lines = try self.blocks.renderToLines(self.allocator, max_line_w);
+                var c_lines = try self.blocks.renderToLines(self.allocator, main_content_w);
                 defer c_lines.deinit(self.allocator);
-                for (c_lines.items) |cl| try body_lines.append(self.allocator, cl);
+                for (c_lines.items) |cl| try main_lines.append(self.allocator, cl);
             },
             .changed_files => {
                 var f_lines = try self.changed_panel.renderToLines(self.allocator, max_line_w);
                 defer f_lines.deinit(self.allocator);
-                for (f_lines.items) |fl| try body_lines.append(self.allocator, fl);
+                for (f_lines.items) |fl| try main_lines.append(self.allocator, fl);
             },
             .diff => {
                 var d_lines = try self.diffs.renderActiveDiffToLines(self.allocator, max_line_w);
                 defer d_lines.deinit(self.allocator);
-                for (d_lines.items) |dl| try body_lines.append(self.allocator, dl);
+                for (d_lines.items) |dl| try main_lines.append(self.allocator, dl);
             },
         }
 
@@ -342,20 +376,46 @@ pub const Tui = struct {
         const max_body_rows: usize = if (height > reserved_bottom_rows + 1) height - reserved_bottom_rows - 1 else 1;
 
         // Gövde satırlarını ekrana yaz (Row 1 .. max_body_rows)
-        const start_row = if (body_lines.items.len > max_body_rows) body_lines.items.len - max_body_rows else 0;
+        const start_row = if (main_lines.items.len > max_body_rows) main_lines.items.len - max_body_rows else 0;
         var r_count: usize = 0;
 
-        for (body_lines.items[start_row..]) |line| {
+        for (main_lines.items[start_row..]) |line| {
             if (r_count >= max_body_rows) break;
-            const truncated = try unicode.truncateToWidth(self.allocator, line, max_line_w, "");
-            defer self.allocator.free(truncated);
-            try frame_buf.appendSlice(self.allocator, truncated);
+
+            if (is_spatial_split) {
+                const s_line = if (r_count < sidebar_lines.items.len) sidebar_lines.items[r_count] else "";
+                const s_trunc = try unicode.truncateToWidth(self.allocator, s_line, sidebar_w, "");
+                defer self.allocator.free(s_trunc);
+
+                var pad_s = if (sidebar_w > unicode.strWidth(s_trunc)) sidebar_w - unicode.strWidth(s_trunc) else 0;
+
+                try frame_buf.appendSlice(self.allocator, s_trunc);
+                while (pad_s > 0) : (pad_s -= 1) {
+                    try frame_buf.appendSlice(self.allocator, " ");
+                }
+                try frame_buf.appendSlice(self.allocator, " ");
+
+                const truncated = try unicode.truncateToWidth(self.allocator, line, main_content_w, "");
+                defer self.allocator.free(truncated);
+                try frame_buf.appendSlice(self.allocator, truncated);
+            } else {
+                const truncated = try unicode.truncateToWidth(self.allocator, line, max_line_w, "");
+                defer self.allocator.free(truncated);
+                try frame_buf.appendSlice(self.allocator, truncated);
+            }
+
             try frame_buf.appendSlice(self.allocator, "\x1b[K\n");
             r_count += 1;
         }
 
         // Kalan boşlukları temiz satırlarla doldur
         while (r_count < max_body_rows) : (r_count += 1) {
+            if (is_spatial_split and r_count < sidebar_lines.items.len) {
+                const s_line = sidebar_lines.items[r_count];
+                const s_trunc = try unicode.truncateToWidth(self.allocator, s_line, sidebar_w, "");
+                defer self.allocator.free(s_trunc);
+                try frame_buf.appendSlice(self.allocator, s_trunc);
+            }
             try frame_buf.appendSlice(self.allocator, "\x1b[K\n");
         }
 
