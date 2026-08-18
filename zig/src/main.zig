@@ -186,13 +186,13 @@ fn runTui(allocator: std.mem.Allocator, io: std.Io) !void {
     var guard = try omnitrix.terminal.TerminalGuard.init(posix_term.backend());
     defer guard.deinit();
 
-    var app = try omnitrix.tui.Tui.init(allocator, posix_term.backend(), 200);
-    defer app.deinit();
+    var engine = try omnitrix.tui_engine.Engine.init(allocator, posix_term.backend());
+    defer engine.deinit();
 
-    _ = try app.blocks.addBlock(.system, "System", "Omnitrix Autonomous Runtime v0.1.0 (single-process) initialized.");
-    _ = try app.blocks.addBlock(.user, "Operator", "Scan codebase and prepare multi-agent execution pipeline.");
-    _ = try app.blocks.addToolBlock("scan_project", "path: .", "Scanned 51 source files across 8 packages. 0 errors.");
-    _ = try app.blocks.addBlock(.agent, "Omnitrix", "Codebase mapped. EventLoop, FileMutationLedger and TaskScheduler ready.\n• Press Tab to switch panels (Files / Diff)\n• Press Ctrl+V or type /voice for Grok Voice Mode\n• Type / for command palette");
+    _ = try engine.blocks.addBlock(.system, "System", "Omnitrix Autonomous Runtime v0.1.0 (single-process) initialized.");
+    _ = try engine.blocks.addBlock(.user, "Operator", "Scan codebase and prepare multi-agent execution pipeline.");
+    _ = try engine.blocks.addToolBlock("scan_project", "path: .", "Scanned 51 source files across 8 packages. 0 errors.");
+    _ = try engine.blocks.addBlock(.agent, "Omnitrix", "Codebase mapped. EventLoop, FileMutationLedger and TaskScheduler ready.\n• Press Tab to switch panels (Files / Diff)\n• Press Ctrl+P for Model Selector\n• Press Ctrl+K for Command Palette\n• Press Ctrl+V for Grok Voice Mode");
 
     // İlk taramayı changed panel'e aktar
     const cur_dir = std.Io.Dir.cwd();
@@ -203,34 +203,34 @@ fn runTui(allocator: std.mem.Allocator, io: std.Io) !void {
     defer scan_res.deinit();
 
     for (scan_res.files.items) |f| {
-        try app.changed_panel.addProjectChange(f, .external);
+        try engine.changed_panel.addProjectChange(f, .external);
     }
 
     // Örnek Agent değişikliği
-    try app.changed_panel.addAgentChange("src/root.zig", .modified, 45, 2, "executor");
-    try app.changed_panel.addAgentChange("src/omnitrix-io/epoll.zig", .added, 120, 0, "io_agent");
+    try engine.changed_panel.addAgentChange("src/root.zig", .modified, 45, 2, "executor");
+    try engine.changed_panel.addAgentChange("src/omnitrix-io/epoll.zig", .added, 120, 0, "io_agent");
 
     // Canlı etkileşim döngüsü (Event-Driven Zero-Flicker Loop)
-    var input_buf: [32]u8 = undefined;
-    while (app.is_running) {
+    var input_buf: [64]u8 = undefined;
+    while (engine.is_running) {
         const sz = try posix_term.getSize();
-        if (sz.cols != app.size.cols or sz.rows != app.size.rows) {
-            app.handleResize(sz.cols, sz.rows);
+        if (sz.cols != engine.size.cols or sz.rows != engine.size.rows) {
+            try engine.handleResize(sz.cols, sz.rows);
         }
 
-        try app.renderFrame();
+        try engine.render();
 
         // Stdin üzerinde Linux poll ile bekle (Sesli mod aktifse 80ms, değilse 250ms)
         var fds: [1]std.os.linux.pollfd = .{
             .{ .fd = 0, .events = std.os.linux.POLL.IN, .revents = 0 },
         };
-        const timeout_ms: i32 = if (app.voice.state != .off) 80 else 250;
+        const timeout_ms: i32 = if (engine.voice.state != .off) 80 else 250;
         const poll_res = std.os.linux.poll(&fds, 1, timeout_ms);
 
         if (poll_res > 0 and (fds[0].revents & std.os.linux.POLL.IN) != 0) {
             const n = try posix_term.readInput(&input_buf);
             if (n > 0) {
-                try app.handleKey(input_buf[0..n]);
+                try engine.handleKey(input_buf[0..n]);
             }
         }
     }

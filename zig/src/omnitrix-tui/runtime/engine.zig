@@ -3,6 +3,7 @@
 //! Özellikler:
 //! - FrontBuffer ve BackBuffer çift tampon mimarisi (Double Buffering)
 //! - Constraint Layout tabanlı ekran bölme (Üst Sekmeler, Sol Ana Akış, Sağ Sidebar, Alt Prompt Editörü)
+//! - Z-Index Modallar: ModelSelector (`Ctrl+P`) ve CommandPalette (`Ctrl+K` / `/`)
 //! - Gerçek VT500/ANSI FSM InputParser ve GapBuffer PromptEditor entegrasyonu
 //! - BufferDiff ile sadece değişen hücreleri atomik tek `write()` çağrısında basma
 //! - Sıfır kırılma, sıfır kaçış dizisi kayması, tam Unicode genişlik uyumu
@@ -19,6 +20,10 @@ const term_mod = @import("../terminal.zig");
 const input_parser_mod = @import("../input/parser.zig");
 const keys_mod = @import("../input/keys.zig");
 const prompt_editor_mod = @import("../editor/prompt_editor.zig");
+
+const modal_mod = @import("../dialogs/modal.zig");
+const model_selector_mod = @import("../dialogs/model_selector.zig");
+const command_palette_mod = @import("../dialogs/command_palette.zig");
 
 const header_mod = @import("../views/header_view.zig");
 const sidebar_mod = @import("../views/sidebar_view.zig");
@@ -41,6 +46,10 @@ pub const InputParser = input_parser_mod.InputParser;
 pub const InputEvent = keys_mod.InputEvent;
 pub const KeyEvent = keys_mod.KeyEvent;
 pub const PromptEditor = prompt_editor_mod.PromptEditor;
+
+pub const Modal = modal_mod.Modal;
+pub const ModelSelector = model_selector_mod.ModelSelector;
+pub const CommandPalette = command_palette_mod.CommandPalette;
 
 pub const HeaderView = header_mod.HeaderView;
 pub const SidebarView = sidebar_mod.SidebarView;
@@ -67,6 +76,8 @@ pub const Engine = struct {
 
     parser: InputParser,
     prompt_editor: PromptEditor,
+    model_selector: ModelSelector,
+    command_palette: CommandPalette,
 
     header: HeaderView,
     sidebar: SidebarView,
@@ -109,6 +120,12 @@ pub const Engine = struct {
         var editor_inst = try PromptEditor.init(allocator);
         errdefer editor_inst.deinit();
 
+        var ms_inst = try ModelSelector.init(allocator);
+        errdefer ms_inst.deinit();
+
+        var cp_inst = try CommandPalette.init(allocator);
+        errdefer cp_inst.deinit();
+
         return .{
             .allocator = allocator,
             .backend = backend,
@@ -118,6 +135,8 @@ pub const Engine = struct {
             .differ = BufferDiff.init(allocator),
             .parser = InputParser.init(allocator),
             .prompt_editor = editor_inst,
+            .model_selector = ms_inst,
+            .command_palette = cp_inst,
             .header = HeaderView.init(),
             .sidebar = SidebarView.init(allocator),
             .question = QuestionView.init(allocator, "Crush'da olan ama senin kodunda olmayan 3 mekanizma için hangisini yapalım?"),
@@ -138,6 +157,8 @@ pub const Engine = struct {
         self.back_buffer.deinit();
         self.parser.deinit();
         self.prompt_editor.deinit();
+        self.model_selector.deinit();
+        self.command_palette.deinit();
         self.sidebar.deinit();
         self.question.deinit();
         self.voice.deinit();
@@ -176,9 +197,41 @@ pub const Engine = struct {
     }
 
     fn dispatchKeyEvent(self: *Engine, k: KeyEvent) !void {
+        // 1. Model Seçici Modalı Açıksa
+        if (self.model_selector.is_open) {
+            if (self.model_selector.handleKey(k)) |chosen_model| {
+                // Seçilen modeli header'da güncelle
+                var hdr_buf: [128]u8 = undefined;
+                const new_badge = std.fmt.bufPrint(&hdr_buf, "▣ {s}", .{chosen_model}) catch "▣ Model";
+                _ = new_badge;
+            }
+            return;
+        }
+
+        // 2. Komut Paleti Modalı Açıksa
+        if (self.command_palette.is_open) {
+            if (self.command_palette.handleKey(k)) |cmd| {
+                try self.executeCommand(cmd);
+            }
+            return;
+        }
+
+        // 3. Global Kısayollar
         // Ctrl+C: Çıkış
         if (k.code.eql(.{ .char = 'c' }) and k.modifiers.ctrl) {
             self.is_running = false;
+            return;
+        }
+
+        // Ctrl+P: Model Seçici Modalı Aç
+        if (k.code.eql(.{ .char = 'p' }) and k.modifiers.ctrl) {
+            self.model_selector.open();
+            return;
+        }
+
+        // Ctrl+K: Komut Paleti Modalı Aç
+        if (k.code.eql(.{ .char = 'k' }) and k.modifiers.ctrl) {
+            self.command_palette.open();
             return;
         }
 
@@ -211,6 +264,7 @@ pub const Engine = struct {
             }
         }
 
+        // 4. Panel Bazlı Girdi Yönlendirmesi
         switch (self.focus) {
             .conversation => {
                 // Eğer soru kartı aktifse ve yön tuşları geldiyse soru kartına ilet
@@ -227,19 +281,8 @@ pub const Engine = struct {
                     defer self.allocator.free(submitted_text);
 
                     // Slash komutlarını kontrol et
-                    if (std.mem.eql(u8, submitted_text, "/voice")) {
-                        self.voice.toggle();
-                    } else if (std.mem.eql(u8, submitted_text, "/diff")) {
-                        self.focus = .diff;
-                        self.header.active_tab = 2;
-                    } else if (std.mem.eql(u8, submitted_text, "/files")) {
-                        self.focus = .changed_files;
-                        self.header.active_tab = 1;
-                    } else if (std.mem.eql(u8, submitted_text, "/clear")) {
-                        self.blocks.deinit();
-                        self.blocks = BlockRenderer.init(self.allocator, 100);
-                    } else if (std.mem.eql(u8, submitted_text, "/quit") or std.mem.eql(u8, submitted_text, "/exit")) {
-                        self.is_running = false;
+                    if (std.mem.startsWith(u8, submitted_text, "/")) {
+                        try self.executeCommand(submitted_text);
                     } else {
                         // Normal kullanıcı mesajı ekle
                         _ = try self.blocks.addBlock(.user, "Operator", submitted_text);
@@ -277,6 +320,27 @@ pub const Engine = struct {
                     }
                 }
             },
+        }
+    }
+
+    fn executeCommand(self: *Engine, cmd: []const u8) !void {
+        if (std.mem.eql(u8, cmd, "/model")) {
+            self.model_selector.open();
+        } else if (std.mem.eql(u8, cmd, "/voice")) {
+            self.voice.toggle();
+        } else if (std.mem.eql(u8, cmd, "/diff")) {
+            self.focus = .diff;
+            self.header.active_tab = 2;
+        } else if (std.mem.eql(u8, cmd, "/files")) {
+            self.focus = .changed_files;
+            self.header.active_tab = 1;
+        } else if (std.mem.eql(u8, cmd, "/clear")) {
+            self.blocks.deinit();
+            self.blocks = BlockRenderer.init(self.allocator, 100);
+        } else if (std.mem.eql(u8, cmd, "/help")) {
+            _ = try self.blocks.addBlock(.system, "Help", "Kısayollar:\n• Tab: Panel değiştir\n• Ctrl+P: Model seçici modalı aç\n• Ctrl+K: Komut paleti modalı aç\n• Ctrl+V: Ses modu\n• Ctrl+C / q: Çıkış");
+        } else if (std.mem.eql(u8, cmd, "/quit") or std.mem.eql(u8, cmd, "/exit")) {
+            self.is_running = false;
         }
     }
 
@@ -342,7 +406,14 @@ pub const Engine = struct {
         // 3. Alt Prompt Düzenleyici ve Kısayol İpuçlarını Çiz
         self.renderFooter(footer_area);
 
-        // 4. 2D Tampon Karşılaştırması (Diff) ve Atomik Çıktı
+        // 4. Modalları En Üst Katmanda (Z-Index) Çiz
+        if (self.model_selector.is_open) {
+            self.model_selector.render(screen_area, &self.back_buffer);
+        } else if (self.command_palette.is_open) {
+            self.command_palette.render(screen_area, &self.back_buffer);
+        }
+
+        // 5. 2D Tampon Karşılaştırması (Diff) ve Atomik Çıktı
         self.io_buf.clearRetainingCapacity();
 
         // İmleci gizle
@@ -442,12 +513,12 @@ pub const Engine = struct {
 
         // 2. Kısayol İpuçları (Son satır)
         const hint_y = area.bottom() - 1;
-        const hint_str = " [Tab] Panel Değiştir  │  [Enter] Gönder  │  [Shift+Enter] Yeni Satır  │  [Ctrl+V] Ses Modu  │  [Ctrl+C] Çıkış";
+        const hint_str = " [Tab] Panel Değiştir  │  [Ctrl+P] Model Seç  │  [Ctrl+K] Komutlar  │  [Ctrl+V] Ses Modu  │  [q] Çıkış";
         _ = self.back_buffer.setString(area.left() + 1, hint_y, hint_str, .{ .fg = .{ .indexed = 241 } }, area.width);
     }
 };
 
-test "engine double buffered render and prompt editor" {
+test "engine double buffered render and modal overlays" {
     const pty_harness = @import("../pty_harness.zig");
     var harness = try pty_harness.PtyHarness.init(std.testing.allocator, 120, 40);
     defer harness.deinit();
@@ -461,5 +532,11 @@ test "engine double buffered render and prompt editor" {
     try std.testing.expect(harness.assertContains("Context"));
     try std.testing.expect(harness.assertContains("MCP"));
     try std.testing.expect(harness.assertContains("Build"));
-    try std.testing.expect(harness.assertContains("Panel Değiştir"));
+    try std.testing.expect(harness.assertContains("Model Seç"));
+
+    // Model Seçici Modalı Aç ve Render Et
+    engine.model_selector.open();
+    try engine.render();
+    try std.testing.expect(harness.assertContains("Select Active Model"));
+    try std.testing.expect(harness.assertContains("Claude 3.5 Sonnet"));
 }

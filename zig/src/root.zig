@@ -58,7 +58,10 @@ pub const changed_files = @import("omnitrix-tui/changed_files.zig");
 pub const pty_harness = @import("omnitrix-tui/pty_harness.zig");
 pub const kol_a_verification_test = @import("omnitrix-tui/kol_a_verification_test.zig");
 
-// 2D Core TUI Engine & Input/Editor Subsystems
+// 2D Core TUI Engine, Dialogs & Input/Editor Subsystems
+pub const tui_modal = @import("omnitrix-tui/dialogs/modal.zig");
+pub const tui_model_selector = @import("omnitrix-tui/dialogs/model_selector.zig");
+pub const tui_command_palette = @import("omnitrix-tui/dialogs/command_palette.zig");
 pub const tui_keys = @import("omnitrix-tui/input/keys.zig");
 pub const tui_input_parser = @import("omnitrix-tui/input/parser.zig");
 pub const tui_gap_buffer = @import("omnitrix-tui/editor/gap_buffer.zig");
