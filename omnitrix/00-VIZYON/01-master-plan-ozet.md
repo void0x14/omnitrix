@@ -4,6 +4,8 @@
 > Bu dosyalar repo kökünde artık yok — `6d6ee1d` commit'i ("refactor: omni-* katmani tamamen kaldirildi — tek urun, tek kod tabani", 2026-08-07) ile silindiler; içerik `6d6ee1d~1`'den kurtarıldı.
 > **Güncel durum notu:** Planın uygulanmasından sonra kullanıcı "matrix içinde matrix yok" emriyle ayrı `omni-*` katmanını kaldırttı; mantık `xai-grok-*` içine taşındı. Aşağıdaki özet **plan döneminin vizyonunu** eksiksiz yansıtır; mimari isimlendirme güncel koddan farklı olabilir.
 > Tarih: 2026-07-26 · Branch: `masterplan` · Rust 1.92.0 · Hedef: x86_64/aarch64-unknown-linux-gnu
+>
+> **REVİZYON (2026-08-17):** Bu belge tarihsel bir plandır. Dil/teknoloji kararı [`docs/superpowers/specs/2026-08-17-omnitrix-zig-runtime-change-ledger-design.md`](../../docs/superpowers/specs/2026-08-17-omnitrix-zig-runtime-change-ledger-design.md) ile değişti: **Zig ana uygulama dili, tek süreç** (worker/IPC yok); xai-* Rust ağacı kaynak olarak kopyalanmaz, fikir/test havuzu olarak incelenir. Bölüm 8'deki "Rust 1.92.0 + tokio" satırı artık geçerli teknoloji kararı değildir; tarihsel metin olarak işaretlendi.
 
 ---
 
@@ -138,7 +140,9 @@ YOK-EDİLENLER: bağımsız `target/` dizinleri, elle yazılmış sürüm bağı
 
 ---
 
-## 8. TEKNOLOJİ SEÇİMLERİ (özet)
+## 8. TEKNOLOJİ SEÇİMLERİ (özet) — TARİHSEL (2026-08-17 revizyonuyla geçersiz)
+
+> **REVİZYON (2026-08-17):** Aşağıdaki teknoloji listesi eski plandır ve yerini onaylı [`omnitrix-zig-runtime-change-ledger` tasarımı](../../docs/superpowers/specs/2026-08-17-omnitrix-zig-runtime-change-ledger-design.md) almıştır: ana uygulama dili **Zig**, tek süreç (worker/IPC yok), kendi omnitrix-io/task/net/stream katmanları; xai-* Rust ağacı kaynak olarak kopyalanmaz. Bölüm 3.5: Zig toolchain kontrollü fork'ta, upstream otomatik merge edilmez.
 
 Rust 1.92.0 + tokio (multi-thread) · LLM taşıma `xai-grok-sampler` (OpenAI+Responses+Anthropic tek çatı) · ajan `xai-grok-agent` · depo SQLite (WAL) + CAS `redb` · TUI ratatui+crossterm · WebUI axum+maud+SSE/WS · auth token (argon2) + opsiyonel mTLS · git `gix` · bellek `jemalloc` · config TOML katmanlı · wire JSON (dış) + postcard/bincode (CAS-içi) · **reddedilen:** Leptos/WASM, harici computer-use, sandbox.
 

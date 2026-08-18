@@ -5,6 +5,31 @@
 > [`ALPHA-PLAN.md`](../ALPHA-PLAN.md)'dedir. Burasi yalnizca plandaki katman
 > modelinin ve crate haritasinin **gezinilebilir ozetidir**; her bolum plandaki
 > ilgili numaraya atif verir. Celiski halinde plan gecerlidir.
+>
+> **REVIZYON (2026-08-17):** Asagidaki belge **mevcut Rust uygulamasini** anlatir
+> (tarihsel gerceklik). Gelecek dil/tek-surec karari onayli
+> [`2026-08-17-omnitrix-zig-runtime-change-ledger-design.md`](superpowers/specs/2026-08-17-omnitrix-zig-runtime-change-ledger-design.md)
+> tasarimindadir: ana uygulama dili **Zig**, tek surec (worker/JSON/Protobuf IPC yok),
+> xai-* Rust agaci kaynak olarak kopyalanmaz (fikir/test havuzu). Bu belgedeki
+> `omni-*` crate haritasi eski plandir; yeni tasarimda moduller Zig'de yeniden yazilir.
+
+## 0. Dil karari (2026-08-17)
+
+Onayli tasarim ([spec](superpowers/specs/2026-08-17-omnitrix-zig-runtime-change-ledger-design.md))
+Bu belgenin geri kalanindaki Rust-merkezli mimarinin yerini alir:
+
+- **Zig ana uygulama dilidir.** Runtime, scheduler, permission broker, storage,
+  network/async altyapisi, FileMutationLedger ve TUI ayni calisma alaninin
+  parcalaridir; worker sureci veya token basina JSON/Protobuf/IPC YOKTUR (Bolum 1, 4).
+- **Mevcut xai-* Rust agaci kaynak kod olarak kopyalanmaz.** Davranis, algoritma,
+  durum makinesi ve test fikri havuzu olarak incelenir; hedef uygulama Zig'de
+  yeniden yazilir (Bolum 1).
+- **omnitrix-io upstream `std.Io.Evented` durumuna bagimli degildir**; epoll/kqueue/IOCP
+  katmani Omnitrix icinde gelistirilir (Bolum 3.1).
+- **C ABI modul haberlesme sistemi degildir**; C yalnizca gercekten gerekliyse kucuk,
+  statik, testli leaf moduldur (Bolum 2.2).
+- Asagidaki bolumler (1-9) eski Rust planini ve mevcut kodun gercekligini ozetler;
+  yeni implementasyon plani `docs/superpowers/plans/` altindadir.
 
 ## 1. Mimari tez (MASTER-PLAN 1.1)
 

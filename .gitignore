@@ -13,5 +13,13 @@
 .clippy.log
 .rustc.log
 
+# Zig build artifacts
+zig-cache/
+.zig-cache/
+zig-out/
+**/zig-cache/
+**/.zig-cache/
+**/zig-out/
+
 #fastfilesearch
 .ffs

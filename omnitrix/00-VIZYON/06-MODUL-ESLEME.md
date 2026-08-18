@@ -2,19 +2,21 @@
 
 > Tarih: 2026-08-14 · Girdiler: 01–05 + 12 harness raporu (hermes dahil).
 > Gerçeklik temeli: `omni-*` ayrı katmanı kullanıcının "matrix içinde matrix yok" emriyle kaldırıldı (6d6ee1d); mantık `xai-grok-*` içine eritildi. Aşağıdaki modüller **mantıksal birimlerdir** — eritilmiş kod tabanının içinde yaşar, tek binary'den yönetilir.
+>
+> **REVİZYON (2026-08-17):** Dil politikası ve mimari sınırlar [`docs/superpowers/specs/2026-08-17-omnitrix-zig-runtime-change-ledger-design.md`](../../docs/superpowers/specs/2026-08-17-omnitrix-zig-runtime-change-ledger-design.md) ile güncellendi. Aşağıdaki modül haritası mantıksal birimleri korur; Bölüm 1'deki dil tablosu yeni karara göre yeniden yazıldı.
 
 ---
 
-## 1. Dil politikası (soğuk başlatma + bellek + manevra gerekçesi)
+## 1. Dil politikası (2026-08-17 revizyonu)
 
 | Dil | Yeri | Gerekçe |
 |---|---|---|
-| **Rust** | Çekirdek (tüm ajan/runtime/UI katmanı) | xai-* zorunlu bağımlılık (I2, imza düzeyinde tüketim); tokio ile 10 bin eşzamanlı ajan; jemalloc; tek binary; ms mertebesinde soğuk başlatma; zeroize/panic-abort disiplini hazır (overflow-checks + debug-assertions release'de açık). |
-| **Zig** | Bağımsız native'ler: hashline editörü, walker/scan cache, omni-bench runner | xai-*'tan tamamen bağımsız saf veri işleme; sıfır runtime, C ABI ile gömülür; küçük tek-amaç binary'ler 1s soğuk başlatma bandının altında; kullanıcı tercihi. Mevcut Rust hashline **taşınmaz** (çalışıyor, `grok_build_hashline` compat setinde); Zig yalnızca yeni native'lere girer. |
-| **Go** | Runtime'a GİRMEZ | crush'ın fikirleri port edilir, Go değil — ikinci runtime + ikinci toolchain = bakım yükü, tek-binary vizyonuna aykırı. |
-| **Python** | Araç üretimi (bench analiz, spec) | aider'ın benchmark fikri alınır, Python runtime'ı alınmaz — soğuk başlatma ve bellek için elenir. |
+| **Zig** | **Ana uygulama dili — tüm Omnitrix** (runtime, scheduler, permission broker, storage, network/async altyapısı, FileMutationLedger, TUI) | Tek ana süreç: modüller arasında worker süreci, JSON/Protobuf IPC veya token başına serialization YOK; upstream `std.Io.Evented` durumuna bağımlı olmayan kendi omnitrix-io katmanı geliştirilir (epoll/kqueue/IOCP); explicit allocator, bounded queue, monotonic deadline, cancellation. |
+| **Rust (mevcut xai-*)** | Kaynak olarak KOPYALANMAZ | Davranış, algoritma, durum makinesi, hata senaryosu ve test fikri havuzu olarak incelenir; hedef uygulama Omnitrix'in seçilen dilinde (Zig) yeniden yazılır. |
+| **C** | Yalnızca küçük statik leaf modül (gerekiyorsa) | Zig'in eksiğini kapatmak için otomatik iletişim katmanı OLARAK kullanılmaz; algoritma gerçekten C gerektiriyorsa ayrı, küçük, kendi testleriyle doğrulanan leaf modüldür; ana mimari C'ye bağlanmaz. |
+| **Go / Python / TypeScript** | Runtime'a / ana akışa GİRMEZ | Worker'ları ana akışa sokmak reddedilir; Go/Python yalnızca araç üretimi (bench analiz, spec) olabilir; cgo ve benzeri runtime köprüleri yok. |
 
-Karar: "Her parça en iyi dilde" kuralı tek binary vizyonuyla dengelenir — N runtime = N bakım yükü. Manevra hızı, tek binary + ms startup ile kazanılır.
+Karar (2026-08-17): farklı bir dil runtime'a process veya haberleşme bloat'ı getiriyorsa reddedilir; dil seçimi performans, bellek, başlangıç, manevra kabiliyeti, platform kapsamı ve bakım borcu ölçümleriyle verilir.
 
 ---
 

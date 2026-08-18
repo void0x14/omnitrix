@@ -2,6 +2,8 @@
 
 > Tarih: 2026-08-14 · Girdiler: 05-SENTEZ (15 alan kararı) · 06-MODUL-ESLEME (modül haritası) · 08-ALGORITMA-EXTRACT (mekanizmalar) · 09-MANEVRA-TEKNOLOJILERI (SumTree/diff/walker) · 10-BENCHMARK-VE-AKADEMI (Terminal-Bench + Complexity Trap/Root Theorem/Governance Decay/GEPA) · 11-ENVANTER ×6 (claude-code, opencode, codex, crush+aider, grok-cli, pi+omp+hermes+dsh) · claude-code/SIZINTI-DOCS-EKSTRAKT (KAIROS, killswitch).
 > Statü: İNŞA EKİBİNİN TEK KAYNAĞI. Bu belgedeki her rakam bir eşiktir; her eşik bir kapıdır; her kapı CI'da bloklayıcıdır (Bölüm 10). Belgeyle çelişen kod = hata, inisiyatif değil.
+>
+> **REVİZYON (2026-08-17):** Dil politikası ve mimari sınırlar [`docs/superpowers/specs/2026-08-17-omnitrix-zig-runtime-change-ledger-design.md`](../../docs/superpowers/specs/2026-08-17-omnitrix-zig-runtime-change-ledger-design.md) ile güncellendi: **Zig ana uygulama dilidir**, tek süreç çalışır (worker süreci, JSON/Protobuf IPC, C ABI haberleşme yok); mevcut xai-* Rust ağacı kaynak olarak kopyalanmaz, davranış/test fikri havuzu olarak incelenir; C yalnızca gerektiğinde küçük statik leaf modül olur. K10 aşağıda yeniden yazıldı; diğer tarihsel bölümler (tokio/jemalloc/omni-* atıfları) eski metin olarak korunur.
 
 ---
 
@@ -22,7 +24,7 @@ Aşağıdaki 10 kural **mutlak eşiklerdir** — ölçülebilir, ihlali faz kap�
 | K7 | **Trilyon satır kod ölçeği** | kalıcı sembol grafiği YOK (kullanıcı reddi); soru-güdümlü kanıt + hashline anchor atıf; scan'ler bounded (derinlik/entry limitleri, codex disiplini); repo map hash'i asla dışarı çıkmaz | 06:6, 05:4 |
 | K8 | **Anahtarlar RAM'de + zeroize + fail-closed** | keychain AES-256-GCM + Argon2id (64 MiB) + zeroize + 15dk RAM TTL + OS keyring; anahtarlar asla diskte değil, config'e `api_key` yazılmaz; üçüncü-taraf sızmış-anahtar hattı kurulmaz (K13) | 05:8, 06:5 |
 | K9 | **Bildirim disiplini** | tüm kanallar `enabled=false` varsayılan; SMS/çağrı yalnız yüksek-önem eşiğinde; kanal hatası akışı düşürmez (fail-soft) | 06 |
-| K10 | **Dil politikası** | Rust çekirdek (xai-* imza düzeyinde tüketim, tokio, jemalloc, tek binary) + Zig bağımsız native'ler (walker/scan/bench — sıfır runtime, C ABI); Go/Python runtime'a GİRMEZ (yalnız araç üretimi) | 05:1, 06:1 |
+| K10 | **Dil politikası** | **Zig ana uygulama dili** (tek süreç; runtime/scheduler/permission/storage/net/ledger/TUI aynı çalışma alanında); worker süreci veya token başına JSON/Protobuf/IPC YOK; mevcut xai-* Rust ağacı kaynak olarak kopyalanmaz, fikir/test havuzu olarak incelenir; C yalnızca algoritma gerçekten gerektiriyorsa küçük statik leaf modül; Go/Python/TypeScript worker'ları ana akışa GİRMEZ; cgo/köprü yok (2026-08-17 Zig tasarımı) | 05:1, 06:1, zig-design |
 
 ---
 

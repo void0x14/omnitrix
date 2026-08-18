@@ -2,6 +2,8 @@
 
 > Tarih: 2026-08-14 · Girdiler: 01–04 vizyon özetleri + 12 harness RAPOR.md (opencode, codex, crush, aider, grok-cli, pi, oh-my-pi, deepseek-harness, claude-code, cursor-cli, warp, hermes)
 > Kullanıcının mutlak kuralları: tek kullanıcı, paylaşım yok · soğuk başlatma 1s bandı (sıcak cache/daemon YASAK) · dil agnostik · ultra bellek verimliliği + 10 bin eşzamanlı ajan vizyonu · sıfır telemetri/egress · anahtarlar RAM'de + zeroize + fail-closed.
+>
+> **REVİZYON (2026-08-17):** Aşağıdaki "Dil politikası" kararları (#1 ve #6) [`docs/superpowers/specs/2026-08-17-omnitrix-zig-runtime-change-ledger-design.md`](../../docs/superpowers/specs/2026-08-17-omnitrix-zig-runtime-change-ledger-design.md) ile değiştirildi: **Zig ana uygulama dili**, tek süreç (worker/JSON/Protobuf IPC yok); xai-* Rust ağacı kaynak olarak kopyalanmaz (fikir/test havuzu); C yalnızca küçük statik leaf modül. Tarihsel "Rust çekirdek" ifadeleri artık geçerli karar değildir.
 > Mevcut varlıklar: grok-build fork'u (xai-*), keychain katmanı, 40+/60+ routing modu, Flow Governor, 9→61 persona.
 
 ---
@@ -39,7 +41,7 @@
 
 ## 2. Kesişen sentez kararları (tüm alanları bağlayan)
 
-1. **Dil politikası:** Rust çekirdek (xai-* zorunluluğu, tokio çok-ajan, jemalloc, tek binary, ms soğuk başlatma) + **Zig** bağımsız native'ler (hashline/walker/scan/bench — sıfır runtime, C ABI, kullanıcı tercihi). Go/Python runtime'a girmez; yalnızca araç üretimi (bench analiz). "Her parça en iyi dilde" kuralı tek binary vizyonuyla dengelenir: N runtime = N bakım yükü.
+1. **Dil politikası (2026-08-17 revizyonu):** **Zig ana uygulama dilidir** — Omnitrix tek bir ana süreçtir; runtime, scheduler, permission broker, storage, network/async altyapısı, değişiklik ledger'ı ve TUI aynı çalışma alanında yaşar; modüller arasında worker süreci, JSON/Protobuf IPC veya token başına serialization YOKTUR. Her modül için en uygun dil aranabilir ama farklı bir dil runtime'a process/haberleşme bloat'ı getiriyorsa reddedilir (ölçümle). Mevcut xai-* Rust ağacı kaynak kod olarak kopyalanmaz; davranış, algoritma, durum makinesi ve test fikri havuzu olarak incelenir, hedef uygulama Zig'de yeniden yazılır. C ABI modül haberleşme sistemi değildir; C gerekiyorsa ayrı, küçük, statik, testli leaf modüldür.
 2. **Orkestrasyon ≠ ajan yazımı:** ajan runtime, LLM taşıma, tool sistemi vendored xai-*'tan gelir (I2). Omnitrix üstüne planlama, yönlendirme, persona, besleme, dayanıklılık ekler. "İnşa et, fork etme."
 3. **Determinizm süreçte (D2):** akış AI inisiyatifinde değildir — Flow Governor durum makineleri karar verir, AI sonuçları üretir. Şablonlar/zarf/kapı sisteme aittir.
 4. **İş kutsal (K2):** 250 MB hedef, darboğazda swap-out/kuyruklama ile esnetilir; iş asla yarıda kesilmez. "Bitmiş işe kaynak yakmak yasak" (K11).
@@ -52,6 +54,6 @@
 3. **Telemetri = kod silme:** patch değil; CC'nin Datadog çift hattı, warp'ın proxy bypass'ı, cursor'un ghost-mode yalanı hiçbir biçimde kopyalanmaz; tek anahtar, varsayılan kapalı.
 4. **Sandbox yok (K5):** codex'ten yalnızca permission-profile kavramı; izolasyon geçici git branch.
 5. **TUI = blok modeli:** warp'ın BlockList/SumTree veri modeli pager'a işlenir; React/Ink (200 MB) ve GPU rendering (Vulkan) kategorik olarak yasak.
-6. **Dil:** Rust çekirdek + Zig native'ler; Go/Python araç-üretimi dışında tutulur — 10 bin ajan tek binary'den yönetilir.
+6. **Dil (2026-08-17 revizyonu):** Zig ana dil + tek süreç; Go/Python/TypeScript worker'ları ana akışa girmez, cgo/köprü yok — 10 bin ajan tek binary'den yönetilir.
 
 *Kaynaklar: 01-master-plan-ozet, 02-docs-specs-ozet, 03-git-feature-envanteri, 04-config-persona-envanteri + 11 RAPOR.md (opencode/codex/crush/aider/grok-cli/pi/oh-my-pi/deepseek-harness/claude-code/cursor-cli/warp).*
