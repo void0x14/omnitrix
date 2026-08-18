@@ -14,7 +14,6 @@
 
 const std = @import("std");
 const term = @import("terminal.zig");
-const mock_term = @import("mock_terminal.zig");
 const unicode = @import("unicode.zig");
 const block_renderer = @import("block_renderer.zig");
 const diff_renderer = @import("diff_renderer.zig");

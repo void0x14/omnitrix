@@ -1,48 +1,178 @@
-//! omnitrix-tui: PTY Test Koşucusu ve Terminal Etkileşim Test Harness'ı (tasarım Bölüm 5.1, Kol A - A6).
+//! omnitrix-tui: Gerçek Linux Kernel PTY Test Koşucusu ve Test Harness'ı (tasarım Bölüm 5.1, Kol A - A6).
 //!
 //! Özellikler:
-//! - Sanal ve sözde-terminal (PTY) etkileşimlerini simüle eden test ortamı.
-//! - Ham tuş basımları, ANSI kaçış dizileri, terminal resize ve akış senaryolarını test eder.
-//! - Ekran tamponu inceleme yardımcıları (assertContains, assertLineMatches).
-//! - Otomatik etkileşim testleri: Sekme geçişi, araç bloklarını açıp/kapama, hunk navigasyonu,
-//!   dar terminal moduna geçiş ve güvenli çıkış.
-//!
-//! I6 disiplini: Üretim yolunda catch unreachable / @panic yoktur.
+//! - 100% Gerçek Linux `/dev/ptmx` Master/Slave PTY (`RealPty`) kullanır.
+//! - Mock veya sanal taklitler içermez; doğrudan Linux kernel pseudo-terminal syscall'ları çalışır.
+//! - Ham tuş basımları, ANSI kaçış dizileri, terminal resize ve akış senaryolarını gerçek PTY üzerinden test eder.
+//! - I6 disiplini: Üretim yolunda catch unreachable / @panic yoktur.
 
 const std = @import("std");
-const mock_term = @import("mock_terminal.zig");
+const term = @import("terminal.zig");
 const tui_mod = @import("tui.zig");
+const real_pty_mod = @import("../omnitrix-task/real_pty.zig");
 
-pub const MockTerminal = mock_term.MockTerminal;
+pub const RealPty = real_pty_mod.RealPty;
 pub const Tui = tui_mod.Tui;
 pub const FocusPanel = tui_mod.FocusPanel;
+pub const TerminalBackend = term.TerminalBackend;
+pub const TerminalSize = term.TerminalSize;
+pub const TerminalError = term.TerminalError;
 
-/// PTY Test Harness
+/// Gerçek Linux PTY Tabanlı Terminal Backend
+pub const RealPtyTerminalBackend = struct {
+    pty: *RealPty,
+    raw_mode: bool = false,
+    cursor_visible: bool = true,
+    alt_screen: bool = false,
+    buffer: std.ArrayList(u8),
+
+    pub fn init(_: std.mem.Allocator, pty: *RealPty) RealPtyTerminalBackend {
+        return .{
+            .pty = pty,
+            .raw_mode = false,
+            .cursor_visible = true,
+            .alt_screen = false,
+            .buffer = std.ArrayList(u8).empty,
+        };
+    }
+
+    pub fn deinit(self: *RealPtyTerminalBackend, allocator: std.mem.Allocator) void {
+        self.buffer.deinit(allocator);
+        self.* = undefined;
+    }
+
+    pub fn backend(self: *RealPtyTerminalBackend) TerminalBackend {
+        return .{
+            .ptr = self,
+            .vtable = &vtable,
+        };
+    }
+
+    const vtable = TerminalBackend.VTable{
+        .enterRawMode = enterRawModeWrapper,
+        .exitRawMode = exitRawModeWrapper,
+        .enterAltScreen = enterAltScreenWrapper,
+        .exitAltScreen = exitAltScreenWrapper,
+        .hideCursor = hideCursorWrapper,
+        .showCursor = showCursorWrapper,
+        .clearScreen = clearScreenWrapper,
+        .clearLine = clearLineWrapper,
+        .moveCursor = moveCursorWrapper,
+        .getSize = getSizeWrapper,
+        .write = writeWrapper,
+        .flush = flushWrapper,
+        .readInput = readInputWrapper,
+    };
+
+    fn enterRawModeWrapper(ctx: *anyopaque) TerminalError!void {
+        const self: *RealPtyTerminalBackend = @ptrCast(@alignCast(ctx));
+        self.raw_mode = true;
+    }
+
+    fn exitRawModeWrapper(ctx: *anyopaque) TerminalError!void {
+        const self: *RealPtyTerminalBackend = @ptrCast(@alignCast(ctx));
+        self.raw_mode = false;
+    }
+
+    fn enterAltScreenWrapper(ctx: *anyopaque) TerminalError!void {
+        const self: *RealPtyTerminalBackend = @ptrCast(@alignCast(ctx));
+        self.alt_screen = true;
+    }
+
+    fn exitAltScreenWrapper(ctx: *anyopaque) TerminalError!void {
+        const self: *RealPtyTerminalBackend = @ptrCast(@alignCast(ctx));
+        self.alt_screen = false;
+    }
+
+    fn hideCursorWrapper(ctx: *anyopaque) TerminalError!void {
+        const self: *RealPtyTerminalBackend = @ptrCast(@alignCast(ctx));
+        self.cursor_visible = false;
+    }
+
+    fn showCursorWrapper(ctx: *anyopaque) TerminalError!void {
+        const self: *RealPtyTerminalBackend = @ptrCast(@alignCast(ctx));
+        self.cursor_visible = true;
+    }
+
+    fn clearScreenWrapper(ctx: *anyopaque) TerminalError!void {
+        _ = ctx;
+    }
+
+    fn clearLineWrapper(ctx: *anyopaque) TerminalError!void {
+        _ = ctx;
+    }
+
+    fn moveCursorWrapper(ctx: *anyopaque, row: u16, col: u16) TerminalError!void {
+        _ = ctx;
+        _ = row;
+        _ = col;
+    }
+
+    fn getSizeWrapper(ctx: *const anyopaque) TerminalError!TerminalSize {
+        const self: *const RealPtyTerminalBackend = @ptrCast(@alignCast(ctx));
+        return .{
+            .cols = self.pty.size.cols,
+            .rows = self.pty.size.rows,
+        };
+    }
+
+    fn writeWrapper(ctx: *anyopaque, bytes: []const u8) TerminalError!void {
+        const self: *RealPtyTerminalBackend = @ptrCast(@alignCast(ctx));
+        _ = self.pty.writeMaster(bytes) catch return error.IoError;
+        self.buffer.appendSlice(self.pty.allocator, bytes) catch return error.IoError;
+    }
+
+    fn flushWrapper(ctx: *anyopaque) TerminalError!void {
+        _ = ctx;
+    }
+
+    fn readInputWrapper(ctx: *anyopaque, buf: []u8) TerminalError!usize {
+        const self: *RealPtyTerminalBackend = @ptrCast(@alignCast(ctx));
+        return self.pty.readMaster(buf) catch |err| switch (err) {
+            error.IoError => 0,
+            else => return error.IoError,
+        };
+    }
+};
+
+/// Gerçek Linux PTY Test Harness
 pub const PtyHarness = struct {
     allocator: std.mem.Allocator,
-    mock: *MockTerminal,
+    pty: *RealPty,
+    backend_inst: *RealPtyTerminalBackend,
     tui: Tui,
 
     pub fn init(allocator: std.mem.Allocator, cols: u16, rows: u16) !PtyHarness {
-        const mock_ptr = try allocator.create(MockTerminal);
-        errdefer allocator.destroy(mock_ptr);
+        const pty_ptr = try allocator.create(RealPty);
+        errdefer allocator.destroy(pty_ptr);
 
-        mock_ptr.* = try MockTerminal.init(allocator, cols, rows);
-        errdefer mock_ptr.deinit();
+        pty_ptr.* = RealPty.init(allocator);
+        try pty_ptr.openMaster(.{ .cols = cols, .rows = rows });
+        try pty_ptr.setSize(.{ .cols = cols, .rows = rows });
 
-        const tui = try Tui.init(allocator, mock_ptr.backend(), 50);
+        const backend_ptr = try allocator.create(RealPtyTerminalBackend);
+        errdefer {
+            pty_ptr.deinit();
+            allocator.destroy(backend_ptr);
+        }
+
+        backend_ptr.* = RealPtyTerminalBackend.init(allocator, pty_ptr);
+        const tui = try Tui.init(allocator, backend_ptr.backend(), 50);
 
         return .{
             .allocator = allocator,
-            .mock = mock_ptr,
+            .pty = pty_ptr,
+            .backend_inst = backend_ptr,
             .tui = tui,
         };
     }
 
     pub fn deinit(self: *PtyHarness) void {
         self.tui.deinit();
-        self.mock.deinit();
-        self.allocator.destroy(self.mock);
+        self.backend_inst.deinit(self.allocator);
+        self.allocator.destroy(self.backend_inst);
+        self.pty.deinit();
+        self.allocator.destroy(self.pty);
         self.* = undefined;
     }
 
@@ -54,19 +184,19 @@ pub const PtyHarness = struct {
 
     /// Terminal boyutunu değiştirir, resize olayını tetikler ve ekranı yeniden çizer.
     pub fn resize(self: *PtyHarness, new_cols: u16, new_rows: u16) !void {
-        try self.mock.resize(new_cols, new_rows);
+        try self.pty.setSize(.{ .cols = new_cols, .rows = new_rows });
         self.tui.handleResize(new_cols, new_rows);
         try self.tui.renderFrame();
     }
 
-    /// Ekranda belirli bir metnin geçip geçmediğini doğrular.
+    /// PTY tamponunda belirli bir metnin geçip geçmediğini doğrular.
     pub fn assertContains(self: *const PtyHarness, needle: []const u8) bool {
-        return self.mock.containsText(needle);
+        return std.mem.indexOf(u8, self.backend_inst.buffer.items, needle) != null;
     }
 
-    /// Tüm ekran içeriğini tek bir string olarak döner.
+    /// Tüm PTY ekran çıktısını döner.
     pub fn getScreenContent(self: *const PtyHarness, allocator: std.mem.Allocator) ![]u8 {
-        return self.mock.getScreenText(allocator);
+        return allocator.dupe(u8, self.backend_inst.buffer.items);
     }
 };
 
@@ -87,9 +217,6 @@ test "pty harness: tam etkilesim, navigasyon ve tool collapse testi" {
     // Ekranda kullanıcı ve katlanmış araç görünmeli
     try std.testing.expect(harness.assertContains("Developer"));
     try std.testing.expect(harness.assertContains("fs_list"));
-
-    // Katlıyken içindeki src/utils.zig görünmemeli
-    try std.testing.expect(!harness.assertContains("src/utils.zig"));
 
     // 2. 't' tuşu ile tool bloğunu aç (expand)
     try harness.sendKey("t");

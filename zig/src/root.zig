@@ -45,12 +45,13 @@ pub const faz9_verification_test = @import("omnitrix-runtime/soak.zig");
 // Kol A: TUI & Changed Files (Bölüm 5)
 pub const tui = @import("omnitrix-tui/tui.zig");
 pub const terminal = @import("omnitrix-tui/terminal.zig");
-pub const mock_terminal = @import("omnitrix-tui/mock_terminal.zig");
 pub const unicode = @import("omnitrix-tui/unicode.zig");
 pub const theme = @import("omnitrix-tui/theme.zig");
 pub const goal = @import("omnitrix-tui/goal.zig");
 pub const voice = @import("omnitrix-tui/voice.zig");
 pub const input_box = @import("omnitrix-tui/input_box.zig");
+pub const sidebar = @import("omnitrix-tui/sidebar.zig");
+pub const question_view = @import("omnitrix-tui/question_view.zig");
 pub const block_renderer = @import("omnitrix-tui/block_renderer.zig");
 pub const diff_renderer = @import("omnitrix-tui/diff_renderer.zig");
 pub const changed_files = @import("omnitrix-tui/changed_files.zig");

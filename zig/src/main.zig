@@ -166,19 +166,17 @@ fn runTui(allocator: std.mem.Allocator, io: std.Io) !void {
     const is_tty = (std.Io.File.stdout().isTty(io) catch false) and (std.Io.File.stdin().isTty(io) catch false);
 
     if (!is_tty) {
-        std.debug.print("⚠️ Terminal TTY modunda değil. Headless simülasyon karesi oluşturuluyor...\n", .{});
-        var mock = try omnitrix.mock_terminal.MockTerminal.init(allocator, 100, 30);
-        defer mock.deinit();
+        std.debug.print("⚠️ Terminal TTY modunda değil. Linux Kernel PTY (/dev/ptmx) başlatılıyor...\n", .{});
+        const pty_harness_mod = omnitrix.pty_harness;
+        var harness = try pty_harness_mod.PtyHarness.init(allocator, 100, 30);
+        defer harness.deinit();
 
-        var app = try omnitrix.tui.Tui.init(allocator, mock.backend(), 100);
-        defer app.deinit();
+        _ = try harness.tui.blocks.addBlock(.system, "System", "Omnitrix single-process Zig runtime başlatıldı.");
+        _ = try harness.tui.blocks.addBlock(.user, "User", "omnitrix --tui headless test");
+        _ = try harness.tui.blocks.addBlock(.agent, "Omnitrix", "Tüm sistemler aktif: IO EventLoop, TaskScheduler, FileMutationLedger ve TUI renderer devrede.");
 
-        _ = try app.blocks.addBlock(.system, "System", "Omnitrix single-process Zig runtime başlatıldı.");
-        _ = try app.blocks.addBlock(.user, "User", "omnitrix --tui headless test");
-        _ = try app.blocks.addBlock(.agent, "Omnitrix", "Tüm sistemler aktif: IO EventLoop, TaskScheduler, FileMutationLedger ve TUI renderer devrede.");
-
-        try app.renderFrame();
-        std.debug.print("✅ Headless render başarıyla tamamlandı.\n", .{});
+        try harness.tui.renderFrame();
+        std.debug.print("✅ Kernel PTY render başarıyla tamamlandı.\n", .{});
         return;
     }
 

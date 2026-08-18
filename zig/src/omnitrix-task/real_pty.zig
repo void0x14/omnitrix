@@ -72,8 +72,8 @@ pub const RealPty = struct {
     pub fn openMaster(self: *RealPty, size: PtySize) PtyError!void {
         if (self.master_fd >= 0) return;
 
-        // 1. /dev/ptmx aç
-        const flags: std.os.linux.O = .{ .ACCMODE = .RDWR, .NOCTTY = true, .CLOEXEC = true };
+        // 1. /dev/ptmx aç (NONBLOCK ile kilitlenmeleri önle)
+        const flags: std.os.linux.O = .{ .ACCMODE = .RDWR, .NOCTTY = true, .CLOEXEC = true, .NONBLOCK = true };
         const fd_res = std.os.linux.open("/dev/ptmx", flags, 0);
         if (fd_res < 0) return error.OpenPtmxFailed;
         const master: i32 = @intCast(fd_res);
@@ -201,11 +201,15 @@ pub const RealPty = struct {
         return @intCast(res);
     }
 
-    /// Master PTY'ye veri yazar (tuş basımları veya girdi).
+    /// Master PTY'ye veri yazar (non-blocking, tuş basımları veya girdi).
     pub fn writeMaster(self: *RealPty, data: []const u8) PtyError!usize {
         if (self.master_fd < 0) return error.IoError;
         const res = std.os.linux.write(self.master_fd, data.ptr, data.len);
-        if (res < 0) return error.IoError;
+        if (res < 0) {
+            const err_no = -res;
+            if (err_no == 11 or err_no == 5) return 0; // EAGAIN / EIO
+            return error.IoError;
+        }
         return @intCast(res);
     }
 

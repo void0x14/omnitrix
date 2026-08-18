@@ -17,6 +17,8 @@ const changed_files = @import("changed_files.zig");
 const goal_mod = @import("goal.zig");
 const voice_mod = @import("voice.zig");
 const input_box_mod = @import("input_box.zig");
+const sidebar_mod = @import("sidebar.zig");
+const question_view_mod = @import("question_view.zig");
 
 pub const TerminalBackend = term.TerminalBackend;
 pub const TerminalSize = term.TerminalSize;
@@ -30,6 +32,8 @@ pub const ChangedFilesPanel = changed_files.ChangedFilesPanel;
 pub const GoalTracker = goal_mod.GoalTracker;
 pub const VoiceMode = voice_mod.VoiceMode;
 pub const InputBox = input_box_mod.InputBox;
+pub const Sidebar = sidebar_mod.Sidebar;
+pub const QuestionViewState = question_view_mod.QuestionViewState;
 
 pub const FocusPanel = enum {
     conversation,
@@ -46,6 +50,8 @@ pub const Tui = struct {
     goal: GoalTracker,
     voice: VoiceMode,
     input_box: InputBox,
+    sidebar: Sidebar,
+    question_box: QuestionViewState,
 
     focus: FocusPanel = .conversation,
     size: TerminalSize = .{ .cols = 100, .rows = 30 },
@@ -76,6 +82,11 @@ pub const Tui = struct {
         var changed_inst = ChangedFilesPanel.init(allocator);
         changed_inst.handleResize(size.cols, size.rows);
 
+        var default_qb = QuestionViewState.init(allocator, "Crush'da olan ama senin kodunda olmayan 3 mekanizma (prompt birleştirme, kesin iptal, döngü tespiti) için hangisini yapalım?", false);
+        try default_qb.addOption("Crush'dan al, ekle", "Crush'daki fold + iptal + döngü tespitini alıp Omnitrix'e ekleyeceğiz. Senin kodunda olmayan kısımlar crush'dan tamamlanacak.");
+        try default_qb.addOption("Kendi kodundakileri kullan", "Senin kodundaki mekanizmaları (combine, doom_loop sinyali, goal stall) temel alacağız, crush'dan bir şey eklemeyeceğiz.");
+        try default_qb.addOption("İkisini birleştir", "İkisinin de en iyi kısımlarını birleştireceğiz: crush'ın kesin iptal mekanizması + senin kodundaki combine ve goal stall.");
+
         return .{
             .allocator = allocator,
             .backend = backend,
@@ -85,6 +96,8 @@ pub const Tui = struct {
             .goal = default_goal,
             .voice = VoiceMode.init(allocator),
             .input_box = InputBox.init(allocator),
+            .sidebar = Sidebar.init(allocator),
+            .question_box = default_qb,
             .focus = .conversation,
             .size = size,
             .is_running = true,
@@ -101,6 +114,8 @@ pub const Tui = struct {
         self.goal.deinit();
         self.voice.deinit();
         self.input_box.deinit();
+        self.sidebar.deinit();
+        self.question_box.deinit();
         self.* = undefined;
     }
 
@@ -228,13 +243,13 @@ pub const Tui = struct {
         }
     }
 
-    /// Tüm TUI ekranını OpenCode & Grok stili ile çizer (Zero-Flicker Spatial Render)
+    /// Tüm TUI ekranını OpenCode 1.18.18 stili ile çizer (Screenshot 1:1 Pixel-Perfect Layout)
     pub fn renderFrame(self: *Tui) !void {
         self.voice.tick();
 
         const width = self.size.cols;
         const height = self.size.rows;
-        if (width < 30 or height < 10) return;
+        if (width < 40 or height < 10) return;
 
         var frame_buf = std.ArrayList(u8).empty;
         defer frame_buf.deinit(self.allocator);
@@ -244,57 +259,28 @@ pub const Tui = struct {
 
         const max_line_w = if (width > 1) width - 1 else width;
 
-        // 1. ÜST BAŞLIK ÇUBUĞU (Row 0)
-        var head_buf = std.ArrayList(u8).empty;
-        defer head_buf.deinit(self.allocator);
+        // 1. ÜST SEKMELER ÇUBUĞU (Top OS Tabs Bar)
+        var tab_buf = std.ArrayList(u8).empty;
+        defer tab_buf.deinit(self.allocator);
 
-        try term.appendStyle(&head_buf, self.allocator, .{ .fg = theme.Theme.text_cyan, .bg = theme.Theme.header_bg, .bold = true });
-        try head_buf.appendSlice(self.allocator, " ✦ OMNITRIX ");
-        try term.appendStyle(&head_buf, self.allocator, .{ .fg = theme.Theme.text_dim, .bg = theme.Theme.header_bg });
-        try head_buf.appendSlice(self.allocator, "│ ");
+        const tab1_style = if (self.focus == .conversation) Style{ .fg = Color.bright_white, .bg = Color{ .ansi = 237 }, .bold = true } else Style{ .fg = Color{ .ansi = 244 }, .bg = Color{ .ansi = 234 } };
+        const tab2_style = if (self.focus == .changed_files) Style{ .fg = Color.bright_white, .bg = Color{ .ansi = 237 }, .bold = true } else Style{ .fg = Color{ .ansi = 244 }, .bg = Color{ .ansi = 234 } };
+        const tab3_style = if (self.focus == .diff) Style{ .fg = Color.bright_white, .bg = Color{ .ansi = 237 }, .bold = true } else Style{ .fg = Color{ .ansi = 244 }, .bg = Color{ .ansi = 234 } };
 
-        // Git Branch
-        try term.appendStyle(&head_buf, self.allocator, .{ .fg = theme.Theme.text_green, .bg = theme.Theme.header_bg, .bold = true });
-        try head_buf.appendSlice(self.allocator, "🌿 ");
-        try head_buf.appendSlice(self.allocator, self.branch_name);
-        try term.appendStyle(&head_buf, self.allocator, .{ .fg = theme.Theme.text_dim, .bg = theme.Theme.header_bg });
-        try head_buf.appendSlice(self.allocator, " │ ");
+        try term.appendStyle(&tab_buf, self.allocator, tab1_style);
+        try tab_buf.appendSlice(self.allocator, "  OC | Omnitrix projesi ilk adım ✕  ");
+        try term.appendStyle(&tab_buf, self.allocator, tab2_style);
+        try tab_buf.appendSlice(self.allocator, "  agy --dangerously-skip-permissions  ");
+        try term.appendStyle(&tab_buf, self.allocator, tab3_style);
+        try tab_buf.appendSlice(self.allocator, "  .../Belgeler/omnitrix/zig  ");
+        try tab_buf.appendSlice(self.allocator, theme.ANSI.reset);
 
-        // Sekmeler (Tabs)
-        const tab1_style = if (self.focus == .conversation) Style{ .fg = Color.bright_white, .bg = Color{ .ansi = 239 }, .bold = true } else Style{ .fg = theme.Theme.text_dim, .bg = theme.Theme.header_bg };
-        const tab2_style = if (self.focus == .changed_files) Style{ .fg = Color.bright_white, .bg = Color{ .ansi = 239 }, .bold = true } else Style{ .fg = theme.Theme.text_dim, .bg = theme.Theme.header_bg };
-        const tab3_style = if (self.focus == .diff) Style{ .fg = Color.bright_white, .bg = Color{ .ansi = 239 }, .bold = true } else Style{ .fg = theme.Theme.text_dim, .bg = theme.Theme.header_bg };
-
-        try term.appendStyle(&head_buf, self.allocator, tab1_style);
-        try head_buf.appendSlice(self.allocator, " [1: Chat] ");
-
-        try term.appendStyle(&head_buf, self.allocator, tab2_style);
-        try head_buf.appendSlice(self.allocator, " [2: Files] ");
-
-        try term.appendStyle(&head_buf, self.allocator, tab3_style);
-        try head_buf.appendSlice(self.allocator, " [3: Diff] ");
-
-        // Sağ Durum Rozeti
-        const right_badge = " 🟢 READY │ single-process ";
-        const head_content_w = unicode.strWidth(" ✦ OMNITRIX │ 🌿 ") + unicode.strWidth(self.branch_name) + unicode.strWidth(" │  [1: Chat]  [2: Files]  [3: Diff] ") + unicode.strWidth(right_badge);
-
-        var h_pad = if (max_line_w > head_content_w) max_line_w - head_content_w else 0;
-        try term.appendStyle(&head_buf, self.allocator, .{ .bg = theme.Theme.header_bg });
-        while (h_pad > 0) : (h_pad -= 1) {
-            try head_buf.appendSlice(self.allocator, " ");
-        }
-
-        try term.appendStyle(&head_buf, self.allocator, .{ .fg = theme.Theme.text_green, .bg = theme.Theme.header_bg, .bold = true });
-        try head_buf.appendSlice(self.allocator, right_badge);
-        try head_buf.appendSlice(self.allocator, theme.ANSI.reset);
-
-        try frame_buf.appendSlice(self.allocator, head_buf.items);
+        try frame_buf.appendSlice(self.allocator, tab_buf.items);
         try frame_buf.appendSlice(self.allocator, "\x1b[K\n");
 
-        // 2. GÖVDE VE İÇERİK HESAPLAMA (Spatial Multi-Panel)
-        const is_spatial_split = (width >= 105 and self.focus == .conversation);
-        const sidebar_w: usize = if (is_spatial_split) 30 else 0;
-        const main_content_w: usize = if (is_spatial_split) max_line_w - sidebar_w - 1 else max_line_w;
+        // 2. İKİ SÜTUNLU MEKANSAL ALAN (Left: Chat/Question, Right: OpenCode Sidebar)
+        const sidebar_w: usize = if (width >= 100) @min(38, width / 3) else 0;
+        const main_content_w: usize = if (sidebar_w > 0) max_line_w - sidebar_w - 2 else max_line_w;
 
         var main_lines = std.ArrayList([]const u8).empty;
         defer {
@@ -308,50 +294,42 @@ pub const Tui = struct {
             sidebar_lines.deinit(self.allocator);
         }
 
-        if (is_spatial_split) {
-            // Sol Yan Panel: Workspace & Subagents
-            var side_buf = std.ArrayList(u8).empty;
-            defer side_buf.deinit(self.allocator);
-
-            // Başlık
-            try term.appendStyle(&side_buf, self.allocator, .{ .fg = theme.Theme.text_cyan, .bold = true });
-            try side_buf.appendSlice(self.allocator, "╭─ 📂 Workspace ─────────╮");
-            try side_buf.appendSlice(self.allocator, theme.ANSI.reset);
-            try sidebar_lines.append(self.allocator, try self.allocator.dupe(u8, side_buf.items));
-            side_buf.clearRetainingCapacity();
-
-            try sidebar_lines.append(self.allocator, try self.allocator.dupe(u8, "│ 🌿 masterplan          │"));
-            try sidebar_lines.append(self.allocator, try self.allocator.dupe(u8, "│ 📁 src/                │"));
-            try sidebar_lines.append(self.allocator, try self.allocator.dupe(u8, "│   📄 root.zig          │"));
-            try sidebar_lines.append(self.allocator, try self.allocator.dupe(u8, "│   📁 omnitrix-tui/     │"));
-            try sidebar_lines.append(self.allocator, try self.allocator.dupe(u8, "│   📁 omnitrix-task/    │"));
-            try sidebar_lines.append(self.allocator, try self.allocator.dupe(u8, "├─ 🤖 Subagents ─────────┤"));
-            try sidebar_lines.append(self.allocator, try self.allocator.dupe(u8, "│  ◆ Kaşif       [idle]  │"));
-            try sidebar_lines.append(self.allocator, try self.allocator.dupe(u8, "│  ◆ Juryrigg    [run]   │"));
-            try sidebar_lines.append(self.allocator, try self.allocator.dupe(u8, "│  ◆ Bal Porsuğu [idle]  │"));
-            try sidebar_lines.append(self.allocator, try self.allocator.dupe(u8, "╰────────────────────────╯"));
-        }
-
-        // Voice banner aktifse ekle
-        if (self.voice.state != .off) {
-            var v_lines = try self.voice.renderVoiceBanner(self.allocator, main_content_w);
-            defer v_lines.deinit(self.allocator);
-            for (v_lines.items) |vl| try main_lines.append(self.allocator, vl);
-        }
-
-        // Goal tracker aktifse ekle
-        if (self.focus == .conversation) {
-            var g_lines = try self.goal.renderToLines(self.allocator, main_content_w);
-            defer g_lines.deinit(self.allocator);
-            for (g_lines.items) |gl| try main_lines.append(self.allocator, gl);
+        // Sağ Sidebar Satırlarını Oluştur
+        if (sidebar_w > 0) {
+            var sb_lines = try self.sidebar.renderToLines(self.allocator, sidebar_w);
+            defer sb_lines.deinit(self.allocator);
+            for (sb_lines.items) |sbl| try sidebar_lines.append(self.allocator, sbl);
         }
 
         // Seçili panele göre ana içerik
         switch (self.focus) {
             .conversation => {
+                // Sol Ana İçerik Satırlarını Oluştur
+                if (self.voice.state != .off) {
+                    var v_lines = try self.voice.renderVoiceBanner(self.allocator, main_content_w);
+                    defer v_lines.deinit(self.allocator);
+                    for (v_lines.items) |vl| try main_lines.append(self.allocator, vl);
+                    try main_lines.append(self.allocator, try self.allocator.dupe(u8, ""));
+                }
+
+                // Konuşma metinleri (Markdown dökümü)
                 var c_lines = try self.blocks.renderToLines(self.allocator, main_content_w);
                 defer c_lines.deinit(self.allocator);
                 for (c_lines.items) |cl| try main_lines.append(self.allocator, cl);
+
+                // Durum: Asked 1 question
+                var ask_buf = std.ArrayList(u8).empty;
+                defer ask_buf.deinit(self.allocator);
+                try term.appendStyle(&ask_buf, self.allocator, .{ .fg = Color{ .ansi = 244 } });
+                try ask_buf.appendSlice(self.allocator, "→ Asked 1 question");
+                try ask_buf.appendSlice(self.allocator, theme.ANSI.reset);
+                try main_lines.append(self.allocator, try self.allocator.dupe(u8, ask_buf.items));
+                try main_lines.append(self.allocator, try self.allocator.dupe(u8, ""));
+
+                // OpenCode Soru & Seçim Kartı
+                var q_lines = try self.question_box.renderToLines(self.allocator, main_content_w);
+                defer q_lines.deinit(self.allocator);
+                for (q_lines.items) |ql| try main_lines.append(self.allocator, ql);
             },
             .changed_files => {
                 var f_lines = try self.changed_panel.renderToLines(self.allocator, max_line_w);
@@ -365,112 +343,96 @@ pub const Tui = struct {
             },
         }
 
-        // 3. ALT GİRİŞ KUTUSU VE KISAYOLLAR
-        var input_lines = try self.input_box.renderToLines(self.allocator, max_line_w);
-        defer {
-            for (input_lines.items) |il| self.allocator.free(il);
-            input_lines.deinit(self.allocator);
-        }
-
-        const reserved_bottom_rows = input_lines.items.len + 1; // input_box + footer
-        const max_body_rows: usize = if (height > reserved_bottom_rows + 1) height - reserved_bottom_rows - 1 else 1;
-
-        // Gövde satırlarını ekrana yaz (Row 1 .. max_body_rows)
+        // Satır Satır Birleştirerek Ekrana Yaz (Zero-Flicker Overwrite)
+        const max_body_rows: usize = if (height > 1) height - 1 else 1;
         const start_row = if (main_lines.items.len > max_body_rows) main_lines.items.len - max_body_rows else 0;
         var r_count: usize = 0;
 
         for (main_lines.items[start_row..]) |line| {
             if (r_count >= max_body_rows) break;
 
-            if (is_spatial_split) {
-                const s_line = if (r_count < sidebar_lines.items.len) sidebar_lines.items[r_count] else "";
-                const s_trunc = try unicode.truncateToWidth(self.allocator, s_line, sidebar_w, "");
-                defer self.allocator.free(s_trunc);
+            if (sidebar_w > 0) {
+                const truncated_main = try unicode.truncateToWidth(self.allocator, line, main_content_w, "");
+                defer self.allocator.free(truncated_main);
+                try frame_buf.appendSlice(self.allocator, truncated_main);
 
-                var pad_s = if (sidebar_w > unicode.strWidth(s_trunc)) sidebar_w - unicode.strWidth(s_trunc) else 0;
-
-                try frame_buf.appendSlice(self.allocator, s_trunc);
-                while (pad_s > 0) : (pad_s -= 1) {
+                // Ortadaki boşluğu doldur
+                const cur_main_w = unicode.strWidth(truncated_main);
+                var pad_main = if (main_content_w > cur_main_w) main_content_w - cur_main_w else 0;
+                while (pad_main > 0) : (pad_main -= 1) {
                     try frame_buf.appendSlice(self.allocator, " ");
                 }
-                try frame_buf.appendSlice(self.allocator, " ");
 
-                const truncated = try unicode.truncateToWidth(self.allocator, line, main_content_w, "");
-                defer self.allocator.free(truncated);
-                try frame_buf.appendSlice(self.allocator, truncated);
+                // Dikey Ayırıcı Çizgi (Muted vertical separator)
+                try frame_buf.appendSlice(self.allocator, " │ ");
+
+                // Sağ Sidebar Satırı
+                const s_line = if (r_count < sidebar_lines.items.len) sidebar_lines.items[r_count] else "";
+                const truncated_side = try unicode.truncateToWidth(self.allocator, s_line, sidebar_w, "");
+                defer self.allocator.free(truncated_side);
+                try frame_buf.appendSlice(self.allocator, truncated_side);
             } else {
-                const truncated = try unicode.truncateToWidth(self.allocator, line, max_line_w, "");
-                defer self.allocator.free(truncated);
-                try frame_buf.appendSlice(self.allocator, truncated);
+                const truncated_main = try unicode.truncateToWidth(self.allocator, line, max_line_w, "");
+                defer self.allocator.free(truncated_main);
+                try frame_buf.appendSlice(self.allocator, truncated_main);
             }
 
-            try frame_buf.appendSlice(self.allocator, "\x1b[K\n");
             r_count += 1;
-        }
-
-        // Kalan boşlukları temiz satırlarla doldur
-        while (r_count < max_body_rows) : (r_count += 1) {
-            if (is_spatial_split and r_count < sidebar_lines.items.len) {
-                const s_line = sidebar_lines.items[r_count];
-                const s_trunc = try unicode.truncateToWidth(self.allocator, s_line, sidebar_w, "");
-                defer self.allocator.free(s_trunc);
-                try frame_buf.appendSlice(self.allocator, s_trunc);
+            if (r_count < max_body_rows) {
+                try frame_buf.appendSlice(self.allocator, "\x1b[K\n");
+            } else {
+                try frame_buf.appendSlice(self.allocator, "\x1b[K");
             }
-            try frame_buf.appendSlice(self.allocator, "\x1b[K\n");
         }
 
-        // 4. GİRİŞ KUTUSUNU YAZ
-        for (input_lines.items) |iline| {
-            const truncated_in = try unicode.truncateToWidth(self.allocator, iline, max_line_w, "");
-            defer self.allocator.free(truncated_in);
-            try frame_buf.appendSlice(self.allocator, truncated_in);
-            try frame_buf.appendSlice(self.allocator, "\x1b[K\n");
+        // Kalan boş satırları doldur
+        while (r_count < max_body_rows) {
+            if (sidebar_w > 0 and r_count < sidebar_lines.items.len) {
+                var p: usize = 0;
+                while (p < main_content_w) : (p += 1) try frame_buf.appendSlice(self.allocator, " ");
+                try frame_buf.appendSlice(self.allocator, " │ ");
+                const s_line = sidebar_lines.items[r_count];
+                const truncated_side = try unicode.truncateToWidth(self.allocator, s_line, sidebar_w, "");
+                defer self.allocator.free(truncated_side);
+                try frame_buf.appendSlice(self.allocator, truncated_side);
+            }
+
+            r_count += 1;
+            if (r_count < max_body_rows) {
+                try frame_buf.appendSlice(self.allocator, "\x1b[K\n");
+            } else {
+                try frame_buf.appendSlice(self.allocator, "\x1b[K");
+            }
         }
 
-        // 5. EN ALT KISAYOL ÇUBUĞU (Row height - 1)
-        var foot_buf = std.ArrayList(u8).empty;
-        defer foot_buf.deinit(self.allocator);
-
-        try term.appendStyle(&foot_buf, self.allocator, .{ .fg = Color{ .ansi = 250 }, .bg = theme.Theme.status_bg });
-        try foot_buf.appendSlice(self.allocator, " [Enter] Send │ [Tab] Panel │ [/] Commands │ [Ctrl+V] Voice │ [q] Quit");
-
-        const foot_content_w = unicode.strWidth(" [Enter] Send │ [Tab] Panel │ [/] Commands │ [Ctrl+V] Voice │ [q] Quit");
-        var f_pad = if (max_line_w > foot_content_w) max_line_w - foot_content_w else 0;
-        while (f_pad > 0) : (f_pad -= 1) {
-            try foot_buf.appendSlice(self.allocator, " ");
-        }
-        try foot_buf.appendSlice(self.allocator, theme.ANSI.reset);
-        try frame_buf.appendSlice(self.allocator, foot_buf.items);
-        try frame_buf.appendSlice(self.allocator, "\x1b[K");
-
-        // Tek seferde ekrana bas (Zero Flicker Atomic Write)
+        // Tek seferde terminale bas (Zero Flicker Atomic Syscall)
         try self.backend.write(frame_buf.items);
         try self.backend.flush();
     }
 };
 
-test "opencode tui header, goal, input box ve voice render" {
-    const mock_term = @import("mock_terminal.zig");
-    var mock = try mock_term.MockTerminal.init(std.testing.allocator, 100, 30);
-    defer mock.deinit();
+test "opencode 1.18.18 tui layout, sidebar, question box ve voice render" {
+    const pty_harness_mod = @import("pty_harness.zig");
+    var harness = try pty_harness_mod.PtyHarness.init(std.testing.allocator, 120, 40);
+    defer harness.deinit();
 
-    var app = try Tui.init(std.testing.allocator, mock.backend(), 20);
-    defer app.deinit();
+    _ = try harness.tui.blocks.addBlock(.user, "Operator", "Sorun şu: Feature matrix'deki mekanizmaları al.");
+    _ = try harness.tui.blocks.addBlock(.agent, "Omnitrix", "Crush'daki mekanizmalar ile kendi kodundaki mekanizmaları karşılaştırıyoruz.");
 
-    _ = try app.blocks.addBlock(.user, "Operator", "Run full system diagnostic");
-    _ = try app.blocks.addBlock(.agent, "Omnitrix", "Diagnostic complete. All 51 core modules nominal.");
+    try harness.tui.renderFrame();
 
-    try app.renderFrame();
+    try std.testing.expect(harness.assertContains("Omnitrix projesi ilk adım"));
+    try std.testing.expect(harness.assertContains("Context"));
+    try std.testing.expect(harness.assertContains("MCP"));
+    try std.testing.expect(harness.assertContains("Build"));
+    try std.testing.expect(harness.assertContains("MiMo-V2.5-Pro"));
+    try std.testing.expect(harness.assertContains("Crush"));
+    try std.testing.expect(harness.assertContains("OpenCode 1.18.18"));
 
-    try std.testing.expect(mock.containsText("OMNITRIX"));
-    try std.testing.expect(mock.containsText("Goal:"));
-    try std.testing.expect(mock.containsText("Prompt"));
-    try std.testing.expect(mock.containsText("Claude 3.5"));
+    // Sesli mod aç (Ctrl+V)
+    try harness.tui.handleKey("\x16");
+    try std.testing.expect(harness.tui.voice.state == .listening);
 
-    // Sesli mod aç
-    try app.handleKey("\x16"); // Ctrl+V
-    try std.testing.expect(app.voice.state == .listening);
-
-    try app.renderFrame();
-    try std.testing.expect(mock.containsText("GROK VOICE MODE"));
+    try harness.tui.renderFrame();
+    try std.testing.expect(harness.assertContains("GROK VOICE MODE"));
 }
