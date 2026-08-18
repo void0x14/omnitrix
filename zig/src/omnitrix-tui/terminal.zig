@@ -437,12 +437,14 @@ pub const PosixTerminal = struct {
         if (builtin.os.tag == .windows) return .{ .cols = 80, .rows = 24 };
 
         var ws: std.posix.winsize = undefined;
-        const res = std.posix.system.ioctl(self.stdout_fd, std.posix.system.TIOCGWINSZ, @intFromPtr(&ws));
-        if (std.posix.errno(res) == .SUCCESS and ws.col > 0 and ws.row > 0) {
-            return .{
-                .cols = ws.col,
-                .rows = ws.row,
-            };
+        if (builtin.os.tag == .linux) {
+            const res = std.os.linux.ioctl(self.stdout_fd, 0x5413, @intFromPtr(&ws));
+            if (std.os.linux.errno(res) == .SUCCESS and ws.col > 0 and ws.row > 0) {
+                return .{
+                    .cols = ws.col,
+                    .rows = ws.row,
+                };
+            }
         }
         return .{ .cols = 80, .rows = 24 };
     }
@@ -453,26 +455,36 @@ pub const PosixTerminal = struct {
 
     pub fn flush(self: *PosixTerminal) TerminalError!void {
         if (self.write_buffer.items.len == 0) return;
-        _ = std.posix.write(self.stdout_fd, self.write_buffer.items) catch return error.IoError;
+        if (builtin.os.tag == .linux) {
+            const rc = std.os.linux.write(self.stdout_fd, self.write_buffer.items.ptr, self.write_buffer.items.len);
+            if (std.os.linux.errno(rc) != .SUCCESS) return error.IoError;
+        }
         self.write_buffer.clearRetainingCapacity();
     }
 
     pub fn readInput(self: *PosixTerminal, buf: []u8) TerminalError!usize {
-        return std.posix.read(self.stdin_fd, buf) catch |err| switch (err) {
-            error.WouldBlock => 0,
-            else => return error.IoError,
-        };
+        if (buf.len == 0) return 0;
+        if (builtin.os.tag == .linux) {
+            const rc = std.os.linux.read(self.stdin_fd, buf.ptr, buf.len);
+            const err = std.os.linux.errno(rc);
+            if (err == .SUCCESS) return rc;
+            if (err == .AGAIN) return 0;
+            return error.IoError;
+        }
+        return 0;
     }
 
     /// Panik, sinyal veya çıkış durumlarında terminali kesinlikle temizler.
     pub fn cleanup(self: *PosixTerminal) void {
-        if (self.cursor_hidden) {
-            _ = std.posix.write(self.stdout_fd, ANSI.show_cursor) catch {};
-            self.cursor_hidden = false;
-        }
-        if (self.in_alt_screen) {
-            _ = std.posix.write(self.stdout_fd, ANSI.exit_alt_screen) catch {};
-            self.in_alt_screen = false;
+        if (builtin.os.tag == .linux) {
+            if (self.cursor_hidden) {
+                _ = std.os.linux.write(self.stdout_fd, ANSI.show_cursor.ptr, ANSI.show_cursor.len);
+                self.cursor_hidden = false;
+            }
+            if (self.in_alt_screen) {
+                _ = std.os.linux.write(self.stdout_fd, ANSI.exit_alt_screen.ptr, ANSI.exit_alt_screen.len);
+                self.in_alt_screen = false;
+            }
         }
         if (self.in_raw_mode) {
             self.exitRawMode() catch {};

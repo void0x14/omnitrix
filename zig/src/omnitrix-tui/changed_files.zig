@@ -255,6 +255,32 @@ pub const ChangedFilesPanel = struct {
         try self.project_entries.append(self.allocator, entry);
     }
 
+    /// Kolaylık fonksiyonu: Proje değişikliği ekler
+    pub fn addProjectChange(self: *ChangedFilesPanel, path: []const u8, actor: Actor) !void {
+        if (!shouldIncludePath(path)) return;
+        var entry = try ChangedFileEntry.init(self.allocator, path, .modified, actor);
+        errdefer entry.deinit(self.allocator);
+        try self.project_entries.append(self.allocator, entry);
+    }
+
+    /// Kolaylık fonksiyonu: Ajan değişikliği ekler
+    pub fn addAgentChange(
+        self: *ChangedFilesPanel,
+        path: []const u8,
+        kind: MutationKind,
+        additions: ?u64,
+        deletions: ?u64,
+        agent_name: ?[]const u8,
+    ) !void {
+        if (!shouldIncludePath(path)) return;
+        var entry = try ChangedFileEntry.init(self.allocator, path, kind, .agent);
+        errdefer entry.deinit(self.allocator);
+        entry.additions = additions;
+        entry.deletions = deletions;
+        try entry.setAgentName(self.allocator, agent_name);
+        try self.agent_entries.append(self.allocator, entry);
+    }
+
     /// Commit olayı gerçekleştiğinde uncommitted görünüm temizlenir ancak oturum geçmişi korunur (Doğrulama 6).
     pub fn handleCommit(self: *ChangedFilesPanel) !void {
         // Agent ve project girdilerini committed_history'ye taşı
