@@ -1,0 +1,11 @@
+.{
+    .name = .omnitrix,
+    .version = "0.0.0",
+    .fingerprint = 0x799d9958feee6e42,
+    .minimum_zig_version = "0.17.0-dev.248+95507faf1",
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "src",
+    },
+}
