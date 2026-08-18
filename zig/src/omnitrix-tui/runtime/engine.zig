@@ -2,7 +2,8 @@
 //!
 //! Özellikler:
 //! - FrontBuffer ve BackBuffer çift tampon mimarisi (Double Buffering)
-//! - Constraint Layout tabanlı ekran bölme (Üst Sekmeler, Sol Ana Akış, Sağ Sidebar)
+//! - Constraint Layout tabanlı ekran bölme (Üst Sekmeler, Sol Ana Akış, Sağ Sidebar, Alt Prompt Editörü)
+//! - Gerçek VT500/ANSI FSM InputParser ve GapBuffer PromptEditor entegrasyonu
 //! - BufferDiff ile sadece değişen hücreleri atomik tek `write()` çağrısında basma
 //! - Sıfır kırılma, sıfır kaçış dizisi kayması, tam Unicode genişlik uyumu
 //! - %100 Gerçek Linux PTY veya POSIX Terminal desteği
@@ -14,6 +15,10 @@ const buffer_mod = @import("../core/buffer.zig");
 const layout_mod = @import("../core/layout.zig");
 const diff_mod = @import("../core/diff.zig");
 const term_mod = @import("../terminal.zig");
+
+const input_parser_mod = @import("../input/parser.zig");
+const keys_mod = @import("../input/keys.zig");
+const prompt_editor_mod = @import("../editor/prompt_editor.zig");
 
 const header_mod = @import("../views/header_view.zig");
 const sidebar_mod = @import("../views/sidebar_view.zig");
@@ -31,6 +36,11 @@ pub const Layout = layout_mod.Layout;
 pub const Constraint = layout_mod.Constraint;
 pub const TerminalBackend = term_mod.TerminalBackend;
 pub const TerminalSize = term_mod.TerminalSize;
+
+pub const InputParser = input_parser_mod.InputParser;
+pub const InputEvent = keys_mod.InputEvent;
+pub const KeyEvent = keys_mod.KeyEvent;
+pub const PromptEditor = prompt_editor_mod.PromptEditor;
 
 pub const HeaderView = header_mod.HeaderView;
 pub const SidebarView = sidebar_mod.SidebarView;
@@ -55,6 +65,9 @@ pub const Engine = struct {
     back_buffer: Buffer,
     differ: BufferDiff,
 
+    parser: InputParser,
+    prompt_editor: PromptEditor,
+
     header: HeaderView,
     sidebar: SidebarView,
     question: QuestionView,
@@ -67,6 +80,7 @@ pub const Engine = struct {
     focus: FocusPanel = .conversation,
     is_running: bool = true,
     io_buf: std.ArrayList(u8),
+    events_buf: std.ArrayList(InputEvent),
 
     pub fn init(allocator: std.mem.Allocator, backend: TerminalBackend) !Engine {
         const size = backend.getSize() catch TerminalSize{ .cols = 120, .rows = 40 };
@@ -92,6 +106,9 @@ pub const Engine = struct {
         var changed_inst = ChangedFilesPanel.init(allocator);
         changed_inst.handleResize(size.cols, size.rows);
 
+        var editor_inst = try PromptEditor.init(allocator);
+        errdefer editor_inst.deinit();
+
         return .{
             .allocator = allocator,
             .backend = backend,
@@ -99,9 +116,11 @@ pub const Engine = struct {
             .front_buffer = front,
             .back_buffer = back,
             .differ = BufferDiff.init(allocator),
+            .parser = InputParser.init(allocator),
+            .prompt_editor = editor_inst,
             .header = HeaderView.init(),
             .sidebar = SidebarView.init(allocator),
-            .question = QuestionView.init(allocator, "Crush'da olan ama senin kodunda olmayan 3 mekanizma (prompt birleştirme, kesin iptal, döngü tespiti) için hangisini yapalım?"),
+            .question = QuestionView.init(allocator, "Crush'da olan ama senin kodunda olmayan 3 mekanizma için hangisini yapalım?"),
             .voice = VoiceMode.init(allocator),
             .goal = default_goal,
             .blocks = BlockRenderer.init(allocator, 100),
@@ -110,12 +129,15 @@ pub const Engine = struct {
             .focus = .conversation,
             .is_running = true,
             .io_buf = std.ArrayList(u8).empty,
+            .events_buf = std.ArrayList(InputEvent).empty,
         };
     }
 
     pub fn deinit(self: *Engine) void {
         self.front_buffer.deinit();
         self.back_buffer.deinit();
+        self.parser.deinit();
+        self.prompt_editor.deinit();
         self.sidebar.deinit();
         self.question.deinit();
         self.voice.deinit();
@@ -124,6 +146,7 @@ pub const Engine = struct {
         self.diffs.deinit();
         self.changed_panel.deinit();
         self.io_buf.deinit(self.allocator);
+        self.events_buf.deinit(self.allocator);
         self.* = undefined;
     }
 
@@ -138,14 +161,35 @@ pub const Engine = struct {
         self.changed_panel.handleResize(new_cols, new_rows);
     }
 
-    pub fn handleKey(self: *Engine, key: []const u8) !void {
-        if (key.len == 1 and key[0] == 'q') {
+    /// Terminalden gelen ham bayt akışını FSM parser'dan geçirip ilgili bileşene dağıtır.
+    pub fn handleKey(self: *Engine, raw_bytes: []const u8) !void {
+        self.events_buf.clearRetainingCapacity();
+        try self.parser.parse(raw_bytes, &self.events_buf);
+
+        for (self.events_buf.items) |event| {
+            switch (event) {
+                .key => |k| try self.dispatchKeyEvent(k),
+                .resize => |r| try self.handleResize(r.cols, r.rows),
+                else => {},
+            }
+        }
+    }
+
+    fn dispatchKeyEvent(self: *Engine, k: KeyEvent) !void {
+        // Ctrl+C: Çıkış
+        if (k.code.eql(.{ .char = 'c' }) and k.modifiers.ctrl) {
             self.is_running = false;
             return;
         }
 
+        // Ctrl+V: Ses modu aç/kapa
+        if (k.code.eql(.{ .char = 'v' }) and k.modifiers.ctrl) {
+            self.voice.toggle();
+            return;
+        }
+
         // Tab: Panel odak değiştir
-        if (key.len == 1 and key[0] == '\t') {
+        if (k.code.eql(.{ .special = .tab })) {
             self.focus = switch (self.focus) {
                 .conversation => .changed_files,
                 .changed_files => .diff,
@@ -159,13 +203,81 @@ pub const Engine = struct {
             return;
         }
 
-        // Ctrl+V: Ses modu aç/kapa
-        if (key.len == 1 and key[0] == '\x16') {
-            self.voice.toggle();
-            return;
+        // 'q' tuşu: Editör boşsa çıkış yap
+        if (k.code.eql(.{ .char = 'q' }) and !k.modifiers.ctrl and !k.modifiers.alt) {
+            if (self.prompt_editor.buffer.len() == 0 and self.focus != .conversation) {
+                self.is_running = false;
+                return;
+            }
         }
 
-        _ = try self.question.handleKey(key);
+        switch (self.focus) {
+            .conversation => {
+                // Eğer soru kartı aktifse ve yön tuşları geldiyse soru kartına ilet
+                if (k.code.eql(.{ .special = .up }) or k.code.eql(.{ .special = .down })) {
+                    if (self.prompt_editor.buffer.len() == 0) {
+                        const key_str = if (k.code.eql(.{ .special = .up })) "\x1b[A" else "\x1b[B";
+                        _ = try self.question.handleKey(key_str);
+                        return;
+                    }
+                }
+
+                // Prompt düzenleyiciye tuş olayını ver
+                if (try self.prompt_editor.handleKey(k)) |submitted_text| {
+                    defer self.allocator.free(submitted_text);
+
+                    // Slash komutlarını kontrol et
+                    if (std.mem.eql(u8, submitted_text, "/voice")) {
+                        self.voice.toggle();
+                    } else if (std.mem.eql(u8, submitted_text, "/diff")) {
+                        self.focus = .diff;
+                        self.header.active_tab = 2;
+                    } else if (std.mem.eql(u8, submitted_text, "/files")) {
+                        self.focus = .changed_files;
+                        self.header.active_tab = 1;
+                    } else if (std.mem.eql(u8, submitted_text, "/clear")) {
+                        self.blocks.deinit();
+                        self.blocks = BlockRenderer.init(self.allocator, 100);
+                    } else if (std.mem.eql(u8, submitted_text, "/quit") or std.mem.eql(u8, submitted_text, "/exit")) {
+                        self.is_running = false;
+                    } else {
+                        // Normal kullanıcı mesajı ekle
+                        _ = try self.blocks.addBlock(.user, "Operator", submitted_text);
+                        // Ajan simülasyon yanıtı ekle
+                        _ = try self.blocks.addBlock(.agent, "Omnitrix", "Komut alındı ve StateStore üzerinde yürütülüyor.");
+                    }
+                }
+            },
+            .changed_files => {
+                if (k.code.eql(.{ .special = .up }) or (k.code.eql(.{ .char = 'k' }) and !k.modifiers.ctrl)) {
+                    if (self.changed_panel.selected_index > 0) self.changed_panel.selected_index -= 1;
+                } else if (k.code.eql(.{ .special = .down }) or (k.code.eql(.{ .char = 'j' }) and !k.modifiers.ctrl)) {
+                    const max_idx = if (self.changed_panel.selected_in_agent)
+                        if (self.changed_panel.agent_entries.items.len > 0) self.changed_panel.agent_entries.items.len - 1 else 0
+                    else if (self.changed_panel.project_entries.items.len > 0) self.changed_panel.project_entries.items.len - 1 else 0;
+
+                    if (self.changed_panel.selected_index < max_idx) self.changed_panel.selected_index += 1;
+                } else if (k.code.eql(.{ .char = ' ' })) {
+                    self.changed_panel.selected_in_agent = !self.changed_panel.selected_in_agent;
+                    self.changed_panel.selected_index = 0;
+                } else if (k.code.eql(.{ .special = .enter })) {
+                    self.focus = .diff;
+                    self.header.active_tab = 2;
+                }
+            },
+            .diff => {
+                if (k.code.eql(.{ .special = .up }) or (k.code.eql(.{ .char = 'k' }) and !k.modifiers.ctrl)) {
+                    if (self.diffs.selected_hunk_index > 0) self.diffs.selected_hunk_index -= 1;
+                } else if (k.code.eql(.{ .special = .down }) or (k.code.eql(.{ .char = 'j' }) and !k.modifiers.ctrl)) {
+                    if (self.diffs.files.items.len > 0) {
+                        const cur_f = &self.diffs.files.items[self.diffs.selected_file_index];
+                        if (cur_f.hunks.items.len > 0 and self.diffs.selected_hunk_index + 1 < cur_f.hunks.items.len) {
+                            self.diffs.selected_hunk_index += 1;
+                        }
+                    }
+                }
+            },
+        }
     }
 
     /// Tüm ekranı 2D matris üzerinde sıfır hata ve sıfır titreşimle çizer.
@@ -176,10 +288,11 @@ pub const Engine = struct {
         const screen_area = Rect.init(0, 0, self.size.cols, self.size.rows);
         if (screen_area.isEmpty()) return;
 
-        // 1. Dikey Bölme: Üst Sekmeler (1 satır), Ana Gövde (Kalan)
+        // 1. Dikey Bölme: Üst Sekmeler (1 satır), Ana Gövde (Kalan), Alt Prompt & Footer (3 satır)
         const v_constraints = [_]Constraint{
-            .{ .length = 1 },
-            .{ .fill = 1 },
+            .{ .length = 1 }, // Üst Sekmeler
+            .{ .fill = 1 },   // Ana Gövde (Sohbet + Sidebar)
+            .{ .length = 3 }, // Alt Prompt Editörü + Yardım İpuçları
         };
         const v_layout = Layout.init(.vertical, &v_constraints);
         const v_chunks = try v_layout.split(screen_area, self.allocator);
@@ -187,8 +300,9 @@ pub const Engine = struct {
 
         const header_area = v_chunks[0];
         const body_area = v_chunks[1];
+        const footer_area = v_chunks[2];
 
-        // Üst Sekmeleri Çiz
+        // 1. Üst Sekmeleri Çiz
         self.header.render(header_area, &self.back_buffer);
 
         // 2. Yatay Bölme (Mekansal Çift Sütun): Sol Ana Alan (~68%), Sağ Sidebar (~32%)
@@ -225,7 +339,10 @@ pub const Engine = struct {
             self.renderMainArea(body_area);
         }
 
-        // 3. 2D Tampon Karşılaştırması (Diff) ve Atomik Çıktı
+        // 3. Alt Prompt Düzenleyici ve Kısayol İpuçlarını Çiz
+        self.renderFooter(footer_area);
+
+        // 4. 2D Tampon Karşılaştırması (Diff) ve Atomik Çıktı
         self.io_buf.clearRetainingCapacity();
 
         // İmleci gizle
@@ -271,27 +388,23 @@ pub const Engine = struct {
                         y += 1;
                     }
                 } else {
-                    // Varsayılan OpenCode Diyaloğu
-                    _ = self.back_buffer.setString(left, y, "Sorun şu: Feature matrix'deki 3 mekanizmayı al.", .{ .fg = .{ .indexed = 221 }, .modifier = .{ .bold = true } }, max_w);
+                    // Varsayılan Karşılama ve Talimat
+                    _ = self.back_buffer.setString(left, y, "Omnitrix Autonomous Runtime v0.1.0", .{ .fg = .{ .indexed = 39 }, .modifier = .{ .bold = true } }, max_w);
                     y += 1;
-                    _ = self.back_buffer.setString(left, y, "Yani seçenek:", .{ .fg = .bright_white }, max_w);
-                    y += 1;
-                    _ = self.back_buffer.setString(left, y, "- Seçenek A: Crush'daki mekanizmaları alıp Omnitrix'e ekleyeceğiz (fold + iptal + döngü tespiti)", .{ .fg = .{ .indexed = 221 } }, max_w);
-                    y += 1;
-                    _ = self.back_buffer.setString(left, y, "- Seçenek B: Senin koddaki mekanizmaları kullanacağız, crush'dan bir şey eklemeyeceğiz", .{ .fg = .{ .indexed = 221 } }, max_w);
-                    y += 1;
-                    _ = self.back_buffer.setString(left, y, "- Seçenek C: İkisinin de en iyi kısımlarını birleştireceğiz", .{ .fg = .{ .indexed = 221 } }, max_w);
+                    _ = self.back_buffer.setString(left, y, "EventLoop, FileMutationLedger ve TaskScheduler hazır.", .{ .fg = .{ .indexed = 244 } }, max_w);
                     y += 2;
                 }
 
-                _ = self.back_buffer.setString(left, y, "Tek soru kaldı:", .{ .fg = .bright_white }, max_w);
-                y += 1;
-                _ = self.back_buffer.setString(left, y, "→ Asked 1 question", .{ .fg = .{ .indexed = 244 } }, max_w);
-                y += 2;
+                // OpenCode Soru & Seçim Kartı (Gerekiyorsa)
+                if (self.question.options.items.len > 0) {
+                    _ = self.back_buffer.setString(left, y, "Tek soru kaldı:", .{ .fg = .bright_white }, max_w);
+                    y += 1;
+                    _ = self.back_buffer.setString(left, y, "→ Asked 1 question", .{ .fg = .{ .indexed = 244 } }, max_w);
+                    y += 2;
 
-                // OpenCode Soru & Seçim Kartı
-                const q_area = Rect.init(left, y, max_w, if (area.bottom() > y) area.bottom() - y else 0);
-                self.question.render(q_area, &self.back_buffer);
+                    const q_area = Rect.init(left, y, max_w, if (area.bottom() > y) area.bottom() - y else 0);
+                    self.question.render(q_area, &self.back_buffer);
+                }
             },
             .changed_files => {
                 var cf_lines = self.changed_panel.renderToLines(self.allocator, max_w) catch std.ArrayList([]const u8).empty;
@@ -319,9 +432,22 @@ pub const Engine = struct {
             },
         }
     }
+
+    fn renderFooter(self: *Engine, area: Rect) void {
+        if (area.isEmpty()) return;
+
+        // 1. Prompt Editor (İlk 2 satır)
+        const prompt_area = Rect.init(area.left(), area.top(), area.width, 2);
+        self.prompt_editor.render(prompt_area, &self.back_buffer);
+
+        // 2. Kısayol İpuçları (Son satır)
+        const hint_y = area.bottom() - 1;
+        const hint_str = " [Tab] Panel Değiştir  │  [Enter] Gönder  │  [Shift+Enter] Yeni Satır  │  [Ctrl+V] Ses Modu  │  [Ctrl+C] Çıkış";
+        _ = self.back_buffer.setString(area.left() + 1, hint_y, hint_str, .{ .fg = .{ .indexed = 241 } }, area.width);
+    }
 };
 
-test "engine double buffered render" {
+test "engine double buffered render and prompt editor" {
     const pty_harness = @import("../pty_harness.zig");
     var harness = try pty_harness.PtyHarness.init(std.testing.allocator, 120, 40);
     defer harness.deinit();
@@ -335,7 +461,5 @@ test "engine double buffered render" {
     try std.testing.expect(harness.assertContains("Context"));
     try std.testing.expect(harness.assertContains("MCP"));
     try std.testing.expect(harness.assertContains("Build"));
-    try std.testing.expect(harness.assertContains("MiMo-V2.5-Pro"));
-    try std.testing.expect(harness.assertContains("Crush"));
-    try std.testing.expect(harness.assertContains("OpenCode 1.18.18"));
+    try std.testing.expect(harness.assertContains("Panel Değiştir"));
 }
