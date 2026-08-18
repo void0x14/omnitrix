@@ -189,8 +189,9 @@ pub const PtyHarness = struct {
         try self.tui.renderFrame();
     }
 
-    /// PTY tamponunda belirli bir metnin geçip geçmediğini doğrular.
+    /// PTY tamponunda veya ekrandaki 2D hücre matrisinde belirli bir metnin geçip geçmediğini doğrular.
     pub fn assertContains(self: *const PtyHarness, needle: []const u8) bool {
+        if (self.tui.engine.front_buffer.containsText(needle)) return true;
         return std.mem.indexOf(u8, self.backend_inst.buffer.items, needle) != null;
     }
 
