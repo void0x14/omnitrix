@@ -4,7 +4,6 @@ const buffer_mod = @import("core/buffer.zig");
 const theme_mod = @import("core/theme.zig");
 const layout_mod = @import("core/layout.zig");
 const home_mod = @import("views/home.zig");
-const welcome_mod = @import("views/welcome.zig");
 const session_mod = @import("views/session.zig");
 const conversation_mod = @import("views/conversation.zig");
 const sidebar_mod = @import("views/sidebar.zig");
@@ -20,9 +19,6 @@ const Buffer = buffer_mod.Buffer;
 const Theme = theme_mod.Theme;
 const ThemeMode = theme_mod.ThemeMode;
 const HomeView = home_mod.HomeView;
-const WelcomeView = welcome_mod.WelcomeView;
-const WelcomeAction = welcome_mod.WelcomeAction;
-const AuthMethod = welcome_mod.AuthMethod;
 const SessionView = session_mod.SessionView;
 const SessionAction = session_mod.SessionAction;
 const ModalDialog = modal_mod.ModalDialog;
@@ -39,7 +35,6 @@ pub const App = struct {
     theme: Theme,
     theme_mode: ThemeMode,
     ui: UiState,
-    welcome: WelcomeView,
     home: ?HomeView,
     session: ?SessionView,
     modal: ModalDialog,
@@ -86,7 +81,6 @@ pub const App = struct {
             .theme = theme,
             .theme_mode = theme_mode,
             .ui = .{ .viewport = .{ .cols = terminal.size.cols, .rows = terminal.size.rows } },
-            .welcome = WelcomeView.init(),
             .home = null,
             .session = null,
             .modal = ModalDialog.init(theme),
@@ -98,7 +92,6 @@ pub const App = struct {
     }
 
     pub fn deinit(self: *App) void {
-        self.welcome.deinit();
         if (self.home) |*h| h.deinit();
         if (self.session) |*s| s.deinit();
         self.palette.deinit();
@@ -211,6 +204,8 @@ pub const App = struct {
 
     /// Main event loop
     pub fn run(self: *App) !void {
+        try self.navigate(.home);
+
         while (self.is_running) {
             // Check for terminal resize
             const new_size = try self.terminal.updateSize();
@@ -289,7 +284,7 @@ pub const App = struct {
                     h.render(&self.terminal.buffer, self.ui.viewport.cols, self.ui.viewport.rows, self.theme);
                 }
             },
-            .welcome => self.welcome.render(&self.terminal.buffer, self.ui.viewport.cols, self.ui.viewport.rows, self.theme),
+            .welcome => self.renderTooSmall(),
             .session => {
                 if (self.session) |*s| {
                     const frame = layout_mod.sessionLayout(
@@ -400,10 +395,6 @@ pub const App = struct {
     }
 
     fn handleKey(self: *App, key: KeyEvent) !void {
-        if (self.ui.route == .welcome) {
-            try self.handleWelcomeKey(key);
-            return;
-        }
 
         // Global keybindings
         if (key.ctrl) {
@@ -483,51 +474,6 @@ pub const App = struct {
         }
     }
 
-    fn handleWelcomeKey(self: *App, key: KeyEvent) !void {
-        const action = self.welcome.handleKey(key);
-        switch (action) {
-            .none => {},
-            .choose_method => |method| {
-                self.welcome.setState(.choosing, chooseNotice(method));
-            },
-            .begin_auth => |method| {
-                if (method == .api_key) {
-                    self.welcome.setState(.failed, "API-key sign-in is visual-only in this UI fixture. Press R to retry.");
-                } else {
-                    self.welcome.setState(.pending, pendingNotice(method));
-                }
-            },
-            .cancel => {
-                self.welcome.setState(.signed_out, "Sign-in canceled. Press Enter to choose a method again.");
-            },
-            .complete => {
-                self.welcome.setState(.authenticated, "Fixture sign-in complete. Opening home.");
-                try self.navigate(.home);
-                if (self.home) |*h| {
-                    h.setNoticeTone("Fixture sign-in complete.", .success);
-                }
-            },
-            .retry => {
-                self.welcome.setState(.choosing, "Choose a fixture method to retry.");
-            },
-        }
-    }
-
-    fn chooseNotice(method: AuthMethod) []const u8 {
-        return switch (method) {
-            .browser => "Browser sign-in selected. Press Enter to begin the fixture.",
-            .device_code => "Device-code handoff selected. Press Enter to begin the fixture.",
-            .api_key => "API-key row is masked and visual-only. Press Enter to show its fixture failure.",
-        };
-    }
-
-    fn pendingNotice(method: AuthMethod) []const u8 {
-        return switch (method) {
-            .browser => "Browser handoff pending. Enter completes the fixture; F shows failure.",
-            .device_code => "Device-code handoff pending. Enter completes the fixture; F shows failure.",
-            .api_key => "API-key fixture pending.",
-        };
-    }
 
     fn handleHomeKey(self: *App, key: KeyEvent) !void {
         const h = &(self.home orelse return);

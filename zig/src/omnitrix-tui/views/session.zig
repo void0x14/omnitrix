@@ -189,7 +189,7 @@ pub const SessionView = struct {
 
     fn estimateMessageBytes(msg: Message) usize {
         const count = @min(msg.parts.len, max_message_parts);
-        var total: usize = @sizeOf(Message) + @sizeOf(MessagePart) * count;
+        var total: usize = @sizeOf(Message) +| (@sizeOf(MessagePart) *| count);
         total +|= boundedText(msg.id, max_message_field_bytes).len;
         for (msg.parts[0..count]) |part| total +|= messagePartBytes(part);
         return total;
@@ -581,7 +581,7 @@ pub const SessionView = struct {
         if (text_len == 0) {
             const placeholder = "Type a message... (Enter to send, Shift+Tab for shell)";
             _ = buf.writeStringBounded(rect.x + 2, content_y, placeholder, Style{ .fg = theme.prompt_placeholder, .bg = theme.background_panel }, rect.width -| 4);
-            buf.setCell(rect.x + 2, content_y, .{
+            buf.setCell(rect.x + 1, content_y, .{
                 .char = .{ .char = '█' },
                 .style = Style{ .fg = theme.prompt_cursor, .bg = theme.background_panel },
             });
