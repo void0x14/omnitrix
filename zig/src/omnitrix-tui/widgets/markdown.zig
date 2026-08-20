@@ -47,6 +47,16 @@ pub const MarkdownRenderer = struct {
         return leading[0..end];
     }
 
+    fn headingLevel(trimmed: []const u8) ?u8 {
+        if (trimmed.len == 0 or trimmed[0] != '#') return null;
+        var level: u8 = 0;
+        for (trimmed) |ch| {
+            if (ch == '#') level += 1 else break;
+        }
+        if (level >= 1 and level <= 6 and trimmed.len > level and trimmed[level] == ' ') return level;
+        return null;
+    }
+
     fn clippedWidth(buf: *Buffer, x: u16, width: u16) u16 {
         if (x >= buf.cols) return 0;
         return @min(width, buf.cols - x);
@@ -91,16 +101,10 @@ pub const MarkdownRenderer = struct {
             const trimmed = trimLeadingSpaces(line);
 
             // Heading
-            if (trimmed.len > 0 and trimmed[0] == '#') {
-                var level: u8 = 0;
-                for (trimmed) |ch| {
-                    if (ch == '#') level += 1 else break;
-                }
-                if (level >= 1 and level <= 6 and trimmed.len > level and trimmed[level] == ' ') {
-                    const heading_text = trimSpaces(trimmed[level + 1 ..]);
-                    current_y = self.renderHeading(buf, x, current_y, width, heading_text, level);
-                    continue;
-                }
+            if (headingLevel(trimmed)) |level| {
+                const heading_text = trimSpaces(trimmed[level + 1 ..]);
+                current_y = self.renderHeading(buf, x, current_y, width, heading_text, level);
+                continue;
             }
 
             // Horizontal rule
@@ -233,6 +237,11 @@ pub const MarkdownRenderer = struct {
         var height: u16 = 0;
         var lines = std.mem.splitScalar(u8, text, '\n');
         while (lines.next()) |line| {
+            const trimmed = trimLeadingSpaces(line);
+            if (headingLevel(trimmed)) |level| {
+                height +|= if (level <= 2) 2 else 1;
+                continue;
+            }
             if (line.len == 0) {
                 height +|= 1;
                 continue;

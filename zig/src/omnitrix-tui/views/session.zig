@@ -209,6 +209,13 @@ pub const SessionView = struct {
         });
     }
 
+    /// Append a progressive UI chunk into the BlockStore-owned streaming text.
+    pub fn appendStreamingChunk(self: *SessionView, id: u32, chunk: []const u8) !bool {
+        const updated = try self.blocks.appendStreamingChunk(id, chunk);
+        if (updated) self.scrollToBottom();
+        return updated;
+    }
+
     pub fn commitStreaming(self: *SessionView, id: u32, committed_len: usize) bool {
         return self.blocks.setCommittedPrefix(id, committed_len);
     }

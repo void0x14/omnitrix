@@ -75,6 +75,85 @@ pub const BlockStore = struct {
         self.retained_bytes += owned_text.len;
     }
 
+    /// Append owned bytes to a live streaming block without exposing caller storage.
+    pub fn appendStreamingChunk(self: *BlockStore, id: u32, chunk: []const u8) !bool {
+        if (self.max_blocks == 0 or self.max_bytes == 0 or self.max_block_bytes == 0) return false;
+
+        var target_index: ?usize = null;
+        for (self.blocks.items, 0..) |block, i| {
+            if (block.id == id) {
+                if (!block.is_streaming) return false;
+                target_index = i;
+                break;
+            }
+        }
+        const index = target_index orelse return false;
+        const current = self.blocks.items[index];
+        const copy_cap = @min(self.max_block_bytes, self.max_bytes);
+        const current_len = @min(current.text.len, copy_cap);
+        const append_len = @min(chunk.len, copy_cap - current_len);
+        if (append_len == 0) return false;
+
+        const candidate = try self.allocator.alloc(u8, current_len + append_len);
+        defer self.allocator.free(candidate);
+        @memcpy(candidate[0..current_len], current.text[0..current_len]);
+        @memcpy(candidate[current_len..][0..append_len], chunk[0..append_len]);
+        const committed_len = safePrefixLen(candidate, current.committed_len);
+        try self.rebuildWithStreamingText(index, candidate, committed_len);
+        return true;
+    }
+
+    fn rebuildWithStreamingText(self: *BlockStore, target_index: usize, new_text: []const u8, committed_len: usize) !void {
+        const count = self.blocks.items.len;
+        var keep = try self.allocator.alloc(bool, count);
+        defer self.allocator.free(keep);
+        @memset(keep, false);
+        keep[target_index] = true;
+
+        var kept_count: usize = 1;
+        var kept_bytes = new_text.len;
+        var i = count;
+        while (i > 0 and kept_count < self.max_blocks) {
+            i -= 1;
+            if (i == target_index) continue;
+            const block_len = self.blocks.items[i].text.len;
+            if (block_len <= self.max_bytes -| kept_bytes) {
+                keep[i] = true;
+                kept_count += 1;
+                kept_bytes += block_len;
+            }
+        }
+
+        var metadata = try self.allocator.alloc(Block, kept_count);
+        defer self.allocator.free(metadata);
+        var snapshot = try self.allocator.alloc(u8, kept_bytes);
+        defer self.allocator.free(snapshot);
+
+        var metadata_index: usize = 0;
+        var offset: usize = 0;
+        for (self.blocks.items, 0..) |block, block_index| {
+            if (!keep[block_index]) continue;
+            var retained = block;
+            const source = if (block_index == target_index) new_text else block.text;
+            @memcpy(snapshot[offset..][0..source.len], source);
+            retained.text = snapshot[offset..][0..source.len];
+            if (block_index == target_index) retained.committed_len = safePrefixLen(source, committed_len);
+            metadata[metadata_index] = retained;
+            metadata_index += 1;
+            offset += source.len;
+        }
+
+        _ = self.arena.reset(.retain_capacity);
+        self.blocks.clearRetainingCapacity();
+        self.retained_bytes = 0;
+        for (metadata) |block| {
+            var rebuilt = block;
+            rebuilt.text = try self.arena.allocator().dupe(u8, block.text);
+            try self.blocks.append(self.allocator, rebuilt);
+            self.retained_bytes += rebuilt.text.len;
+        }
+    }
+
     fn rebuildRetained(self: *BlockStore, first_index: usize) !void {
         const first = @min(first_index, self.blocks.items.len);
         const retained_count = self.blocks.items.len - first;
