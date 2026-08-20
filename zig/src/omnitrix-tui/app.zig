@@ -654,16 +654,19 @@ pub const App = struct {
         // Shift+Tab cycles sidebar tabs: conversation -> changes -> diff
         if (key.key == .shift_tab) {
             s.cycleSidebarTab(1);
+            syncSessionFooterFocus(s);
             return;
         }
 
         // Left/Right arrows cycle sidebar tabs when not typing in prompt
         if (key.key == .left and !key.ctrl and s.prompt.gap.length() == 0) {
             s.cycleSidebarTab(-1);
+            syncSessionFooterFocus(s);
             return;
         }
         if (key.key == .right and !key.ctrl and s.prompt.gap.length() == 0) {
             s.cycleSidebarTab(1);
+            syncSessionFooterFocus(s);
             return;
         }
 
@@ -710,6 +713,14 @@ pub const App = struct {
         });
     }
 
+    fn syncSessionFooterFocus(s: *SessionView) void {
+        s.footer.info.focused_panel = switch (s.sidebar_tab) {
+            .conversation => "conversation",
+            .changes => "changes",
+            .diff => "diff",
+        };
+    }
+
     fn handleMouse(self: *App, mouse: term_mod.MouseEvent) !void {
         switch (self.ui.route) {
             .session => {
@@ -723,7 +734,9 @@ pub const App = struct {
                         if (mouse.row == 0) {
                             const sidebar_w: u16 = if (s.sidebar_visible) s.sidebar.width + 2 else 0;
                             const content_width = self.terminal.size.cols -| sidebar_w;
-                            _ = s.handleHeaderClick(mouse.col, content_width);
+                            if (s.handleHeaderClick(mouse.col, content_width)) {
+                                syncSessionFooterFocus(s);
+                            }
                         }
                     }
                 }
