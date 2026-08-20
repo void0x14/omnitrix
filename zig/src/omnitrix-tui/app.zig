@@ -9,6 +9,7 @@ const sidebar_mod = @import("views/sidebar.zig");
 const footer_mod = @import("views/footer.zig");
 const modal_mod = @import("dialogs/modal.zig");
 const palette_mod = @import("dialogs/command_palette.zig");
+const ui_state_mod = @import("core/ui_state.zig");
 const Terminal = term_mod.Terminal;
 const InputEvent = term_mod.InputEvent;
 const KeyEvent = term_mod.KeyEvent;
@@ -21,15 +22,17 @@ const SessionView = session_mod.SessionView;
 const ModalDialog = modal_mod.ModalDialog;
 const CommandPalette = palette_mod.CommandPalette;
 const Command = palette_mod.Command;
+const UiState = ui_state_mod.UiState;
+const Viewport = ui_state_mod.Viewport;
 
-pub const ViewRoute = enum { home, session };
+pub const ViewRoute = ui_state_mod.Route;
 
 pub const App = struct {
     allocator: std.mem.Allocator,
     terminal: Terminal,
     theme: Theme,
     theme_mode: ThemeMode,
-    route: ViewRoute,
+    ui: UiState,
     home: ?HomeView,
     session: ?SessionView,
     modal: ModalDialog,
@@ -59,6 +62,7 @@ pub const App = struct {
 
     pub fn init(allocator: std.mem.Allocator) !App {
         var terminal = try Terminal.init(allocator);
+        errdefer terminal.deinit();
         terminal.enterAlternateScreen();
         terminal.enableMouseTracking();
         terminal.hideCursor();
@@ -74,7 +78,7 @@ pub const App = struct {
             .terminal = terminal,
             .theme = theme,
             .theme_mode = theme_mode,
-            .route = .home,
+            .ui = .{ .viewport = .{ .cols = terminal.size.cols, .rows = terminal.size.rows } },
             .home = null,
             .session = null,
             .modal = ModalDialog.init(theme),
@@ -93,7 +97,7 @@ pub const App = struct {
     }
 
     pub fn navigate(self: *App, route: ViewRoute) !void {
-        self.route = route;
+        self.ui.route = route;
         switch (route) {
             .home => {
                 if (self.session) |*s| {
@@ -111,6 +115,7 @@ pub const App = struct {
                 // Add demo messages
                 try self.addDemoMessages();
             },
+            .welcome, .too_small => {},
         }
     }
 
@@ -167,10 +172,17 @@ pub const App = struct {
             .model_name = "MiMo-V2.5-Pro",
             .provider_name = "Codebuff",
             .branch_name = "masterplan",
-            .version = "1.18.18",
-            .files_changed = 12,
+            .files_changed = 6,
             .lines_added = 342,
             .lines_removed = 89,
+            .changed_files = &.{
+                .{ .path = "zig/src/omnitrix-tui/app.zig", .added = 120, .removed = 40 },
+                .{ .path = "zig/src/omnitrix-tui/core/terminal.zig", .added = 80, .removed = 20 },
+                .{ .path = "zig/src/omnitrix-tui/core/buffer.zig", .added = 45, .removed = 12 },
+                .{ .path = "zig/src/omnitrix-tui/views/home.zig", .added = 30, .removed = 8 },
+                .{ .path = "zig/src/omnitrix-tui/views/sidebar.zig", .added = 25, .removed = 5 },
+                .{ .path = "zig/build.zig", .added = 42, .removed = 4 },
+            },
         };
 
         // Update footer
@@ -191,13 +203,16 @@ pub const App = struct {
         while (self.is_running) {
             // Check for terminal resize
             const new_size = try self.terminal.updateSize();
-            _ = new_size;
+            self.ui.setViewport(new_size.cols, new_size.rows);
 
             // Render current frame
             self.renderFrame() catch {};
 
             // Flush to terminal
             self.terminal.flush() catch {};
+
+            // Render Kitty graphics overlay (if supported)
+            self.renderKittyOverlay();
 
             // Read input with timeout
             const event = self.terminal.readEventTimeout(16); // ~60fps
@@ -222,29 +237,130 @@ pub const App = struct {
         }
     }
 
+    /// Render Kitty graphics overlay (Omnitrix logo).
+    /// Emits the Kitty image only when the terminal actually supports the
+    /// protocol; everywhere else the sidebar already draws a Unicode dial,
+    /// and sending the raw payload would paint base64 garbage over the UI.
+    fn renderKittyOverlay(self: *App) void {
+        if (!self.terminal.kitty_graphics) return;
+        if (self.ui.route != .session or self.ui.viewport.isTooSmall()) return;
+        if (self.session) |*s| {
+            if (!s.sidebar_visible) return;
+
+            // Logo position: just inside the sidebar's right edge, bottom.
+            const sidebar_w: u16 = s.sidebar.width + 2;
+            const content_width = self.terminal.size.cols -| sidebar_w;
+            const logo_x = content_width + 2;
+            const logo_y = self.terminal.size.rows -| 2;
+
+            // Mutate the real sidebar through the pointer captured above.
+            // Copying the session struct here used to allocate the command
+            // into a throwaway copy every frame (~1.5KB leaked per frame).
+            s.sidebar.ensureKittyLogo(logo_x, logo_y);
+
+            if (s.sidebar.kitty_logo_cmd) |cmd| {
+                self.terminal.renderKittyAt(logo_x, logo_y, cmd);
+            }
+        }
+    }
+
     fn renderFrame(self: *App) !void {
         self.terminal.buffer.clear();
 
-        switch (self.route) {
+        if (self.ui.viewport.isTooSmall()) {
+            self.renderTooSmall();
+            return;
+        }
+
+        switch (self.ui.route) {
             .home => {
                 if (self.home) |*h| {
-                    h.render(&self.terminal.buffer, self.terminal.size.cols, self.terminal.size.rows, self.theme);
+                    h.render(&self.terminal.buffer, self.ui.viewport.cols, self.ui.viewport.rows, self.theme);
                 }
             },
             .session => {
                 if (self.session) |*s| {
-                    s.render(&self.terminal.buffer, self.terminal.size.cols, self.terminal.size.rows, self.theme);
+                    const frame = layout_mod.sessionLayout(
+                        self.ui.viewport.cols,
+                        self.ui.viewport.rows,
+                        s.sidebar_visible,
+                        s.sidebar.width,
+                    );
+                    s.scroll.setViewport(frame.conversation.height, frame.conversation.width);
+                    s.render(&self.terminal.buffer, self.ui.viewport.cols, self.ui.viewport.rows, self.theme);
                 }
             },
+            .welcome, .too_small => self.renderTooSmall(),
         }
 
-        // Render overlays on top
-        self.modal.render(&self.terminal.buffer, self.terminal.size.cols, self.terminal.size.rows);
-        self.palette.render(&self.terminal.buffer, self.terminal.size.cols, self.terminal.size.rows);
+        // Render order is deterministic: question/confirm, select/alert,
+        // palette, then page. ModalDialog is mutually exclusive by type.
+        self.modal.render(&self.terminal.buffer, self.ui.viewport.cols, self.ui.viewport.rows);
+        self.palette.render(&self.terminal.buffer, self.ui.viewport.cols, self.ui.viewport.rows);
+    }
+
+    fn renderTooSmall(self: *App) void {
+        const cols = self.ui.viewport.cols;
+        const rows = self.ui.viewport.rows;
+        if (cols == 0 or rows == 0) return;
+
+        const bg = self.theme.background;
+        self.terminal.buffer.fillRegion(0, 0, cols, rows, .{ .style = .{ .bg = bg } });
+
+        const title = "Terminal too small";
+        const required = "Resize to at least 80 columns x 24 rows";
+        const title_width: u16 = @intCast(title.len);
+        const required_width: u16 = @intCast(required.len);
+        const title_x = if (cols > title_width) (cols - title_width) / 2 else 0;
+        const required_x = if (cols > required_width) (cols - required_width) / 2 else 0;
+        const y = rows / 2;
+        _ = self.terminal.buffer.writeStringBounded(title_x, y, title, .{
+            .fg = self.theme.warning,
+            .bg = bg,
+            .attr = .{ .bold = true },
+        }, cols -| title_x);
+        if (y + 1 < rows) {
+            _ = self.terminal.buffer.writeStringBounded(required_x, y + 1, required, .{
+                .fg = self.theme.text_muted,
+                .bg = bg,
+            }, cols -| required_x);
+        }
     }
 
     fn handleEvent(self: *App, event: InputEvent) !void {
-        // Command palette has priority
+        // Ctrl+C must always quit, before any overlay gets a chance to consume
+        // it. The terminal runs with ISIG disabled, so the kernel never turns
+        // this into SIGINT -- if the app swallows it too, the only way out is
+        // SIGKILL from another shell.
+        if (event == .key and event.key.ctrl and (event.key.char orelse 0) == 'c') {
+            self.is_running = false;
+            return;
+        }
+
+        // Overlay input order is deterministic: question/confirm, select/alert,
+        // palette, then page. ModalDialog is mutually exclusive by type.
+        if (self.modal.state.visible) {
+            const was_visible = self.modal.state.visible;
+            _ = self.modal.handleKey(.{
+                .char = if (event == .key) event.key.char else null,
+                .enter = if (event == .key) event.key.key == .enter else false,
+                .escape = if (event == .key) event.key.key == .escape else false,
+                .up = if (event == .key) event.key.key == .up else false,
+                .down = if (event == .key) event.key.key == .down else false,
+            });
+            if (was_visible and !self.modal.state.visible and self.modal.state.confirmed) {
+                if (self.modal.selectedValue()) |val| {
+                    const title = self.modal.state.title[0..self.modal.state.title_len];
+                    if (std.mem.eql(u8, title, "Switch Model")) {
+                        if (self.session) |*s| s.footer.info.model = val;
+                    } else if (std.mem.eql(u8, title, "Switch Agent")) {
+                        if (self.session) |*s| s.footer.info.mode = val;
+                    }
+                }
+            }
+            return;
+        }
+
         if (self.palette.visible) {
             const result = self.palette.handleKey(.{
                 .char = if (event == .key) event.key.char else null,
@@ -254,21 +370,7 @@ pub const App = struct {
                 .down = if (event == .key) event.key.key == .down else false,
                 .backspace = if (event == .key) event.key.key == .backspace else false,
             });
-            if (result) |cmd_name| {
-                try self.executeCommand(cmd_name);
-            }
-            return;
-        }
-
-        // Modal dialog has priority
-        if (self.modal.state.visible) {
-            _ = self.modal.handleKey(.{
-                .char = if (event == .key) event.key.char else null,
-                .enter = if (event == .key) event.key.key == .enter else false,
-                .escape = if (event == .key) event.key.key == .escape else false,
-                .up = if (event == .key) event.key.key == .up else false,
-                .down = if (event == .key) event.key.key == .down else false,
-            });
+            if (result) |cmd_name| try self.executeCommand(cmd_name);
             return;
         }
 
@@ -276,6 +378,7 @@ pub const App = struct {
             .resize => |size| {
                 self.terminal.size = size;
                 try self.terminal.buffer.resize(size.cols, size.rows);
+                self.ui.setViewport(size.cols, size.rows);
             },
             .key => |key| {
                 try self.handleKey(key);
@@ -323,7 +426,7 @@ pub const App = struct {
                     return;
                 },
                 'z' => {
-                    if (self.route == .session) {
+                    if (self.ui.route == .session) {
                         self.modal.showAlert("Undo", "Last message reverted.");
                     }
                     return;
@@ -333,23 +436,29 @@ pub const App = struct {
         }
 
         if (key.key == .escape) {
-            if (self.route == .home and self.home != null) {
+            if (self.ui.route == .home and self.home != null) {
                 if (self.home.?.prompt.gap.length() > 0) {
                     self.home.?.prompt.gap.clear();
                     return;
                 }
+                self.is_running = false;
+                return;
             }
-            self.is_running = false;
+            // On the session route Esc is a no-op: overlays (palette,
+            // modals) consume their own Esc first, and a stray Esc must
+            // never kill an active session. Ctrl+C remains the explicit
+            // exit. Quitting only happens from home with an empty prompt.
             return;
         }
 
-        switch (self.route) {
+        switch (self.ui.route) {
             .home => {
                 try self.handleHomeKey(key);
             },
             .session => {
                 try self.handleSessionKey(key);
             },
+            .welcome, .too_small => {},
         }
     }
 
@@ -358,11 +467,15 @@ pub const App = struct {
 
         if (key.key == .enter) {
             if (!h.prompt.isEmpty()) {
-                // Navigate to session and add the user message
+                // The text MUST be copied out before navigating: navigate(.session)
+                // calls home.deinit(), which frees the prompt's gap buffer. Reading
+                // `h.prompt` afterwards is a use-after-free and faults inside the
+                // allocator vtable.
+                const text = try h.prompt.getText();
+                defer self.allocator.free(text);
+
                 try self.navigate(.session);
                 if (self.session) |*s| {
-                    const text = try h.prompt.getText();
-                    defer self.allocator.free(text);
                     try s.addMessage(.{
                         .role = .user,
                         .parts = &.{.{ .text = text }},
@@ -393,6 +506,34 @@ pub const App = struct {
 
     fn handleSessionKey(self: *App, key: KeyEvent) !void {
         const s = &(self.session orelse return);
+
+        // Tab cycles agent mode: build -> plan -> code -> build
+        if (key.key == .tab and !key.shift) {
+            const current = s.footer.info.mode;
+            s.footer.info.mode = if (std.mem.eql(u8, current, "build"))
+                "plan"
+            else if (std.mem.eql(u8, current, "plan"))
+                "code"
+            else
+                "build";
+            return;
+        }
+
+        // Shift+Tab cycles sidebar tabs: conversation -> changes -> diff
+        if (key.key == .shift_tab) {
+            s.cycleSidebarTab(1);
+            return;
+        }
+
+        // Left/Right arrows cycle sidebar tabs when not typing in prompt
+        if (key.key == .left and !key.ctrl and s.prompt.gap.length() == 0) {
+            s.cycleSidebarTab(-1);
+            return;
+        }
+        if (key.key == .right and !key.ctrl and s.prompt.gap.length() == 0) {
+            s.cycleSidebarTab(1);
+            return;
+        }
 
         if (key.key == .enter and !key.shift) {
             if (!s.prompt.isEmpty()) {
@@ -438,13 +579,20 @@ pub const App = struct {
     }
 
     fn handleMouse(self: *App, mouse: term_mod.MouseEvent) !void {
-        switch (self.route) {
+        switch (self.ui.route) {
             .session => {
                 if (self.session) |*s| {
                     if (mouse.btn == .scroll_up) {
                         s.scroll.scrollUp();
                     } else if (mouse.btn == .scroll_down) {
                         s.scroll.scrollDown();
+                    } else if (mouse.btn == .left) {
+                        // Check if click is on header row (y == 0)
+                        if (mouse.row == 0) {
+                            const sidebar_w: u16 = if (s.sidebar_visible) s.sidebar.width + 2 else 0;
+                            const content_width = self.terminal.size.cols -| sidebar_w;
+                            _ = s.handleHeaderClick(mouse.col, content_width);
+                        }
                     }
                 }
             },
