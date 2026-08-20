@@ -9,6 +9,8 @@ const text_mod = @import("../widgets/text.zig");
 const markdown_mod = @import("../widgets/markdown.zig");
 const spinner_mod = @import("../widgets/spinner.zig");
 const conversation_mod = @import("conversation.zig");
+const changes_mod = @import("changes.zig");
+const diff_mod = @import("diff.zig");
 const sidebar_mod = @import("sidebar.zig");
 const footer_mod = @import("footer.zig");
 const Cell = cell_mod.Cell;
@@ -83,6 +85,7 @@ pub const SessionView = struct {
     sidebar_visible: bool,
     focused: enum { conversation, prompt },
     sidebar_tab: SidebarTab,
+    selected_file: u16,
     show_timestamps: bool,
     show_thinking: bool,
     show_tool_details: bool,
@@ -111,6 +114,7 @@ pub const SessionView = struct {
             .sidebar_visible = true,
             .focused = .prompt,
             .sidebar_tab = .conversation,
+            .selected_file = 0,
             .show_timestamps = false,
             .show_thinking = true,
             .show_tool_details = true,
@@ -312,7 +316,9 @@ pub const SessionView = struct {
         // Clear
         buf.fillRegion(0, 0, terminal_width, terminal_height, .{ .style = .{ .bg = theme.background } });
 
-        const sidebar_w: u16 = if (self.sidebar_visible) self.sidebar.width + 2 else 0;
+        const diff_fullscreen = self.sidebar_tab == .diff and terminal_width < self.sidebar.width +| 62;
+        const show_sidebar = self.sidebar_visible and !diff_fullscreen;
+        const sidebar_w: u16 = if (show_sidebar) self.sidebar.width +| 2 else 0;
         const content_width = terminal_width -| sidebar_w;
         const footer_y = terminal_height - 1;
         const header_y: u16 = 0;
@@ -329,7 +335,16 @@ pub const SessionView = struct {
             .width = content_width,
             .height = conversation_height,
         };
-        self.renderConversation(buf, conv_rect, theme);
+        switch (self.sidebar_tab) {
+            .conversation => self.renderConversation(buf, conv_rect, theme),
+            .changes => changes_mod.render(buf, conv_rect, self.sidebar.info, self.selected_file, theme),
+            .diff => diff_mod.render(buf, conv_rect, self.sidebar.info, .{
+                .selected_file = self.selected_file,
+                .selected_hunk = 0,
+                .fullscreen = diff_fullscreen,
+                .unavailable = true,
+            }, theme),
+        }
 
         // Prompt area
         const prompt_rect = Rect{
@@ -341,7 +356,7 @@ pub const SessionView = struct {
         self.renderPrompt(buf, prompt_rect, theme);
 
         // Sidebar
-        if (self.sidebar_visible) {
+        if (show_sidebar) {
             const sidebar_rect = Rect{
                 .x = content_width,
                 .y = 0,
