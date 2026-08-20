@@ -27,6 +27,7 @@ const LOGO_LINES = [_][]const u8{
 
 pub const ComposerMode = enum { normal, multiline, shell, history, @"error" };
 pub const ComposerFocus = enum { prompt, mode, history };
+pub const NoticeTone = enum { info, success, warning, @"error" };
 
 pub const HomeView = struct {
     pub const max_prompt_bytes: usize = 512;
@@ -40,6 +41,7 @@ pub const HomeView = struct {
     composer_focus: ComposerFocus = .prompt,
     notice_len: u8 = 0,
     notice: [160]u8 = undefined,
+    notice_tone: NoticeTone = .warning,
     footer: FooterView = FooterView.init(),
 
     pub fn init(allocator: std.mem.Allocator, theme: Theme) !HomeView {
@@ -73,9 +75,14 @@ pub const HomeView = struct {
     }
 
     pub fn setNotice(self: *HomeView, text: []const u8) void {
+        self.setNoticeTone(text, .warning);
+    }
+
+    pub fn setNoticeTone(self: *HomeView, text: []const u8, tone: NoticeTone) void {
         const length = @min(text.len, self.notice.len);
         @memcpy(self.notice[0..length], text[0..length]);
         self.notice_len = @intCast(length);
+        self.notice_tone = tone;
     }
 
     pub fn render(self: *HomeView, buf: *Buffer, terminal_width: u16, terminal_height: u16, theme: Theme) void {
@@ -158,6 +165,12 @@ pub const HomeView = struct {
                     .char = .{ .char = '█' },
                     .style = Style{ .fg = theme.prompt_cursor, .bg = theme.background_panel },
                 });
+            } else {
+                _ = buf.writeStringBounded(inner.x + 2, inner.y + 1, "[prompt capped at 512 bytes]", .{ .fg = theme.warning, .bg = theme.background_panel }, inner.width -| 4);
+                buf.setCell(inner.x + 2, inner.y + 1, .{
+                    .char = .{ .char = '█' },
+                    .style = Style{ .fg = theme.prompt_cursor, .bg = theme.background_panel },
+                });
             }
         }
 
@@ -183,7 +196,13 @@ pub const HomeView = struct {
             _ = buf.writeStringBounded(metadata_x, metadata_y, metadata, .{ .fg = theme.text_dim, .bg = theme.background }, terminal_width -| metadata_x);
         }
         if (self.notice_len > 0 and prompt_y + 5 < terminal_height -| 1) {
-            _ = buf.writeStringBounded(2, prompt_y + 5, self.notice[0..self.notice_len], .{ .fg = theme.warning, .bg = theme.background }, terminal_width -| 4);
+            const notice_color = switch (self.notice_tone) {
+                .info => theme.info,
+                .success => theme.success,
+                .warning => theme.warning,
+                .@"error" => theme.err_color,
+            };
+            _ = buf.writeStringBounded(2, prompt_y + 5, self.notice[0..self.notice_len], .{ .fg = notice_color, .bg = theme.background }, terminal_width -| 4);
         }
 
         // Path/version footer and contextual controls.

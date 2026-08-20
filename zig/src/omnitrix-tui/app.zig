@@ -107,12 +107,15 @@ pub const App = struct {
         self.ui.route = route;
         switch (route) {
             .home => {
-                if (self.home) |*h| h.deinit();
+                // Build the replacement first. A failed allocation must leave
+                // the current HomeView owned and usable.
+                const replacement = try HomeView.init(self.allocator, self.theme);
                 if (self.session) |*s| {
                     s.deinit();
                     self.session = null;
                 }
-                self.home = try HomeView.init(self.allocator, self.theme);
+                if (self.home) |*h| h.deinit();
+                self.home = replacement;
             },
             .session => {
                 if (self.home) |*h| {
@@ -500,6 +503,9 @@ pub const App = struct {
             .complete => {
                 self.welcome.setState(.authenticated, "Fixture sign-in complete. Opening home.");
                 try self.navigate(.home);
+                if (self.home) |*h| {
+                    h.setNoticeTone("Fixture sign-in complete.", .success);
+                }
             },
             .retry => {
                 self.welcome.setState(.choosing, "Choose a fixture method to retry.");
@@ -540,7 +546,7 @@ pub const App = struct {
         }
 
         if (key.key == .tab) {
-            h.setComposerMode(if (h.composer_mode == .shell) .normal else .shell);
+            h.setComposerMode(if (h.composer_mode == .normal) .shell else .normal);
             h.setNotice(if (h.composer_mode == .shell) "Shell fixture selected; no command will execute." else "Normal composer mode.");
             return;
         }
@@ -599,6 +605,16 @@ pub const App = struct {
             h.setComposerMode(.@"error");
             h.setNotice("Prompt limit reached (512 bytes).");
             return;
+        }
+
+        if (key.char) |char| {
+            var encoded: [4]u8 = undefined;
+            const encoded_len = std.unicode.wtf8Encode(char, &encoded) catch 1;
+            if (h.prompt.gap.length() + encoded_len > HomeView.max_prompt_bytes) {
+                h.setComposerMode(.@"error");
+                h.setNotice("Prompt limit reached (512 bytes).");
+                return;
+            }
         }
 
         try h.prompt.handleKey(.{

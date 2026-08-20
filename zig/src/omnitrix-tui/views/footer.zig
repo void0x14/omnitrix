@@ -89,6 +89,21 @@ pub const FooterView = struct {
         // Push right side to end
         var right_x = terminal_width -| 1;
 
+        // The existing SessionView call has no FooterContext parameter. Its
+        // focused panel remains the truthful fallback context for this path.
+        const panel_label = if (std.mem.eql(u8, self.info.focused_panel, "changes"))
+            "changes"
+        else if (std.mem.eql(u8, self.info.focused_panel, "diff"))
+            "diff"
+        else
+            "conversation";
+        const panel_width: u16 = @intCast(panel_label.len);
+        if (right_x > panel_width + 2) {
+            right_x -= panel_width;
+            _ = buf.writeStringBounded(right_x, y, panel_label, Style{ .fg = theme.text_dim, .bg = theme.background_panel }, panel_width);
+            right_x -|= 1;
+        }
+
         // Branch (right-aligned, clean)
         if (self.info.branch.len > 0) {
             const branch_w = @as(u16, @intCast(self.info.branch.len));
@@ -134,7 +149,7 @@ fn contextualHint(context: FooterContext) []const u8 {
         else if (std.mem.eql(u8, mode, "history"))
             "Up/Down history fixture   Esc close"
         else if (std.mem.eql(u8, mode, "error"))
-            "Esc dismiss   Enter retry   Ctrl+K clear"
+            "Esc dismiss   Ctrl+K clear   edit prompt"
         else
             "Enter send   Shift+Enter multiline   Tab shell   Ctrl+R history"
         else "Enter send   Shift+Enter multiline   Tab shell",
