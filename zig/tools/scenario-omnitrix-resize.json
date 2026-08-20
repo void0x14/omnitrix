@@ -1,0 +1,19 @@
+[
+  { "sleep": 1.0 },
+  { "send": "resize check" },
+  { "send": "\r" },
+  { "sleep": 0.7 },
+  { "send": "\u001b[Z" },
+  { "sleep": 0.2 },
+  { "send": "\u001b[B" },
+  { "sleep": 0.2 },
+  { "snap": "01-before-resize" },
+  { "resize": { "cols": 90, "rows": 24 } },
+  { "sleep": 0.5 },
+  { "snap": "02-after-resize" },
+  { "resize": { "cols": 120, "rows": 32 } },
+  { "sleep": 0.5 },
+  { "snap": "03-restored-resize" },
+  { "send": "\u0003" },
+  { "sleep": 0.3 }
+]

@@ -230,6 +230,11 @@ pub const App = struct {
         while (self.is_running) {
             // Check for terminal resize
             const new_size = try self.terminal.updateSize();
+            const resized = self.ui.viewport.cols != new_size.cols or self.ui.viewport.rows != new_size.rows;
+            if (resized) {
+                self.terminal.buffer.invalidate();
+                self.terminal.clearScreen();
+            }
             self.ui.setViewport(new_size.cols, new_size.rows);
 
             // Render current frame
@@ -405,6 +410,8 @@ pub const App = struct {
             .resize => |size| {
                 self.terminal.size = size;
                 try self.terminal.buffer.resize(size.cols, size.rows);
+                self.terminal.buffer.invalidate();
+                self.terminal.clearScreen();
                 self.ui.setViewport(size.cols, size.rows);
             },
             .key => |key| {
