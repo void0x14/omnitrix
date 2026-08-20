@@ -33,23 +33,51 @@ pub const Rect = struct {
 
 pub const SessionLayout = struct {
     content: Rect,
+    header: Rect,
     conversation: Rect,
+    prompt: Rect,
+    footer: Rect,
+    sidebar: Rect,
+    fullscreen_diff: bool,
 };
 
-/// Shared with App so scroll ownership receives the exact conversation rectangle
-/// before SessionView maps content coordinates to the screen.
-pub fn sessionLayout(cols: u16, rows: u16, sidebar_visible: bool, sidebar_width: u16) SessionLayout {
-    const sidebar_total: u16 = if (sidebar_visible) sidebar_width +| 2 else 0;
+/// Shared by App hit-testing, SessionView rendering, scroll sizing, and the
+/// Kitty/Unicode sidebar brand placement. The diff flag is part of the input
+/// so the fullscreen decision cannot diverge between those owners.
+pub fn sessionLayout(cols: u16, rows: u16, sidebar_visible: bool, sidebar_width: u16, diff_active: bool) SessionLayout {
+    const requested_sidebar: u16 = sidebar_width +| 2;
+    const fullscreen_diff = diff_active and sidebar_visible and cols < requested_sidebar +| 62;
+    const show_sidebar = sidebar_visible and !fullscreen_diff;
+    const sidebar_total: u16 = if (show_sidebar) requested_sidebar else 0;
     const content_width = cols -| sidebar_total;
+    const footer_y = rows -| 1;
     const conversation_height = rows -| 6;
+    const prompt_y = 1 +| conversation_height;
+    const prompt_height = footer_y -| prompt_y;
+
     return .{
         .content = .{ .x = 0, .y = 0, .width = content_width, .height = rows },
+        .header = .{ .x = 0, .y = 0, .width = content_width, .height = @min(@as(u16, 1), rows) },
         .conversation = .{
             .x = 0,
-            .y = if (rows > 0) 1 else 0,
+            .y = @min(@as(u16, 1), rows),
             .width = content_width,
             .height = conversation_height,
         },
+        .prompt = .{
+            .x = 0,
+            .y = prompt_y,
+            .width = content_width,
+            .height = prompt_height,
+        },
+        .footer = .{ .x = 0, .y = footer_y, .width = cols, .height = @min(@as(u16, 1), rows) },
+        .sidebar = .{
+            .x = content_width,
+            .y = 0,
+            .width = sidebar_total,
+            .height = rows -| 1,
+        },
+        .fullscreen_diff = fullscreen_diff,
     };
 }
 

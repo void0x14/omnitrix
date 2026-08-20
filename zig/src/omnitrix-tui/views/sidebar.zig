@@ -109,15 +109,40 @@ pub const SidebarView = struct {
             y += 1;
         }
 
-        // Push to bottom
-        y = rect.y + rect.height -| 2;
+        // Keep the three-row brand entirely inside the sidebar. A short
+        // terminal/sidebar simply omits the decorative mark.
+        if (rect.height < 3 or w < 5) return;
+        const brand_top = rect.y + rect.height -| 3;
+        const brand_y = brand_top + 1;
 
-        // Version footer
-        const version_style = Style{ .fg = theme.text_muted, .bg = theme.background_panel };
-        const version_text = self.info.version;
-        _ = buf.writeStringBounded(x, y, "Open", Style{ .fg = theme.success, .bg = theme.background_panel, .attr = .{ .bold = true } }, w);
-        y += 1;
-        _ = buf.writeStringBounded(x, y, version_text, version_style, w);
+        // High-quality Unicode dial logo (fallback when Kitty not available)
+        const green = Style{ .fg = theme.success, .bg = theme.background_panel, .attr = .{ .bold = true } };
+        const green_dim = Style{ .fg = theme.success_muted, .bg = theme.background_panel };
+
+        // Top arc
+        buf.setCell(x, brand_top, .{ .char = .{ .char = '╭' }, .style = green });
+        buf.setCell(x + 1, brand_top, .{ .char = .{ .char = '─' }, .style = green });
+        buf.setCell(x + 2, brand_top, .{ .char = .{ .char = '─' }, .style = green });
+        buf.setCell(x + 3, brand_top, .{ .char = .{ .char = '─' }, .style = green });
+        buf.setCell(x + 4, brand_top, .{ .char = .{ .char = '╮' }, .style = green });
+
+        // Middle with hourglass
+        buf.setCell(x, brand_y, .{ .char = .{ .char = '│' }, .style = green });
+        buf.setCell(x + 1, brand_y, .{ .char = .{ .char = ' ' }, .style = green_dim });
+        buf.setCell(x + 2, brand_y, .{ .char = .{ .char = '╳' }, .style = green });
+        buf.setCell(x + 3, brand_y, .{ .char = .{ .char = ' ' }, .style = green_dim });
+        buf.setCell(x + 4, brand_y, .{ .char = .{ .char = '│' }, .style = green });
+
+        // Bottom arc
+        buf.setCell(x, brand_y + 1, .{ .char = .{ .char = '╰' }, .style = green });
+        buf.setCell(x + 1, brand_y + 1, .{ .char = .{ .char = '─' }, .style = green });
+        buf.setCell(x + 2, brand_y + 1, .{ .char = .{ .char = '─' }, .style = green });
+        buf.setCell(x + 3, brand_y + 1, .{ .char = .{ .char = '─' }, .style = green });
+        buf.setCell(x + 4, brand_y + 1, .{ .char = .{ .char = '╯' }, .style = green });
+
+        // "Omnitrix" text next to the dial
+        const brand_style = Style{ .fg = theme.text, .bg = theme.background_panel, .attr = .{ .bold = true } };
+        _ = buf.writeStringBounded(x + 6, brand_y, "Omnitrix", brand_style, w -| 6);
     }
 
     fn renderInfoLine(self: SidebarView, buf: *Buffer, x: u16, y: u16, w: u16, label: []const u8, value: []const u8, theme: Theme) u16 {

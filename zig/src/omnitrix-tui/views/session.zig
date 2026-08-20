@@ -86,6 +86,7 @@ pub const SessionView = struct {
     focused: enum { conversation, prompt },
     sidebar_tab: SidebarTab,
     selected_file: u16,
+    selected_hunk: u16,
     show_timestamps: bool,
     show_thinking: bool,
     show_tool_details: bool,
@@ -115,6 +116,7 @@ pub const SessionView = struct {
             .focused = .prompt,
             .sidebar_tab = .conversation,
             .selected_file = 0,
+            .selected_hunk = 0,
             .show_timestamps = false,
             .show_thinking = true,
             .show_tool_details = true,
@@ -273,6 +275,77 @@ pub const SessionView = struct {
             2 => .diff,
             else => unreachable,
         };
+
+
+    }
+    /// Move the active Changes/Diff selection without allowing it to escape the fixture rows.
+    pub fn moveSideSelection(self: *SessionView, direction: i8) void {
+        const count = @min(self.sidebar.info.changed_files.len, changes_mod.max_rows);
+        if (count == 0) {
+            self.selected_file = 0;
+            self.selected_hunk = 0;
+            return;
+        }
+
+        const last_file: u16 = @intCast(count - 1);
+        var file = @min(self.selected_file, last_file);
+        var hunk = self.selected_hunk;
+        const hunk_count: u16 = 1;
+
+        if (self.sidebar_tab == .changes) {
+            if (direction < 0) {
+                file -|= 1;
+            } else if (direction > 0) {
+                file = @min(file +| 1, last_file);
+            }
+            hunk = 0;
+        } else if (self.sidebar_tab == .diff) {
+            if (direction < 0) {
+                if (hunk > 0) {
+                    hunk -= 1;
+                } else if (file > 0) {
+                    file -= 1;
+                    hunk = hunk_count - 1;
+                }
+            } else if (direction > 0) {
+                if (hunk + 1 < hunk_count) {
+                    hunk += 1;
+                } else if (file < last_file) {
+                    file += 1;
+                    hunk = 0;
+                }
+            }
+        }
+
+        self.selected_file = file;
+        self.selected_hunk = hunk;
+    }
+
+    /// Select a visible row/hunk in the active Changes or Diff surface.
+    pub fn handleSideClick(self: *SessionView, click_x: u16, click_y: u16, rect: Rect) bool {
+        if (!rect.contains(click_x, click_y)) return false;
+
+        switch (self.sidebar_tab) {
+            .conversation => return false,
+            .changes => {
+                const first_row = rect.y +| 3;
+                if (click_y < first_row) return false;
+                const row = click_y - first_row;
+                const count = @min(self.sidebar.info.changed_files.len, changes_mod.max_rows);
+                if (row >= count) return false;
+                self.selected_file = row;
+                self.selected_hunk = 0;
+                return true;
+            },
+            .diff => {
+                const first_hunk = rect.y +| 3;
+                if (click_y < first_hunk or click_y >= first_hunk +| 5) return false;
+                if (self.sidebar.info.changed_files.len == 0) return false;
+                self.selected_file = @min(self.selected_file, @as(u16, @intCast(@min(self.sidebar.info.changed_files.len, changes_mod.max_rows) - 1)));
+                self.selected_hunk = 0;
+                return true;
+            },
+        }
     }
 
     /// Handle a mouse click on the header row; returns true if a tab was hit.
@@ -312,68 +385,44 @@ pub const SessionView = struct {
     }
 
     /// Render the entire session view
+    /// Render the entire session view using the same geometry consumed by App.
     pub fn render(self: *SessionView, buf: *Buffer, terminal_width: u16, terminal_height: u16, theme: Theme) void {
-        // Clear
         buf.fillRegion(0, 0, terminal_width, terminal_height, .{ .style = .{ .bg = theme.background } });
 
-        const diff_fullscreen = self.sidebar_tab == .diff and terminal_width < self.sidebar.width +| 62;
-        const show_sidebar = self.sidebar_visible and !diff_fullscreen;
-        const sidebar_w: u16 = if (show_sidebar) self.sidebar.width +| 2 else 0;
-        const content_width = terminal_width -| sidebar_w;
-        const footer_y = terminal_height - 1;
-        const header_y: u16 = 0;
-        const prompt_height: u16 = 4;
-        const conversation_height = footer_y -| header_y -| prompt_height -| 1;
+        const frame = layout_mod.sessionLayout(
+            terminal_width,
+            terminal_height,
+            self.sidebar_visible,
+            self.sidebar.width,
+            self.sidebar_tab == .diff,
+        );
+        const show_sidebar = frame.sidebar.width > 0;
 
-        // Header
-        self.renderHeader(buf, 0, header_y, content_width, theme);
+        self.renderHeader(buf, frame.header.x, frame.header.y, frame.header.width, theme);
 
-        // Conversation area
-        const conv_rect = Rect{
-            .x = 0,
-            .y = header_y + 1,
-            .width = content_width,
-            .height = conversation_height,
-        };
         switch (self.sidebar_tab) {
-            .conversation => self.renderConversation(buf, conv_rect, theme),
-            .changes => changes_mod.render(buf, conv_rect, self.sidebar.info, self.selected_file, theme),
-            .diff => diff_mod.render(buf, conv_rect, self.sidebar.info, .{
+            .conversation => self.renderConversation(buf, frame.conversation, theme),
+            .changes => changes_mod.render(buf, frame.conversation, self.sidebar.info, self.selected_file, theme),
+            .diff => diff_mod.render(buf, frame.conversation, self.sidebar.info, .{
                 .selected_file = self.selected_file,
-                .selected_hunk = 0,
-                .fullscreen = diff_fullscreen,
+                .selected_hunk = self.selected_hunk,
+                .fullscreen = frame.fullscreen_diff,
                 .unavailable = true,
             }, theme),
         }
 
-        // Prompt area
-        const prompt_rect = Rect{
-            .x = 0,
-            .y = header_y + 1 + conversation_height,
-            .width = content_width,
-            .height = prompt_height,
-        };
-        self.renderPrompt(buf, prompt_rect, theme);
+        self.renderPrompt(buf, frame.prompt, theme);
 
-        // Sidebar
         if (show_sidebar) {
-            const sidebar_rect = Rect{
-                .x = content_width,
-                .y = 0,
-                .width = sidebar_w,
-                .height = terminal_height - 1,
-            };
-            self.sidebar.render(buf, sidebar_rect, theme);
+            self.sidebar.render(buf, frame.sidebar, theme);
 
-            // Vertical separator
             const sep_style = Style{ .fg = theme.border, .bg = theme.background_panel };
-            for (0..terminal_height - 1) |i| {
-                buf.setCell(content_width, @as(u16, @intCast(i)), .{ .char = .{ .char = '│' }, .style = sep_style });
+            for (0..frame.sidebar.height) |i| {
+                buf.setCell(frame.sidebar.x, frame.sidebar.y + @as(u16, @intCast(i)), .{ .char = .{ .char = '│' }, .style = sep_style });
             }
         }
 
-        // Footer
-        self.footer.render(buf, footer_y, terminal_width, theme);
+        self.footer.render(buf, frame.footer.y, terminal_width, theme);
     }
 
     fn renderHeader(self: SessionView, buf: *Buffer, x: u16, y: u16, width: u16, theme: Theme) void {
@@ -553,57 +602,64 @@ pub const SessionView = struct {
         current_y += 1; // gap
     }
 
-    fn renderPrompt(self: SessionView, buf: *Buffer, rect: Rect, theme: Theme) void {
-        // Separator
+    fn renderPrompt(self: *SessionView, buf: *Buffer, rect: Rect, theme: Theme) void {
+        if (rect.width < 4 or rect.height < 3) return;
+
         const sep_style = Style{ .fg = theme.border, .bg = theme.background };
         for (0..rect.width) |i| {
             buf.setCell(rect.x + @as(u16, @intCast(i)), rect.y, .{ .char = .{ .char = '─' }, .style = sep_style });
         }
 
-        // Prompt border
         const border_style = Style{ .fg = theme.border, .bg = theme.background_panel };
         const input_y = rect.y + 1;
         const input_h = rect.height -| 1;
 
-        // Top border
         buf.setCell(rect.x, input_y, .{ .char = .{ .char = '╭' }, .style = border_style });
-        for (1..rect.width - 1) |i| {
-            buf.setCell(rect.x + @as(u16, @intCast(i)), input_y, .{ .char = .{ .char = '─' }, .style = border_style });
-        }
-        buf.setCell(rect.x + rect.width - 1, input_y, .{ .char = .{ .char = '╮' }, .style = border_style });
-
-        // Content
-        for (1..input_h) |dy| {
-            const row = input_y + @as(u16, @intCast(dy));
-            buf.setCell(rect.x, row, .{ .char = .{ .char = '│' }, .style = border_style });
-            for (1..rect.width - 1) |dx| {
-                buf.setCell(rect.x + @as(u16, @intCast(dx)), row, .{ .style = .{ .bg = theme.background_panel } });
+        if (rect.width > 1) {
+            for (1..rect.width - 1) |i| {
+                buf.setCell(rect.x + @as(u16, @intCast(i)), input_y, .{ .char = .{ .char = '─' }, .style = border_style });
             }
-            buf.setCell(rect.x + rect.width - 1, row, .{ .char = .{ .char = '│' }, .style = border_style });
+            buf.setCell(rect.x + rect.width - 1, input_y, .{ .char = .{ .char = '╮' }, .style = border_style });
         }
 
-        // Bottom border
-        const bottom_y = input_y + input_h - 1;
-        buf.setCell(rect.x, bottom_y, .{ .char = .{ .char = '╰' }, .style = border_style });
-        for (1..rect.width - 1) |i| {
-            buf.setCell(rect.x + @as(u16, @intCast(i)), bottom_y, .{ .char = .{ .char = '─' }, .style = border_style });
-        }
-        buf.setCell(rect.x + rect.width - 1, bottom_y, .{ .char = .{ .char = '╯' }, .style = border_style });
+        const content_rect = Rect{
+            .x = rect.x + 1,
+            .y = input_y + 1,
+            .width = rect.width -| 2,
+            .height = input_h -| 2,
+        };
+        const has_text = self.prompt.gap.length() > 0;
+        // Keep one trailing cell available for the insertion cursor. The text widget
+        // computes the cursor from UTF-8 boundaries and display columns using this
+        // reduced width, so a final glyph is never overwritten by the cursor.
+        const text_rect = if (has_text and content_rect.width > 1)
+            content_rect.shrink(0, 1, 0, 0)
+        else
+            content_rect;
+        self.prompt.render(buf, text_rect);
 
-        // Prompt text or placeholder
-        const text_len = self.prompt.gap.length();
-        const content_y = input_y + 1;
-        if (text_len == 0) {
-            const placeholder = "Type a message... (Enter to send, Tab for shell)";
-            _ = buf.writeStringBounded(rect.x + 2, content_y, placeholder, Style{ .fg = theme.prompt_placeholder, .bg = theme.background_panel }, rect.width -| 4);
-            buf.setCell(rect.x + 1, content_y, .{
+        if (!has_text and content_rect.width > 1 and content_rect.height > 0) {
+            const placeholder = "Type a message... (Enter send, Tab cycles build/plan/code)";
+            _ = buf.writeStringBounded(
+                content_rect.x + 1,
+                content_rect.y,
+                placeholder,
+                Style{ .fg = theme.prompt_placeholder, .bg = theme.background_panel },
+                content_rect.width -| 1,
+            );
+            buf.setCell(content_rect.x, content_rect.y, .{
                 .char = .{ .char = '█' },
                 .style = Style{ .fg = theme.prompt_cursor, .bg = theme.background_panel },
             });
-        } else {
-            var text_buf: [2048]u8 = undefined;
-            const text = self.prompt.gap.getText(&text_buf);
-            _ = buf.writeStringBounded(rect.x + 2, content_y, text, Style{ .fg = theme.text, .bg = theme.background_panel }, rect.width -| 4);
+        }
+
+        const bottom_y = input_y + input_h -| 1;
+        buf.setCell(rect.x, bottom_y, .{ .char = .{ .char = '╰' }, .style = border_style });
+        if (rect.width > 1) {
+            for (1..rect.width - 1) |i| {
+                buf.setCell(rect.x + @as(u16, @intCast(i)), bottom_y, .{ .char = .{ .char = '─' }, .style = border_style });
+            }
+            buf.setCell(rect.x + rect.width - 1, bottom_y, .{ .char = .{ .char = '╯' }, .style = border_style });
         }
     }
 };

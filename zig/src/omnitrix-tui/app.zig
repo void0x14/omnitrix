@@ -292,6 +292,7 @@ pub const App = struct {
                         self.ui.viewport.rows,
                         s.sidebar_visible,
                         s.sidebar.width,
+                        s.sidebar_tab == .diff,
                     );
                     s.scroll.setViewport(frame.conversation.height, frame.conversation.width);
                     s.render(&self.terminal.buffer, self.ui.viewport.cols, self.ui.viewport.rows, self.theme);
@@ -585,6 +586,12 @@ pub const App = struct {
     fn handleSessionKey(self: *App, key: KeyEvent) !void {
         const s = &(self.session orelse return);
 
+        if (s.sidebar_tab != .conversation and (key.key == .up or key.key == .down)) {
+            s.moveSideSelection(if (key.key == .up) -1 else 1);
+            syncSessionFooterFocus(s);
+            return;
+        }
+
         if (key.key == .tab and !key.shift) {
             const current = s.footer.info.mode;
             s.footer.info.mode = if (std.mem.eql(u8, current, "build"))
@@ -692,6 +699,30 @@ pub const App = struct {
         switch (self.ui.route) {
             .session => {
                 if (self.session) |*s| {
+                    const frame = layout_mod.sessionLayout(
+                        self.ui.viewport.cols,
+                        self.ui.viewport.rows,
+                        s.sidebar_visible,
+                        s.sidebar.width,
+                        s.sidebar_tab == .diff,
+                    );
+
+                    if (mouse.btn == .left and mouse.row == frame.header.y) {
+                        if (s.handleHeaderClick(mouse.col, frame.header.width)) {
+                            syncSessionFooterFocus(s);
+                        }
+                        return;
+                    }
+
+                    // Changes and Diff own their content hit-testing. Never let
+                    // those clicks fall through to conversation block toggles.
+                    if (s.sidebar_tab != .conversation) {
+                        if (mouse.btn == .left and s.handleSideClick(mouse.col, mouse.row, frame.conversation)) {
+                            syncSessionFooterFocus(s);
+                        }
+                        return;
+                    }
+
                     if (mouse.btn == .scroll_up) {
                         s.scroll.scrollUp();
                         try self.applySessionAction(s, .focus_conversation);
@@ -699,28 +730,13 @@ pub const App = struct {
                         s.scroll.scrollDown();
                         try self.applySessionAction(s, .focus_conversation);
                     } else if (mouse.btn == .left) {
-                        if (mouse.row == 0) {
-                            const sidebar_w: u16 = if (s.sidebar_visible) s.sidebar.width + 2 else 0;
-                            const content_width = self.terminal.size.cols -| sidebar_w;
-                            if (s.handleHeaderClick(mouse.col, content_width)) {
-                                syncSessionFooterFocus(s);
-                            }
-                        } else {
-                            const frame = layout_mod.sessionLayout(
-                                self.ui.viewport.cols,
-                                self.ui.viewport.rows,
-                                s.sidebar_visible,
-                                s.sidebar.width,
-                            );
-                            const prompt_y = 1 + frame.conversation.height;
-                            if (mouse.row >= prompt_y and mouse.row < prompt_y + 4) {
-                                try self.applySessionAction(s, .focus_prompt);
-                            } else if (frame.conversation.contains(mouse.col, mouse.row)) {
-                                if (conversation_mod.blockAtScreenY(&s.blocks, s.scroll, frame.conversation, mouse.row)) |id| {
-                                    try self.applySessionAction(s, .{ .toggle_block = id });
-                                } else {
-                                    try self.applySessionAction(s, .focus_conversation);
-                                }
+                        if (frame.prompt.contains(mouse.col, mouse.row)) {
+                            try self.applySessionAction(s, .focus_prompt);
+                        } else if (frame.conversation.contains(mouse.col, mouse.row)) {
+                            if (conversation_mod.blockAtScreenY(&s.blocks, s.scroll, frame.conversation, mouse.row)) |id| {
+                                try self.applySessionAction(s, .{ .toggle_block = id });
+                            } else {
+                                try self.applySessionAction(s, .focus_conversation);
                             }
                         }
                     }
@@ -752,6 +768,14 @@ pub const App = struct {
             }
         } else if (std.mem.eql(u8, cmd_name, "opencode.status")) {
             self.modal.showAlert("Status", "Omnitrix TUI v1.18.18\nZig Runtime\nAll systems operational");
+        } else {
+            var message_buf: [192]u8 = undefined;
+            const message = std.fmt.bufPrint(
+                &message_buf,
+                "Unavailable in this UI-only build: {s}",
+                .{cmd_name},
+            ) catch "Command unavailable in this UI-only build.";
+            self.modal.showAlert("Unavailable", message);
         }
     }
 };
