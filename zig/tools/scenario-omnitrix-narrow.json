@@ -1,0 +1,9 @@
+[
+  { "sleep": 0.8 },
+  { "snap": "01-too-small" },
+  { "send": "\u000e" },
+  { "sleep": 0.3 },
+  { "snap": "02-too-small-session" },
+  { "send": "\u0003" },
+  { "sleep": 0.2 }
+]

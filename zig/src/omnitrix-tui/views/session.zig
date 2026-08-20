@@ -594,7 +594,7 @@ pub const SessionView = struct {
         const text_len = self.prompt.gap.length();
         const content_y = input_y + 1;
         if (text_len == 0) {
-            const placeholder = "Type a message... (Enter to send, Shift+Tab for shell)";
+            const placeholder = "Type a message... (Enter to send, Tab for shell)";
             _ = buf.writeStringBounded(rect.x + 2, content_y, placeholder, Style{ .fg = theme.prompt_placeholder, .bg = theme.background_panel }, rect.width -| 4);
             buf.setCell(rect.x + 1, content_y, .{
                 .char = .{ .char = '█' },
