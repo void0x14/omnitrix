@@ -3,19 +3,11 @@ const cell_mod = @import("../core/cell.zig");
 const buffer_mod = @import("../core/buffer.zig");
 const theme_mod = @import("../core/theme.zig");
 const ui_state_mod = @import("../core/ui_state.zig");
-const welcome_mod = @import("welcome.zig");
 const Cell = cell_mod.Cell;
 const Style = cell_mod.Style;
 const Color = cell_mod.Color;
 const Buffer = buffer_mod.Buffer;
 const Theme = theme_mod.Theme;
-
-pub const FooterContext = struct {
-    route: ui_state_mod.Route = .home,
-    focus: ui_state_mod.FocusTarget = .prompt,
-    auth_state: ?welcome_mod.AuthState = null,
-    composer_mode: ?[]const u8 = null,
-};
 
 pub const FooterInfo = struct {
     mode: []const u8 = "build",
@@ -29,6 +21,14 @@ pub const FooterInfo = struct {
     focused_panel: []const u8 = "conversation",
 };
 
+pub const FooterContext = struct {
+    route: ui_state_mod.Route = .home,
+    focus: ui_state_mod.FocusTarget = .prompt,
+    auth_state: ?u8 = null,
+    composer_mode: ?[]const u8 = null,
+    info: ?FooterInfo = null,
+};
+
 pub const FooterView = struct {
     info: FooterInfo,
 
@@ -37,16 +37,29 @@ pub const FooterView = struct {
     }
 
     pub fn renderContext(self: FooterView, buf: *Buffer, y: u16, terminal_width: u16, theme: Theme, context: FooterContext) void {
-        _ = self;
-        const style = Style{ .fg = theme.text_dim, .bg = theme.background_panel };
-        for (0..terminal_width) |i| buf.setCell(@intCast(i), y, .{ .style = style });
-        const hint = contextualHint(context);
-        const hint_width = buffer_mod.stringWidth(hint);
-        const x = if (hint_width < terminal_width) (terminal_width - hint_width) / 2 else 0;
-        _ = buf.writeStringBounded(x, y, hint, style, terminal_width -| x);
+        switch (context.route) {
+            .session => self.renderSessionFooter(buf, y, terminal_width, theme, context),
+            else => {
+                const style = Style{ .fg = theme.text_dim, .bg = theme.background_panel };
+                for (0..terminal_width) |i| buf.setCell(@intCast(i), y, .{ .style = style });
+                const hint = contextualHint(context);
+                const hint_width = buffer_mod.stringWidth(hint);
+                const x = if (hint_width < terminal_width) (terminal_width - hint_width) / 2 else 0;
+                _ = buf.writeStringBounded(x, y, hint, style, terminal_width -| x);
+            },
+        }
     }
 
     pub fn render(self: FooterView, buf: *Buffer, y: u16, terminal_width: u16, theme: Theme) void {
+        self.renderContext(buf, y, terminal_width, theme, .{
+            .route = .session,
+            .focus = focusForPanel(self.info.focused_panel),
+            .info = self.info,
+        });
+    }
+
+    fn renderSessionFooter(self: FooterView, buf: *Buffer, y: u16, terminal_width: u16, theme: Theme, context: FooterContext) void {
+        const info = context.info orelse self.info;
         // Background
         const bg_style = Style{ .fg = theme.text_muted, .bg = theme.background_panel };
         for (0..terminal_width) |i| {
@@ -61,7 +74,7 @@ pub const FooterView = struct {
             .bg = theme.accent,
             .attr = .{ .bold = true },
         };
-        const mode_text = self.info.mode;
+        const mode_text = info.mode;
         _ = buf.writeStringBounded(x, y, mode_text, mode_style, @intCast(mode_text.len + 2));
         x += @intCast(mode_text.len + 2);
 
@@ -71,17 +84,17 @@ pub const FooterView = struct {
 
         // Model name
         const model_style = Style{ .fg = theme.text, .bg = theme.background_panel };
-        _ = buf.writeStringBounded(x, y, self.info.model, model_style, terminal_width -| x);
-        x += @as(u16, @intCast(@min(self.info.model.len, terminal_width -| x)));
+        _ = buf.writeStringBounded(x, y, info.model, model_style, terminal_width -| x);
+        x += @as(u16, @intCast(@min(info.model.len, terminal_width -| x)));
 
         // Streaming indicator
-        if (self.info.is_streaming) {
+        if (info.is_streaming) {
             buf.setCell(x + 1, y, .{ .char = .{ .char = '●' }, .style = Style{ .fg = theme.success, .bg = theme.background_panel } });
             x += 3;
         }
 
         // Thinking indicator
-        if (self.info.is_thinking) {
+        if (info.is_thinking) {
             buf.setCell(x + 1, y, .{ .char = .{ .char = '◆' }, .style = Style{ .fg = theme.warning, .bg = theme.background_panel } });
             x += 3;
         }
@@ -91,9 +104,9 @@ pub const FooterView = struct {
 
         // The existing SessionView call has no FooterContext parameter. Its
         // focused panel remains the truthful fallback context for this path.
-        const panel_label = if (std.mem.eql(u8, self.info.focused_panel, "changes"))
+        const panel_label = if (std.mem.eql(u8, info.focused_panel, "changes"))
             "changes"
-        else if (std.mem.eql(u8, self.info.focused_panel, "diff"))
+        else if (std.mem.eql(u8, info.focused_panel, "diff"))
             "diff"
         else
             "conversation";
@@ -105,12 +118,12 @@ pub const FooterView = struct {
         }
 
         // Branch (right-aligned, clean)
-        if (self.info.branch.len > 0) {
-            const branch_w = @as(u16, @intCast(self.info.branch.len));
+        if (info.branch.len > 0) {
+            const branch_w = @as(u16, @intCast(info.branch.len));
             if (right_x > branch_w + 1) {
                 right_x -= branch_w;
                 const branch_style = Style{ .fg = theme.text_dim, .bg = theme.background_panel };
-                _ = buf.writeStringBounded(right_x, y, self.info.branch, branch_style, branch_w);
+                _ = buf.writeStringBounded(right_x, y, info.branch, branch_style, branch_w);
             }
         }
 
@@ -121,9 +134,9 @@ pub const FooterView = struct {
         }
 
         // Token counts (clean format without arrows)
-        if (self.info.tokens_prompt > 0 or self.info.tokens_completion > 0) {
+        if (info.tokens_prompt > 0 or info.tokens_completion > 0) {
             var token_buf: [32]u8 = undefined;
-            const token_str = std.fmt.bufPrint(&token_buf, "{d} tok", .{self.info.tokens_prompt + self.info.tokens_completion}) catch "";
+            const token_str = std.fmt.bufPrint(&token_buf, "{d} tok", .{info.tokens_prompt + info.tokens_completion}) catch "";
             const token_w = @as(u16, @intCast(token_str.len));
             if (right_x > token_w + 2) {
                 right_x -= token_w + 1;
@@ -133,14 +146,26 @@ pub const FooterView = struct {
     }
 };
 
+pub fn renderWelcomeContext(buf: *Buffer, y: u16, terminal_width: u16, theme: Theme, auth_state: u8) void {
+    var footer = FooterView.init();
+    footer.renderContext(buf, y, terminal_width, theme, .{ .route = .welcome, .auth_state = auth_state });
+}
+
+fn focusForPanel(panel: []const u8) ui_state_mod.FocusTarget {
+    if (std.mem.eql(u8, panel, "changes") or std.mem.eql(u8, panel, "diff")) return .sidebar;
+    if (std.mem.eql(u8, panel, "prompt")) return .prompt;
+    return .conversation;
+}
+
 fn contextualHint(context: FooterContext) []const u8 {
     return switch (context.route) {
         .welcome => if (context.auth_state) |state| switch (state) {
-            .signed_out => "Enter choose method   1/2/3 select fixture",
-            .choosing => "↑↓ choose method   Enter continue   Esc cancel",
-            .pending => "Enter complete fixture   F fail fixture   Esc cancel",
-            .authenticated => "Opening home",
-            .failed => "R retry   Enter retry   Esc cancel",
+            0 => "Enter choose method   1/2/3 select fixture",
+            1 => "↑↓ choose method   Enter continue   Esc cancel",
+            2 => "Enter complete fixture   F fail fixture   Esc cancel",
+            3 => "Opening home",
+            4 => "R retry   Enter retry   Esc cancel",
+            else => "Enter choose method",
         } else "Enter choose method",
         .home => if (context.composer_mode) |mode| if (std.mem.eql(u8, mode, "shell"))
             "Tab normal   Enter shell fixture   Esc cancel"

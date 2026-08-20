@@ -4,6 +4,7 @@ const cell_mod = @import("../core/cell.zig");
 const logo_mod = @import("../core/logo.zig");
 const term_mod = @import("../core/terminal.zig");
 const theme_mod = @import("../core/theme.zig");
+const footer_mod = @import("footer.zig");
 
 const Buffer = buffer_mod.Buffer;
 const KeyEvent = term_mod.KeyEvent;
@@ -143,7 +144,7 @@ pub const WelcomeView = struct {
             const notice_y = height -| 3;
             writeCentered(buf, notice_y, width, self.notice[0..self.notice_len], .{ .fg = noticeColor(self.auth_state, theme), .bg = theme.background });
         }
-        writeCentered(buf, height -| 1, width, hint(self.auth_state), .{ .fg = theme.text_dim, .bg = theme.background });
+        footer_mod.renderWelcomeContext(buf, height -| 1, width, theme, @intFromEnum(self.auth_state));
     }
 
     fn methodFromKey(char: ?u21) ?AuthMethod {
@@ -178,16 +179,6 @@ pub const WelcomeView = struct {
             .browser => "Browser handoff ready — press Enter to complete",
             .device_code => "Device-code handoff ready — press Enter to complete",
             .api_key => "Masked API-key fixture",
-        };
-    }
-
-    fn hint(state: AuthState) []const u8 {
-        return switch (state) {
-            .signed_out => "Enter or L sign in   1/2/3 choose a method",
-            .choosing => "↑↓ choose method   Enter continue   Esc cancel",
-            .pending => "Enter complete fixture   F show failure   Esc cancel",
-            .authenticated => "Opening home",
-            .failed => "R retry   Enter retry   Esc cancel",
         };
     }
 
