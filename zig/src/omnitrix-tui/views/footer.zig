@@ -24,7 +24,6 @@ pub const FooterInfo = struct {
 pub const FooterContext = struct {
     route: ui_state_mod.Route = .home,
     focus: ui_state_mod.FocusTarget = .prompt,
-    auth_state: ?u8 = null,
     composer_mode: ?[]const u8 = null,
     info: ?FooterInfo = null,
 };
@@ -146,10 +145,6 @@ pub const FooterView = struct {
     }
 };
 
-pub fn renderWelcomeContext(buf: *Buffer, y: u16, terminal_width: u16, theme: Theme, auth_state: u8) void {
-    var footer = FooterView.init();
-    footer.renderContext(buf, y, terminal_width, theme, .{ .route = .welcome, .auth_state = auth_state });
-}
 
 fn focusForPanel(panel: []const u8) ui_state_mod.FocusTarget {
     if (std.mem.eql(u8, panel, "changes") or std.mem.eql(u8, panel, "diff")) return .sidebar;
@@ -159,14 +154,7 @@ fn focusForPanel(panel: []const u8) ui_state_mod.FocusTarget {
 
 fn contextualHint(context: FooterContext) []const u8 {
     return switch (context.route) {
-        .welcome => if (context.auth_state) |state| switch (state) {
-            0 => "Enter choose method   1/2/3 select fixture",
-            1 => "↑↓ choose method   Enter continue   Esc cancel",
-            2 => "Enter complete fixture   F fail fixture   Esc cancel",
-            3 => "Opening home",
-            4 => "R retry   Enter retry   Esc cancel",
-            else => "Enter choose method",
-        } else "Enter choose method",
+        .welcome => "Enter start a session",
         .home => if (context.composer_mode) |mode| if (std.mem.eql(u8, mode, "shell"))
             "Tab normal   Enter shell fixture   Esc cancel"
         else if (std.mem.eql(u8, mode, "multiline"))
