@@ -2,11 +2,20 @@ const std = @import("std");
 const cell_mod = @import("../core/cell.zig");
 const buffer_mod = @import("../core/buffer.zig");
 const theme_mod = @import("../core/theme.zig");
+const ui_state_mod = @import("../core/ui_state.zig");
+const welcome_mod = @import("welcome.zig");
 const Cell = cell_mod.Cell;
 const Style = cell_mod.Style;
 const Color = cell_mod.Color;
 const Buffer = buffer_mod.Buffer;
 const Theme = theme_mod.Theme;
+
+pub const FooterContext = struct {
+    route: ui_state_mod.Route = .home,
+    focus: ui_state_mod.FocusTarget = .prompt,
+    auth_state: ?welcome_mod.AuthState = null,
+    composer_mode: ?[]const u8 = null,
+};
 
 pub const FooterInfo = struct {
     mode: []const u8 = "build",
@@ -25,6 +34,16 @@ pub const FooterView = struct {
 
     pub fn init() FooterView {
         return .{ .info = .{} };
+    }
+
+    pub fn renderContext(self: FooterView, buf: *Buffer, y: u16, terminal_width: u16, theme: Theme, context: FooterContext) void {
+        _ = self;
+        const style = Style{ .fg = theme.text_dim, .bg = theme.background_panel };
+        for (0..terminal_width) |i| buf.setCell(@intCast(i), y, .{ .style = style });
+        const hint = contextualHint(context);
+        const hint_width = buffer_mod.stringWidth(hint);
+        const x = if (hint_width < terminal_width) (terminal_width - hint_width) / 2 else 0;
+        _ = buf.writeStringBounded(x, y, hint, style, terminal_width -| x);
     }
 
     pub fn render(self: FooterView, buf: *Buffer, y: u16, terminal_width: u16, theme: Theme) void {
@@ -70,15 +89,13 @@ pub const FooterView = struct {
         // Push right side to end
         var right_x = terminal_width -| 1;
 
-        // Branch (right-aligned)
+        // Branch (right-aligned, clean)
         if (self.info.branch.len > 0) {
             const branch_w = @as(u16, @intCast(self.info.branch.len));
             if (right_x > branch_w + 1) {
-                right_x -= branch_w + 1;
+                right_x -= branch_w;
                 const branch_style = Style{ .fg = theme.text_dim, .bg = theme.background_panel };
                 _ = buf.writeStringBounded(right_x, y, self.info.branch, branch_style, branch_w);
-                // Branch icon
-                buf.setCell(right_x - 1, y, .{ .char = .{ .char = '⎇' }, .style = branch_style });
             }
         }
 
@@ -88,10 +105,10 @@ pub const FooterView = struct {
             buf.setCell(right_x, y, .{ .char = .{ .char = '│' }, .style = Style{ .fg = theme.border, .bg = theme.background_panel } });
         }
 
-        // Token counts
+        // Token counts (clean format without arrows)
         if (self.info.tokens_prompt > 0 or self.info.tokens_completion > 0) {
             var token_buf: [32]u8 = undefined;
-            const token_str = std.fmt.bufPrint(&token_buf, "↑{d} ↓{d}", .{ self.info.tokens_prompt, self.info.tokens_completion }) catch "";
+            const token_str = std.fmt.bufPrint(&token_buf, "{d} tok", .{self.info.tokens_prompt + self.info.tokens_completion}) catch "";
             const token_w = @as(u16, @intCast(token_str.len));
             if (right_x > token_w + 2) {
                 right_x -= token_w + 1;
@@ -100,3 +117,34 @@ pub const FooterView = struct {
         }
     }
 };
+
+fn contextualHint(context: FooterContext) []const u8 {
+    return switch (context.route) {
+        .welcome => if (context.auth_state) |state| switch (state) {
+            .signed_out => "Enter choose method   1/2/3 select fixture",
+            .choosing => "↑↓ choose method   Enter continue   Esc cancel",
+            .pending => "Enter complete fixture   F fail fixture   Esc cancel",
+            .authenticated => "Opening home",
+            .failed => "R retry   Enter retry   Esc cancel",
+        } else "Enter choose method",
+        .home => if (context.composer_mode) |mode| if (std.mem.eql(u8, mode, "shell"))
+            "Tab normal   Enter shell fixture   Esc cancel"
+        else if (std.mem.eql(u8, mode, "multiline"))
+            "Enter send   Shift+Enter newline   Tab normal   Esc cancel"
+        else if (std.mem.eql(u8, mode, "history"))
+            "Up/Down history fixture   Esc close"
+        else if (std.mem.eql(u8, mode, "error"))
+            "Esc dismiss   Enter retry   Ctrl+K clear"
+        else
+            "Enter send   Shift+Enter multiline   Tab shell   Ctrl+R history"
+        else "Enter send   Shift+Enter multiline   Tab shell",
+        .session => switch (context.focus) {
+            .prompt => "Enter send   Tab mode   Shift+Tab tabs   Ctrl+P commands",
+            .conversation => "↑↓ scroll   Shift+Tab tabs   Enter focus prompt",
+            .sidebar => "←→ tabs   Shift+Tab tabs   Ctrl+B sidebar",
+            .overlay => "Esc close overlay   Enter confirm",
+            .page => "Tab focus   Ctrl+P commands",
+        },
+        .too_small => "Resize the terminal to continue",
+    };
+}

@@ -4,6 +4,7 @@ const buffer_mod = @import("core/buffer.zig");
 const theme_mod = @import("core/theme.zig");
 const layout_mod = @import("core/layout.zig");
 const home_mod = @import("views/home.zig");
+const welcome_mod = @import("views/welcome.zig");
 const session_mod = @import("views/session.zig");
 const sidebar_mod = @import("views/sidebar.zig");
 const footer_mod = @import("views/footer.zig");
@@ -18,6 +19,9 @@ const Buffer = buffer_mod.Buffer;
 const Theme = theme_mod.Theme;
 const ThemeMode = theme_mod.ThemeMode;
 const HomeView = home_mod.HomeView;
+const WelcomeView = welcome_mod.WelcomeView;
+const WelcomeAction = welcome_mod.WelcomeAction;
+const AuthMethod = welcome_mod.AuthMethod;
 const SessionView = session_mod.SessionView;
 const ModalDialog = modal_mod.ModalDialog;
 const CommandPalette = palette_mod.CommandPalette;
@@ -33,6 +37,7 @@ pub const App = struct {
     theme: Theme,
     theme_mode: ThemeMode,
     ui: UiState,
+    welcome: WelcomeView,
     home: ?HomeView,
     session: ?SessionView,
     modal: ModalDialog,
@@ -79,6 +84,7 @@ pub const App = struct {
             .theme = theme,
             .theme_mode = theme_mode,
             .ui = .{ .viewport = .{ .cols = terminal.size.cols, .rows = terminal.size.rows } },
+            .welcome = WelcomeView.init(),
             .home = null,
             .session = null,
             .modal = ModalDialog.init(theme),
@@ -90,6 +96,7 @@ pub const App = struct {
     }
 
     pub fn deinit(self: *App) void {
+        self.welcome.deinit();
         if (self.home) |*h| h.deinit();
         if (self.session) |*s| s.deinit();
         self.palette.deinit();
@@ -100,6 +107,7 @@ pub const App = struct {
         self.ui.route = route;
         switch (route) {
             .home => {
+                if (self.home) |*h| h.deinit();
                 if (self.session) |*s| {
                     s.deinit();
                     self.session = null;
@@ -198,8 +206,6 @@ pub const App = struct {
 
     /// Main event loop
     pub fn run(self: *App) !void {
-        try self.navigate(.home);
-
         while (self.is_running) {
             // Check for terminal resize
             const new_size = try self.terminal.updateSize();
@@ -278,6 +284,7 @@ pub const App = struct {
                     h.render(&self.terminal.buffer, self.ui.viewport.cols, self.ui.viewport.rows, self.theme);
                 }
             },
+            .welcome => self.welcome.render(&self.terminal.buffer, self.ui.viewport.cols, self.ui.viewport.rows, self.theme),
             .session => {
                 if (self.session) |*s| {
                     const frame = layout_mod.sessionLayout(
@@ -290,7 +297,7 @@ pub const App = struct {
                     s.render(&self.terminal.buffer, self.ui.viewport.cols, self.ui.viewport.rows, self.theme);
                 }
             },
-            .welcome, .too_small => self.renderTooSmall(),
+            .too_small => self.renderTooSmall(),
         }
 
         // Render order is deterministic: question/confirm, select/alert,
@@ -390,6 +397,11 @@ pub const App = struct {
     }
 
     fn handleKey(self: *App, key: KeyEvent) !void {
+        if (self.ui.route == .welcome) {
+            try self.handleWelcomeKey(key);
+            return;
+        }
+
         // Global keybindings
         if (key.ctrl) {
             switch (key.char orelse 0) {
@@ -437,6 +449,11 @@ pub const App = struct {
 
         if (key.key == .escape) {
             if (self.ui.route == .home and self.home != null) {
+                if (self.home.?.composer_mode != .normal or self.home.?.notice_len > 0) {
+                    self.home.?.setComposerMode(.normal);
+                    self.home.?.notice_len = 0;
+                    return;
+                }
                 if (self.home.?.prompt.gap.length() > 0) {
                     self.home.?.prompt.gap.clear();
                     return;
@@ -452,20 +469,106 @@ pub const App = struct {
         }
 
         switch (self.ui.route) {
+            .welcome => {},
             .home => {
                 try self.handleHomeKey(key);
             },
             .session => {
                 try self.handleSessionKey(key);
             },
-            .welcome, .too_small => {},
+            .too_small => {},
         }
+    }
+
+    fn handleWelcomeKey(self: *App, key: KeyEvent) !void {
+        const action = self.welcome.handleKey(key);
+        switch (action) {
+            .none => {},
+            .choose_method => |method| {
+                self.welcome.setState(.choosing, chooseNotice(method));
+            },
+            .begin_auth => |method| {
+                if (method == .api_key) {
+                    self.welcome.setState(.failed, "API-key sign-in is visual-only in this UI fixture. Press R to retry.");
+                } else {
+                    self.welcome.setState(.pending, pendingNotice(method));
+                }
+            },
+            .cancel => {
+                self.welcome.setState(.signed_out, "Sign-in canceled. Press Enter to choose a method again.");
+            },
+            .complete => {
+                self.welcome.setState(.authenticated, "Fixture sign-in complete. Opening home.");
+                try self.navigate(.home);
+            },
+            .retry => {
+                self.welcome.setState(.choosing, "Choose a fixture method to retry.");
+            },
+        }
+    }
+
+    fn chooseNotice(method: AuthMethod) []const u8 {
+        return switch (method) {
+            .browser => "Browser sign-in selected. Press Enter to begin the fixture.",
+            .device_code => "Device-code handoff selected. Press Enter to begin the fixture.",
+            .api_key => "API-key row is masked and visual-only. Press Enter to show its fixture failure.",
+        };
+    }
+
+    fn pendingNotice(method: AuthMethod) []const u8 {
+        return switch (method) {
+            .browser => "Browser handoff pending. Enter completes the fixture; F shows failure.",
+            .device_code => "Device-code handoff pending. Enter completes the fixture; F shows failure.",
+            .api_key => "API-key fixture pending.",
+        };
     }
 
     fn handleHomeKey(self: *App, key: KeyEvent) !void {
         const h = &(self.home orelse return);
 
+        if (key.ctrl and (key.char orelse 0) == 'k') {
+            h.prompt.gap.clear();
+            h.setComposerMode(.normal);
+            h.setNotice("Composer cleared.");
+            return;
+        }
+
+        if (key.ctrl and (key.char orelse 0) == 'r') {
+            h.setComposerMode(.history);
+            h.setNotice("History is a UI fixture; no persisted entries are loaded.");
+            return;
+        }
+
+        if (key.key == .tab) {
+            h.setComposerMode(if (h.composer_mode == .shell) .normal else .shell);
+            h.setNotice(if (h.composer_mode == .shell) "Shell fixture selected; no command will execute." else "Normal composer mode.");
+            return;
+        }
+
+        if (key.key == .up and h.prompt.isEmpty()) {
+            h.setComposerMode(.history);
+            h.setNotice("History is a UI fixture; no persisted entries are loaded.");
+            return;
+        }
+
+        if (key.key == .enter and key.shift) {
+            h.setComposerMode(.multiline);
+            if (h.prompt.gap.length() < HomeView.max_prompt_bytes) {
+                try h.prompt.handleKey(.{ .key = .enter });
+            }
+            return;
+        }
+
         if (key.key == .enter) {
+            if (h.composer_mode == .history) {
+                h.setComposerMode(.normal);
+                h.setNotice("History closed.");
+                return;
+            }
+            if (h.composer_mode == .shell) {
+                h.setNotice("Shell fixture selected; execution is unavailable in the UI-only pass.");
+                return;
+            }
             if (!h.prompt.isEmpty()) {
                 // The text MUST be copied out before navigating: navigate(.session)
                 // calls home.deinit(), which frees the prompt's gap buffer. Reading
@@ -481,7 +584,20 @@ pub const App = struct {
                         .parts = &.{.{ .text = text }},
                     });
                 }
+            } else {
+                h.setComposerMode(.@"error");
+                h.setNotice("Nothing to send. Type a prompt or choose a composer mode.");
             }
+            return;
+        }
+
+        if (h.composer_mode == .history and key.key != .escape) {
+            h.setComposerMode(.normal);
+        }
+
+        if (key.char != null and h.prompt.gap.length() >= HomeView.max_prompt_bytes) {
+            h.setComposerMode(.@"error");
+            h.setNotice("Prompt limit reached (512 bytes).");
             return;
         }
 
