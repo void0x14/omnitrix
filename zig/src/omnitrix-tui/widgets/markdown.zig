@@ -34,6 +34,18 @@ pub const MarkdownRenderer = struct {
     pub fn init(theme: Theme) MarkdownRenderer {
         return .{ .theme = theme, .indent = 0 };
     }
+    fn trimLeadingSpaces(text: []const u8) []const u8 {
+        var start: usize = 0;
+        while (start < text.len and text[start] == ' ') start += 1;
+        return text[start..];
+    }
+
+    fn trimSpaces(text: []const u8) []const u8 {
+        const leading = trimLeadingSpaces(text);
+        var end = leading.len;
+        while (end > 0 and leading[end - 1] == ' ') end -= 1;
+        return leading[0..end];
+    }
 
     /// Render markdown text into buffer starting at (x, y)
     /// Returns the y position after rendering
@@ -41,21 +53,17 @@ pub const MarkdownRenderer = struct {
         var lines = std.mem.splitScalar(u8, text, '\n');
         var current_y = y;
         var in_code_block = false;
-        var code_lang: []const u8 = "";
-        var code_content_start: usize = 0;
 
         while (lines.next()) |line| {
-            if (current_y >= y + width) break; // safety
+            if (current_y >= buf.rows) break; // safety
 
             // Code block toggle
-            if (std.mem.startsWith(u8, std.mem.trimLeft(u8, line, " "), "```")) {
+            if (std.mem.startsWith(u8, trimLeadingSpaces(line), "```")) {
                 if (in_code_block) {
                     // End code block - render accumulated content
                     in_code_block = false;
                 } else {
                     in_code_block = true;
-                    code_lang = std.mem.trimLeft(u8, line[3..], " ");
-                    code_content_start = 0;
                 }
                 continue;
             }
@@ -65,7 +73,7 @@ pub const MarkdownRenderer = struct {
                 continue;
             }
 
-            const trimmed = std.mem.trimLeft(u8, line, " ");
+            const trimmed = trimLeadingSpaces(line);
 
             // Heading
             if (trimmed.len > 0 and trimmed[0] == '#') {
@@ -74,7 +82,7 @@ pub const MarkdownRenderer = struct {
                     if (ch == '#') level += 1 else break;
                 }
                 if (level >= 1 and level <= 6 and trimmed.len > level and trimmed[level] == ' ') {
-                    const heading_text = std.mem.trim(u8, trimmed[level + 1 ..], " ");
+                    const heading_text = trimSpaces(trimmed[level + 1 ..]);
                     current_y = self.renderHeading(buf, x, current_y, width, heading_text, level);
                     continue;
                 }
@@ -111,7 +119,7 @@ pub const MarkdownRenderer = struct {
                     if (ch >= '0' and ch <= '9') {
                         num = num * 10 + @as(u16, ch - '0');
                     } else if (ch == '.' and i > 0 and trimmed[i - 1] >= '0' and trimmed[i - 1] <= '9') {
-                        rest = std.mem.trimLeft(u8, trimmed[i + 1 ..], " ");
+                        rest = trimLeadingSpaces(trimmed[i + 1 ..]);
                         break;
                     } else {
                         num = 0;
@@ -201,106 +209,135 @@ pub const MarkdownRenderer = struct {
         }
     }
 
+    pub fn measureHeight(self: MarkdownRenderer, width: u16, text: []const u8) u16 {
+        _ = self;
+        if (width == 0) return 1;
+        var height: u16 = 0;
+        var lines = std.mem.splitScalar(u8, text, '\n');
+        while (lines.next()) |line| {
+            if (line.len == 0) {
+                height +|= 1;
+                continue;
+            }
+            var used: u16 = 0;
+            var words = std.mem.splitScalar(u8, line, ' ');
+            while (words.next()) |word| {
+                const word_width = stringWidth(word);
+                if (used > 0 and used + 1 + word_width > width) {
+                    height +|= 1;
+                    used = 0;
+                }
+                used +|= if (used == 0) word_width else 1 + word_width;
+                if (used > width) used = width;
+            }
+            height +|= 1;
+        }
+        return @max(height, 1);
+    }
+
     fn renderParagraph(self: MarkdownRenderer, buf: *Buffer, x: u16, y: u16, width: u16, text: []const u8) u16 {
         return self.renderInline(buf, x, y, width, text, self.theme.fgStyle(self.theme.text));
     }
 
-    /// Render text with inline formatting (bold, italic, code, links)
+    /// Render markdown with word-aware line breaks and hidden inline markers.
     fn renderInline(self: MarkdownRenderer, buf: *Buffer, start_x: u16, y: u16, width: u16, text: []const u8, base_style: Style) u16 {
+        if (width == 0) return y + 1;
+        var line_y = y;
+        var line_x = start_x;
+        var words = std.mem.splitScalar(u8, text, ' ');
+        while (words.next()) |word| {
+            const word_width = stringWidth(word);
+            if (line_x > start_x and line_x - start_x + 1 + word_width > width) {
+                line_y += 1;
+                line_x = start_x;
+            }
+            line_x = self.renderInlineToken(buf, line_x, line_y, width -| (line_x - start_x), word, base_style);
+            if (line_x < start_x + width) {
+                buf.setCell(line_x, line_y, .{ .char = .{ .char = ' ' }, .style = base_style });
+                line_x += 1;
+            } else {
+                line_y += 1;
+                line_x = start_x;
+            }
+        }
+        while (line_x < start_x + width) {
+            buf.setCell(line_x, line_y, .{ .style = base_style });
+            line_x += 1;
+        }
+        return line_y + 1;
+    }
+
+    fn renderInlineToken(self: MarkdownRenderer, buf: *Buffer, start_x: u16, y: u16, width: u16, text: []const u8, base_style: Style) u16 {
         var x = start_x;
         var i: usize = 0;
-        var current_style = base_style;
-
-        while (i < text.len and (x - start_x) < width) {
-            // Inline code: `code`
-            if (text[i] == '`' and i + 1 < text.len) {
-                const end = std.mem.indexOfScalar(u8, text[i + 1 ..], '`') orelse text.len;
-                const code_text = text[i + 1 ..][0..end];
-                var code_style = base_style;
-                code_style.fg = self.theme.syntax_string;
-                code_style.bg = self.theme.background_panel;
-                for (code_text) |ch| {
-                    if (x - start_x >= width) break;
-                    buf.setCell(x, y, .{ .char = .{ .char = ch }, .style = code_style });
-                    x += 1;
+        while (i < text.len and x - start_x < width) {
+            if (std.mem.startsWith(u8, text[i..], "**")) {
+                if (std.mem.indexOf(u8, text[i + 2 ..], "**")) |end| {
+                    var style = base_style;
+                    style.attr.bold = true;
+                    x = renderStyled(buf, x, y, width -| (x - start_x), text[i + 2 .. i + 2 + end], style);
+                    i += 2 + end + 2;
+                    continue;
                 }
-                i = i + 1 + end + 1;
-                current_style = base_style;
+            }
+            if (text[i] == '`') {
+                if (std.mem.indexOfScalar(u8, text[i + 1 ..], '`')) |end| {
+                    var style = base_style;
+                    style.fg = self.theme.syntax_string;
+                    style.bg = self.theme.background_panel;
+                    x = renderStyled(buf, x, y, width -| (x - start_x), text[i + 1 .. i + 1 + end], style);
+                    i += 1 + end + 1;
+                    continue;
+                }
+            }
+            if (text[i] == '*' or text[i] == '_') {
+                i += 1;
                 continue;
             }
-
-            // Bold: **text** or __text__
-            if (text[i] == '*' and i + 1 < text.len and text[i + 1] == '*') {
-                if (std.mem.indexOfScalar(u8, text[i + 2 ..], "**")) |end| {
-                    const bold_text = text[i + 2 ..][0..end];
-                    var bold_style = base_style;
-                    bold_style.attr.bold = true;
-                    for (bold_text) |ch| {
-                        if (x - start_x >= width) break;
-                        buf.setCell(x, y, .{ .char = .{ .char = ch }, .style = bold_style });
-                        x += 1;
-                    }
-                    i = i + 2 + end + 2;
-                    current_style = base_style;
-                    continue;
-                }
-            }
-
-            // Italic: *text* or _text_
-            if (text[i] == '*' and (i + 1 < text.len and text[i + 1] != '*')) {
-                if (std.mem.indexOfScalar(u8, text[i + 1 ..], "*")) |end| {
-                    const italic_text = text[i + 1 ..][0..end];
-                    var italic_style = base_style;
-                    italic_style.attr.italic = true;
-                    for (italic_text) |ch| {
-                        if (x - start_x >= width) break;
-                        buf.setCell(x, y, .{ .char = .{ .char = ch }, .style = italic_style });
-                        x += 1;
-                    }
-                    i = i + 1 + end + 1;
-                    current_style = base_style;
-                    continue;
-                }
-            }
-
-            // Link: [text](url)
             if (text[i] == '[') {
-                if (std.mem.indexOfScalar(u8, text[i + 1 ..], ']')) |close_idx| {
-                    const link_text = text[i + 1 ..][0..close_idx];
-                    const rest = text[i + 1 + close_idx ..];
-                    if (rest.len > 0 and rest[0] == '(') {
-                        if (std.mem.indexOfScalar(u8, rest[1..], ')')) |url_end| {
-                            // Just render the link text with accent color
-                            var link_style = base_style;
-                            link_style.fg = self.theme.accent;
-                            link_style.attr.underline = true;
-                            for (link_text) |ch| {
-                                if (x - start_x >= width) break;
-                                buf.setCell(x, y, .{ .char = .{ .char = ch }, .style = link_style });
-                                x += 1;
-                            }
-                            i = i + 1 + close_idx + 1 + url_end + 2; // skip [text](url)
-                            current_style = base_style;
+                if (std.mem.indexOfScalar(u8, text[i + 1 ..], ']')) |close| {
+                    const after = i + 1 + close;
+                    if (after + 1 < text.len and text[after + 1] == '(') {
+                        if (std.mem.indexOfScalar(u8, text[after + 2 ..], ')')) |url_end| {
+                            var style = base_style;
+                            style.fg = self.theme.accent;
+                            style.attr.underline = true;
+                            x = renderStyled(buf, x, y, width -| (x - start_x), text[i + 1 .. after], style);
+                            i = after + 3 + url_end;
                             continue;
                         }
                     }
                 }
             }
-
-            // Regular character
-            if (x - start_x < width) {
-                buf.setCell(x, y, .{ .char = .{ .char = text[i] }, .style = current_style });
-                x += 1;
+            const seq = std.unicode.utf8ByteSequenceLength(text[i]) catch 1;
+            const n = @min(@as(usize, seq), text.len - i);
+            const cp = std.unicode.wtf8Decode(text[i .. i + n]) catch @as(u21, text[i]);
+            const cw = buffer_mod.charWidth(cp);
+            if (cw > 0 and x - start_x + cw <= width) {
+                buf.setCell(x, y, .{ .char = .{ .char = cp }, .style = base_style, .width = cw });
+                if (cw == 2) buf.setCell(x + 1, y, .{ .char = .wide_right, .style = base_style, .width = 0 });
+                x += cw;
             }
-            i += 1;
+            i += n;
         }
+        return x;
+    }
 
-        // Fill rest of line
-        while ((x - start_x) < width) {
-            buf.setCell(x, y, .{ .style = base_style });
-            x += 1;
+    fn renderStyled(buf: *Buffer, start_x: u16, y: u16, width: u16, text: []const u8, style: Style) u16 {
+        var x = start_x;
+        var i: usize = 0;
+        while (i < text.len and x - start_x < width) {
+            const seq = std.unicode.utf8ByteSequenceLength(text[i]) catch 1;
+            const n = @min(@as(usize, seq), text.len - i);
+            const cp = std.unicode.wtf8Decode(text[i .. i + n]) catch @as(u21, text[i]);
+            const cw = buffer_mod.charWidth(cp);
+            if (cw > 0 and x - start_x + cw <= width) {
+                buf.setCell(x, y, .{ .char = .{ .char = cp }, .style = style, .width = cw });
+                if (cw == 2) buf.setCell(x + 1, y, .{ .char = .wide_right, .style = style, .width = 0 });
+                x += cw;
+            }
+            i += n;
         }
-
-        return y + 1;
+        return x;
     }
 };

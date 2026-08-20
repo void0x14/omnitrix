@@ -6,6 +6,7 @@ const layout_mod = @import("core/layout.zig");
 const home_mod = @import("views/home.zig");
 const welcome_mod = @import("views/welcome.zig");
 const session_mod = @import("views/session.zig");
+const conversation_mod = @import("views/conversation.zig");
 const sidebar_mod = @import("views/sidebar.zig");
 const footer_mod = @import("views/footer.zig");
 const modal_mod = @import("dialogs/modal.zig");
@@ -23,6 +24,7 @@ const WelcomeView = welcome_mod.WelcomeView;
 const WelcomeAction = welcome_mod.WelcomeAction;
 const AuthMethod = welcome_mod.AuthMethod;
 const SessionView = session_mod.SessionView;
+const SessionAction = session_mod.SessionAction;
 const ModalDialog = modal_mod.ModalDialog;
 const CommandPalette = palette_mod.CommandPalette;
 const Command = palette_mod.Command;
@@ -464,10 +466,10 @@ pub const App = struct {
                 self.is_running = false;
                 return;
             }
-            // On the session route Esc is a no-op: overlays (palette,
-            // modals) consume their own Esc first, and a stray Esc must
-            // never kill an active session. Ctrl+C remains the explicit
-            // exit. Quitting only happens from home with an empty prompt.
+            if (self.ui.route == .session) {
+                if (self.session) |*s| try self.applySessionAction(s, .cancel);
+                return;
+            }
             return;
         }
 
@@ -639,7 +641,6 @@ pub const App = struct {
     fn handleSessionKey(self: *App, key: KeyEvent) !void {
         const s = &(self.session orelse return);
 
-        // Tab cycles agent mode: build -> plan -> code -> build
         if (key.key == .tab and !key.shift) {
             const current = s.footer.info.mode;
             s.footer.info.mode = if (std.mem.eql(u8, current, "build"))
@@ -651,14 +652,12 @@ pub const App = struct {
             return;
         }
 
-        // Shift+Tab cycles sidebar tabs: conversation -> changes -> diff
         if (key.key == .shift_tab) {
             s.cycleSidebarTab(1);
             syncSessionFooterFocus(s);
             return;
         }
 
-        // Left/Right arrows cycle sidebar tabs when not typing in prompt
         if (key.key == .left and !key.ctrl and s.prompt.gap.length() == 0) {
             s.cycleSidebarTab(-1);
             syncSessionFooterFocus(s);
@@ -671,29 +670,22 @@ pub const App = struct {
         }
 
         if (key.key == .enter and !key.shift) {
-            if (!s.prompt.isEmpty()) {
-                const text = try s.prompt.getText();
-                defer self.allocator.free(text);
-                try s.addMessage(.{
-                    .role = .user,
-                    .parts = &.{.{ .text = text }},
-                });
-                s.prompt.gap.clear();
-                s.scroll.scrollToBottom();
-            }
+            try self.applySessionAction(s, .send);
             return;
         }
-
         if (key.key == .page_up) {
+            try self.applySessionAction(s, .focus_conversation);
             s.scroll.pageUp();
             return;
         }
         if (key.key == .page_down) {
+            try self.applySessionAction(s, .focus_conversation);
             s.scroll.pageDown();
             return;
         }
 
-        // Forward to prompt
+        s.focused = .prompt;
+        s.footer.info.focused_panel = "prompt";
         try s.prompt.handleKey(.{
             .char = key.char,
             .key = switch (key.key) {
@@ -713,6 +705,37 @@ pub const App = struct {
         });
     }
 
+    fn applySessionAction(self: *App, s: *SessionView, action: SessionAction) !void {
+        switch (action) {
+            .none => {},
+            .send => {
+                if (s.prompt.isEmpty()) return;
+                const text = try s.prompt.getText();
+                defer self.allocator.free(text);
+                try s.addMessage(.{ .role = .user, .parts = &.{.{ .text = text }} });
+                s.prompt.gap.clear();
+                s.scroll.scrollToBottom();
+            },
+            .cancel => {
+                s.focused = .conversation;
+                s.footer.info.focused_panel = "conversation";
+            },
+            .focus_prompt => {
+                s.focused = .prompt;
+                s.footer.info.focused_panel = "prompt";
+            },
+            .focus_conversation => {
+                s.focused = .conversation;
+                s.footer.info.focused_panel = "conversation";
+            },
+            .toggle_block => |id| {
+                _ = s.blocks.toggleCollapsed(id);
+                s.focused = .conversation;
+                s.footer.info.focused_panel = "conversation";
+            },
+        }
+    }
+
     fn syncSessionFooterFocus(s: *SessionView) void {
         s.footer.info.focused_panel = switch (s.sidebar_tab) {
             .conversation => "conversation",
@@ -727,15 +750,33 @@ pub const App = struct {
                 if (self.session) |*s| {
                     if (mouse.btn == .scroll_up) {
                         s.scroll.scrollUp();
+                        try self.applySessionAction(s, .focus_conversation);
                     } else if (mouse.btn == .scroll_down) {
                         s.scroll.scrollDown();
+                        try self.applySessionAction(s, .focus_conversation);
                     } else if (mouse.btn == .left) {
-                        // Check if click is on header row (y == 0)
                         if (mouse.row == 0) {
                             const sidebar_w: u16 = if (s.sidebar_visible) s.sidebar.width + 2 else 0;
                             const content_width = self.terminal.size.cols -| sidebar_w;
                             if (s.handleHeaderClick(mouse.col, content_width)) {
                                 syncSessionFooterFocus(s);
+                            }
+                        } else {
+                            const frame = layout_mod.sessionLayout(
+                                self.ui.viewport.cols,
+                                self.ui.viewport.rows,
+                                s.sidebar_visible,
+                                s.sidebar.width,
+                            );
+                            const prompt_y = 1 + frame.conversation.height;
+                            if (mouse.row >= prompt_y and mouse.row < prompt_y + 4) {
+                                try self.applySessionAction(s, .focus_prompt);
+                            } else if (frame.conversation.contains(mouse.col, mouse.row)) {
+                                if (conversation_mod.blockAtScreenY(&s.blocks, s.scroll, frame.conversation, mouse.row)) |id| {
+                                    try self.applySessionAction(s, .{ .toggle_block = id });
+                                } else {
+                                    try self.applySessionAction(s, .focus_conversation);
+                                }
                             }
                         }
                     }

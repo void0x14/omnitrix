@@ -8,6 +8,7 @@ const textarea_mod = @import("../widgets/textarea.zig");
 const text_mod = @import("../widgets/text.zig");
 const markdown_mod = @import("../widgets/markdown.zig");
 const spinner_mod = @import("../widgets/spinner.zig");
+const conversation_mod = @import("conversation.zig");
 const sidebar_mod = @import("sidebar.zig");
 const footer_mod = @import("footer.zig");
 const Cell = cell_mod.Cell;
@@ -21,9 +22,19 @@ const TextareaWidget = textarea_mod.TextareaWidget;
 const TextWidget = text_mod.TextWidget;
 const MarkdownRenderer = markdown_mod.MarkdownRenderer;
 const Spinner = spinner_mod.Spinner;
+const BlockStore = conversation_mod.BlockStore;
 const SidebarInfo = sidebar_mod.SidebarInfo;
 const FooterView = footer_mod.FooterView;
 const FooterInfo = footer_mod.FooterInfo;
+
+pub const SessionAction = union(enum) {
+    none,
+    send,
+    cancel,
+    focus_prompt,
+    focus_conversation,
+    toggle_block: u32,
+};
 
 pub const MessageRole = enum { user, assistant, system };
 
@@ -44,9 +55,17 @@ pub const Message = struct {
     id: []const u8 = "",
 };
 
+pub const SidebarTab = enum { conversation, changes, diff };
+
 pub const SessionView = struct {
     allocator: std.mem.Allocator,
+    /// Owns every string reachable from `messages`. Callers of `addMessage`
+    /// may pass stack temporaries or buffers they free immediately; the view
+    /// deep-copies into this arena so rendering never touches freed memory.
+    content_arena: std.heap.ArenaAllocator,
     messages: std.ArrayList(Message),
+    blocks: BlockStore,
+    next_block_id: u32,
     scroll: ScrollContainer,
     prompt: TextareaWidget,
     markdown: MarkdownRenderer,
@@ -55,6 +74,7 @@ pub const SessionView = struct {
     footer: FooterView,
     sidebar_visible: bool,
     focused: enum { conversation, prompt },
+    sidebar_tab: SidebarTab,
     show_timestamps: bool,
     show_thinking: bool,
     show_tool_details: bool,
@@ -64,7 +84,10 @@ pub const SessionView = struct {
     pub fn init(allocator: std.mem.Allocator, theme: Theme) !SessionView {
         return .{
             .allocator = allocator,
+            .content_arena = std.heap.ArenaAllocator.init(allocator),
             .messages = .empty,
+            .blocks = BlockStore.init(allocator),
+            .next_block_id = 1,
             .scroll = ScrollContainer.init(30, 80),
             .prompt = try TextareaWidget.init(
                 allocator,
@@ -73,10 +96,11 @@ pub const SessionView = struct {
             ),
             .markdown = MarkdownRenderer.init(theme),
             .spinner = Spinner.init("Thinking...", Style{ .fg = theme.accent }, Style{ .fg = theme.text_muted }),
-            .sidebar = SidebarView.init(),
+            .sidebar = SidebarView.init(allocator),
             .footer = FooterView.init(),
             .sidebar_visible = true,
             .focused = .prompt,
+            .sidebar_tab = .conversation,
             .show_timestamps = false,
             .show_thinking = true,
             .show_tool_details = true,
@@ -85,12 +109,73 @@ pub const SessionView = struct {
 
     pub fn deinit(self: *SessionView) void {
         self.messages.deinit(self.allocator);
+        self.blocks.deinit();
+        self.content_arena.deinit();
         self.prompt.deinit();
+        self.sidebar.deinit();
     }
 
+    /// Append a message, deep-copying its payload into the view's arena.
+    ///
+    /// The caller keeps ownership of whatever it passed in and is free to
+    /// release it as soon as this returns.
     pub fn addMessage(self: *SessionView, msg: Message) !void {
-        try self.messages.append(self.allocator, msg);
+        const arena = self.content_arena.allocator();
+
+        const parts = try arena.alloc(MessagePart, msg.parts.len);
+        for (msg.parts, 0..) |part, i| {
+            parts[i] = try dupePart(arena, part);
+        }
+
+        var owned = msg;
+        owned.parts = parts;
+        owned.id = try arena.dupe(u8, msg.id);
+
+        try self.messages.append(self.allocator, owned);
+        for (msg.parts) |part| {
+            switch (part) {
+                .text => |text| try self.appendConversationBlock(.text, text, msg.is_streaming),
+                .thinking => |text| try self.appendConversationBlock(.thinking, text, msg.is_streaming),
+                .err_text => |text| try self.appendConversationBlock(.@"error", text, msg.is_streaming),
+                .code => |code| try self.appendConversationBlock(.code, code.code, msg.is_streaming),
+                .tool_use => |tool| try self.appendConversationBlock(.tool_use, tool.input, msg.is_streaming),
+                .tool_result => |result| try self.appendConversationBlock(.tool_result, result.output, msg.is_streaming),
+            }
+        }
         self.scrollToBottom();
+    }
+
+    fn appendConversationBlock(self: *SessionView, kind: conversation_mod.BlockKind, text: []const u8, streaming: bool) !void {
+        const id = self.next_block_id;
+        self.next_block_id +%= 1;
+        try self.blocks.append(.{
+            .id = id,
+            .kind = kind,
+            .text = text,
+            .committed_len = text.len,
+            .is_streaming = streaming,
+        });
+    }
+
+
+    fn dupePart(arena: std.mem.Allocator, part: MessagePart) !MessagePart {
+        return switch (part) {
+            .text => |t| .{ .text = try arena.dupe(u8, t) },
+            .thinking => |t| .{ .thinking = try arena.dupe(u8, t) },
+            .err_text => |t| .{ .err_text = try arena.dupe(u8, t) },
+            .code => |c| .{ .code = .{
+                .lang = try arena.dupe(u8, c.lang),
+                .code = try arena.dupe(u8, c.code),
+            } },
+            .tool_use => |c| .{ .tool_use = .{
+                .name = try arena.dupe(u8, c.name),
+                .input = try arena.dupe(u8, c.input),
+            } },
+            .tool_result => |c| .{ .tool_result = .{
+                .name = try arena.dupe(u8, c.name),
+                .output = try arena.dupe(u8, c.output),
+            } },
+        };
     }
 
     pub fn scrollToBottom(self: *SessionView) void {
@@ -99,6 +184,52 @@ pub const SessionView = struct {
 
     pub fn toggleSidebar(self: *SessionView) void {
         self.sidebar_visible = !self.sidebar_visible;
+    }
+
+    pub fn cycleSidebarTab(self: *SessionView, direction: i8) void {
+        const new: i8 = @as(i8, @intFromEnum(self.sidebar_tab)) + direction;
+        self.sidebar_tab = switch (@mod(new, 3)) {
+            0 => .conversation,
+            1 => .changes,
+            2 => .diff,
+            else => unreachable,
+        };
+    }
+
+    /// Handle a mouse click on the header row; returns true if a tab was hit.
+    pub fn handleHeaderClick(self: *SessionView, click_x: u16, content_width: u16) bool {
+        // Tabs are rendered right-to-left in the header at y=0
+        // [Conversation] [Changes] [Diff]
+        const tabs = [_]struct { label: []const u8, tab: SidebarTab }{
+            .{ .label = "Conversation", .tab = .conversation },
+            .{ .label = "Changes", .tab = .changes },
+            .{ .label = "Diff", .tab = .diff },
+        };
+
+        // Calculate tab positions (same logic as renderHeader)
+        var tab_x: u16 = content_width -| 2;
+        var positions: [3]u16 = [_]u16{ 0, 0, 0 };
+        var widths: [3]u16 = [_]u16{ 0, 0, 0 };
+        var i: usize = tabs.len;
+        while (i > 0) {
+            i -= 1;
+            const label_w: u16 = @intCast(tabs[i].label.len + 2);
+            if (tab_x >= label_w + 1) {
+                tab_x -= label_w + 1;
+                positions[i] = tab_x;
+                widths[i] = label_w;
+            }
+        }
+
+        // Check which tab was clicked
+        for (tabs, 0..) |t, idx| {
+            if (widths[idx] == 0) continue;
+            if (click_x >= positions[idx] and click_x < positions[idx] + widths[idx]) {
+                self.sidebar_tab = t.tab;
+                return true;
+            }
+        }
+        return false;
     }
 
     /// Render the entire session view
@@ -155,7 +286,7 @@ pub const SessionView = struct {
         self.footer.render(buf, footer_y, terminal_width, theme);
     }
 
-    fn renderHeader(_: SessionView, buf: *Buffer, x: u16, y: u16, width: u16, theme: Theme) void {
+    fn renderHeader(self: SessionView, buf: *Buffer, x: u16, y: u16, width: u16, theme: Theme) void {
         // Header background
         const header_style = Style{ .fg = theme.text, .bg = theme.background_panel, .attr = .{ .bold = true } };
         for (0..width) |i| {
@@ -163,63 +294,59 @@ pub const SessionView = struct {
         }
         _ = buf.writeStringBounded(x + 2, y, "Omnitrix", header_style, width -| 4);
 
-        // Right side: tab indicators
-        const tabs = "[Conversation] [Changes] [Diff]";
-        const tab_w = buffer_mod.stringWidth(tabs);
-        if (tab_w < width - 20) {
-            _ = buf.writeStringBounded(x + width - tab_w - 2, y, tabs, Style{ .fg = theme.text_muted, .bg = theme.background_panel }, tab_w);
+        // Right side: tab indicators (interactive)
+        const tabs = [_]struct { label: []const u8, tab: SidebarTab }{
+            .{ .label = "Conversation", .tab = .conversation },
+            .{ .label = "Changes", .tab = .changes },
+            .{ .label = "Diff", .tab = .diff },
+        };
+
+        var tab_x: u16 = x + width -| 2;
+        // Render tabs right-to-left to calculate positions, then draw
+        var tab_positions: [3]struct { label: []const u8, start_x: u16, width: u16 } = undefined;
+        var i: usize = tabs.len;
+        while (i > 0) {
+            i -= 1;
+            const t = tabs[i];
+            const label_w: u16 = @intCast(t.label.len + 2); // +2 for brackets
+            if (tab_x >= label_w + 1) {
+                tab_x -= label_w + 1; // +1 for space between tabs
+                tab_positions[i] = .{ .label = t.label, .start_x = tab_x, .width = label_w };
+            } else {
+                tab_positions[i] = .{ .label = t.label, .start_x = 0, .width = 0 };
+            }
+        }
+
+        // Draw tabs
+        for (tabs, 0..) |t, idx| {
+            const pos = tab_positions[idx];
+            if (pos.width == 0) continue;
+
+            const is_active = self.sidebar_tab == t.tab;
+            const tab_style = if (is_active)
+                Style{ .fg = theme.accent, .bg = theme.background_panel, .attr = .{ .bold = true } }
+            else
+                Style{ .fg = theme.text_muted, .bg = theme.background_panel };
+
+            // Draw "[label]"
+            buf.setCell(pos.start_x, y, .{ .char = .{ .char = '[' }, .style = tab_style });
+            _ = buf.writeStringBounded(pos.start_x + 1, y, t.label, tab_style, @intCast(t.label.len));
+            buf.setCell(pos.start_x + 1 + @as(u16, @intCast(t.label.len)), y, .{ .char = .{ .char = ']' }, .style = tab_style });
+
+            // Underline active tab
+            if (is_active) {
+                for (0..pos.width) |wi| {
+                    var cell = buf.getCell(pos.start_x + @as(u16, @intCast(wi)), y + 1);
+                    cell.style.attr.underline = true;
+                    cell.style.fg = theme.accent;
+                    buf.setCell(pos.start_x + @as(u16, @intCast(wi)), y + 1, cell);
+                }
+            }
         }
     }
 
     fn renderConversation(self: *SessionView, buf: *Buffer, rect: Rect, theme: Theme) void {
-        // Background
-        buf.fillRegion(rect.x, rect.y, rect.width, rect.height, .{ .style = .{ .bg = theme.background } });
-
-        if (self.messages.items.len == 0) {
-            // Empty state
-            const empty_style = Style{ .fg = theme.text_dim, .bg = theme.background };
-            const empty_msg = "No messages yet. Start typing below...";
-            const ew = buffer_mod.stringWidth(empty_msg);
-            const ex = if (ew < rect.width) rect.x + (rect.width - ew) / 2 else rect.x;
-            const ey = rect.y + rect.height / 2;
-            _ = buf.writeStringBounded(ex, ey, empty_msg, empty_style, rect.width);
-            return;
-        }
-
-        var content_y: u16 = 0;
-        for (self.messages.items) |msg| {
-            const msg_height = self.calculateMessageHeight(msg, rect.width - 4);
-
-            // Check if this message is visible in scroll viewport
-            const screen_y = self.scroll.contentToScreen(content_y);
-            if (screen_y) |sy| {
-                if (sy < rect.height) {
-                    self.renderMessage(buf, rect.x + 2, rect.y + sy, rect.width - 4, msg, theme);
-                }
-            }
-
-            content_y += msg_height + 1; // +1 for gap between messages
-        }
-
-        self.scroll.setContentHeight(content_y);
-
-        // Spinner if last message is streaming
-        if (self.messages.items.len > 0) {
-            const last = self.messages.items[self.messages.items.len - 1];
-            if (last.is_streaming) {
-                var sp = self.spinner;
-                sp.tick();
-                const sy = self.scroll.contentToScreen(content_y);
-                if (sy) |screen_y| {
-                    if (screen_y < rect.height) {
-                        sp.render(buf, rect.x + 2, rect.y + screen_y, rect.width - 4);
-                    }
-                }
-            }
-        }
-
-        // Scrollbar
-        self.scroll.renderScrollbar(buf, rect.x + rect.width - 1, rect.y, rect.height);
+        conversation_mod.render(&self.blocks, self.markdown, &self.spinner, &self.scroll, buf, rect, theme);
     }
 
     fn calculateMessageHeight(self: SessionView, msg: Message, width: u16) u16 {

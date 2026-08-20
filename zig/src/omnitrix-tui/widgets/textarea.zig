@@ -26,6 +26,7 @@ pub const TextareaWidget = struct {
     line_widths: std.ArrayList(u16),
     multiline: bool,
     allocator: std.mem.Allocator,
+    max_bytes: usize,
 
     pub fn init(allocator: std.mem.Allocator, style: Style, cursor_style: Style) !TextareaWidget {
         return .{
@@ -41,6 +42,7 @@ pub const TextareaWidget = struct {
             .line_widths = .empty,
             .multiline = false,
             .allocator = allocator,
+            .max_bytes = 512,
         };
     }
 
@@ -56,6 +58,11 @@ pub const TextareaWidget = struct {
 
     pub fn getText(self: *TextareaWidget) ![]u8 {
         return try self.gap.getTextOwned();
+
+    }
+
+    pub fn snapshot(self: TextareaWidget, out: []u8) []u8 {
+        return self.gap.getTextBounded(out);
     }
 
     pub fn isEmpty(self: TextareaWidget) bool {
@@ -85,6 +92,10 @@ pub const TextareaWidget = struct {
     }) !void {
         if (key.char) |ch| {
             if (key.ctrl or key.alt) return;
+            var encoded: [4]u8 = undefined;
+            const encoded_len = std.unicode.wtf8Encode(ch, &encoded) catch 1;
+            if (self.gap.length() + encoded_len > self.max_bytes) return;
+            if (key.ctrl or key.alt) return;
             if (ch == '\n' or ch == '\r') {
                 if (self.multiline) {
                     try self.gap.insertCodepoint('\n');
@@ -98,7 +109,7 @@ pub const TextareaWidget = struct {
 
         switch (key.key) {
             .enter => {
-                if (self.multiline) {
+                if (self.multiline and self.gap.length() < self.max_bytes) {
                     try self.gap.insertCodepoint('\n');
                 }
             },
@@ -270,10 +281,8 @@ pub const TextareaWidget = struct {
     fn recalcLines(self: *TextareaWidget) void {
         self.line_widths.clearRetainingCapacity();
         var current_width: u16 = 0;
-        var buf: [4096]u8 = undefined;
-        const len = self.gap.length();
-        if (len > buf.len) return;
-        const text = self.gap.getText(&buf);
+        var buf: [512]u8 = undefined;
+        const text = self.gap.getTextBounded(&buf);
         var i: usize = 0;
         while (i < text.len) {
             if (text[i] == '\n') {
@@ -298,11 +307,8 @@ pub const TextareaWidget = struct {
         var current_row: u16 = 0;
         var current_col: u16 = 0;
         var i: usize = 0;
-        var buf: [4096]u8 = undefined;
-        const text = if (self.gap.length() <= buf.len)
-            self.gap.getText(&buf)
-        else
-            return .{ .col = 0, .row = 0 };
+        var buf: [512]u8 = undefined;
+        const text = self.gap.getTextBounded(&buf);
 
         while (i < text.len and i < cursor) {
             if (text[i] == '\n') {
@@ -336,8 +342,8 @@ pub const TextareaWidget = struct {
             return;
         }
 
-        var text_buf: [8192]u8 = undefined;
-        const text = self.gap.getText(&text_buf);
+        var text_buf: [512]u8 = undefined;
+        const text = self.gap.getTextBounded(&text_buf);
 
         var x: u16 = 0;
         var y: u16 = 0;

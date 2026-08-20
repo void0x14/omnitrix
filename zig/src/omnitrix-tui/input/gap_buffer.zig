@@ -112,21 +112,22 @@ pub const GapBuffer = struct {
         self.len += text.len;
     }
 
-    /// Delete byte before cursor (backspace)
+    /// Delete one UTF-8 codepoint before the cursor.
     pub fn deleteBackward(self: *GapBuffer) ?u8 {
         if (self.gap_start == 0) return null;
-        self.gap_start -= 1;
-        self.len -= 1;
-        return self.buf[self.gap_start];
+        const start = self.previousBoundary(self.gap_start);
+        const deleted = self.charAt(start);
+        self.deleteRange(start, self.gap_start);
+        return deleted;
     }
 
-    /// Delete byte after cursor (delete key)
+    /// Delete one UTF-8 codepoint after the cursor.
     pub fn deleteForward(self: *GapBuffer) ?u8 {
-        if (self.gap_end >= self.buf.len) return null;
-        const ch = self.buf[self.gap_end];
-        self.gap_end += 1;
-        self.len -= 1;
-        return ch;
+        if (self.gap_start >= self.len) return null;
+        const end = self.nextBoundary(self.gap_start);
+        const deleted = self.charAt(self.gap_start);
+        self.deleteRange(self.gap_start, end);
+        return deleted;
     }
 
     /// Delete range [start, end) from the buffer
@@ -148,15 +149,24 @@ pub const GapBuffer = struct {
         }
     }
 
-    /// Get all text as a contiguous slice (copies into provided buffer)
+    /// Copy as much complete UTF-8 text as fits in `out`.
+    pub fn getTextBounded(self: GapBuffer, out: []u8) []u8 {
+        const wanted = @min(self.len, out.len);
+        const before_len = @min(self.gap_start, wanted);
+        const after_len = wanted - before_len;
+        @memcpy(out[0..before_len], self.buf[0..before_len]);
+        if (after_len > 0) {
+            @memcpy(out[before_len..wanted], self.buf[self.gap_end..][0..after_len]);
+        }
+        var end = wanted;
+        while (end > 0 and !std.unicode.utf8ValidateSlice(out[0..end])) end -= 1;
+        return out[0..end];
+    }
+
+    /// Get all text as a contiguous slice. Callers must provide enough space.
     pub fn getText(self: GapBuffer, out: []u8) []u8 {
-        const before = self.buf[0..self.gap_start];
-        const after_start = self.gap_end;
-        const after_len = self.len - self.gap_start;
-        const after = self.buf[after_start..][0..after_len];
-        @memcpy(out[0..before.len], before);
-        @memcpy(out[before.len..][0..after.len], after);
-        return out[0..self.len];
+        if (out.len < self.len) return self.getTextBounded(out);
+        return self.getTextBounded(out);
     }
 
     /// Get text as owned slice (caller must free)
@@ -179,92 +189,90 @@ pub const GapBuffer = struct {
         try self.insertText(text);
     }
 
-    /// Move cursor left by one codepoint
+    fn previousBoundary(self: GapBuffer, pos: usize) usize {
+        var p = pos;
+        while (p > 0) {
+            p -= 1;
+            const byte = self.charAt(p) orelse break;
+            if ((byte & 0xc0) != 0x80) return p;
+        }
+        return 0;
+    }
+
+    fn nextBoundary(self: GapBuffer, pos: usize) usize {
+        if (pos >= self.len) return self.len;
+        const first = self.charAt(pos) orelse return pos;
+        const sequence_len = std.unicode.utf8ByteSequenceLength(first) catch 1;
+        return @min(self.len, pos + @as(usize, sequence_len));
+    }
+
+    fn codepointAt(self: GapBuffer, pos: usize) ?struct { cp: u21, len: usize } {
+        if (pos >= self.len) return null;
+        const first = self.charAt(pos) orelse return null;
+        const sequence_len = std.unicode.utf8ByteSequenceLength(first) catch 1;
+        const len = @min(@as(usize, sequence_len), self.len - pos);
+        var bytes: [4]u8 = undefined;
+        for (0..len) |i| bytes[i] = self.charAt(pos + i) orelse return null;
+        const cp = std.unicode.wtf8Decode(bytes[0..len]) catch return .{ .cp = first, .len = 1 };
+        return .{ .cp = cp, .len = len };
+    }
+
+    fn isSeparator(self: GapBuffer, pos: usize) bool {
+        const item = self.codepointAt(pos) orelse return true;
+        return item.cp == ' ' or item.cp == '\n' or item.cp == '\t' or item.cp == '\r';
+    }
+
+    /// Move cursor left by one UTF-8 codepoint.
     pub fn moveLeft(self: *GapBuffer) void {
-        if (self.gap_start == 0) return;
-        // Find the start of the previous UTF-8 char
-        var pos = self.gap_start - 1;
-        while (pos > 0 and (self.buf[pos] & 0xC0) == 0x80) {
-            pos -= 1;
-        }
-        self.gap_start = pos;
-        self.gap_end = self.buf.len - (self.len - self.gap_start);
-        // Actually we need to use moveTo for proper gap movement
-        self.moveTo(pos);
+        self.moveTo(self.previousBoundary(self.gap_start));
     }
 
-    /// Move cursor right by one codepoint
+    /// Move cursor right by one UTF-8 codepoint.
     pub fn moveRight(self: *GapBuffer) void {
-        if (self.gap_start >= self.len) return;
-        // Find end of current UTF-8 char
-        var end = self.gap_end;
-        if (end < self.buf.len) {
-            end += 1;
-            while (end < self.buf.len and (self.buf[end] & 0xC0) == 0x80) {
-                end += 1;
-            }
-        }
-        const move_to = self.gap_start + 1;
-        self.moveTo(move_to);
+        self.moveTo(self.nextBoundary(self.gap_start));
     }
 
-    /// Move cursor to start of line
     pub fn moveToLineStart(self: *GapBuffer) void {
         var pos = self.gap_start;
         while (pos > 0) {
-            pos -= 1;
-            if (self.buf[pos] == '\n') {
-                pos += 1;
-                break;
-            }
-        }
-        if (pos == 0 and self.buf[0] == '\n') {
-            // already at start
+            const previous = self.previousBoundary(pos);
+            if ((self.codepointAt(previous) orelse break).cp == '\n') break;
+            pos = previous;
         }
         self.moveTo(pos);
     }
 
-    /// Move cursor to end of line
     pub fn moveToLineEnd(self: *GapBuffer) void {
         var pos = self.gap_start;
         while (pos < self.len) {
-            const ch = self.charAt(pos) orelse break;
-            if (ch == '\n') break;
-            pos += 1;
+            const item = self.codepointAt(pos) orelse break;
+            if (item.cp == '\n') break;
+            pos += item.len;
         }
         self.moveTo(pos);
     }
 
-    /// Move cursor to beginning
     pub fn moveToBeginning(self: *GapBuffer) void {
         self.moveTo(0);
     }
 
-    /// Move cursor to end
     pub fn moveToEnd(self: *GapBuffer) void {
         self.moveTo(self.len);
     }
 
-    /// Delete word backward (Ctrl+Backspace)
     pub fn deleteWordBackward(self: *GapBuffer) void {
-        if (self.gap_start == 0) return;
         const old_pos = self.gap_start;
         var pos = old_pos;
-        while (pos > 0 and self.buf[pos - 1] == ' ') pos -= 1;
-        while (pos > 0 and self.buf[pos - 1] != ' ' and self.buf[pos - 1] != '\n') pos -= 1;
+        while (pos > 0 and self.isSeparator(self.previousBoundary(pos))) pos = self.previousBoundary(pos);
+        while (pos > 0 and !self.isSeparator(self.previousBoundary(pos))) pos = self.previousBoundary(pos);
         self.deleteRange(pos, old_pos);
     }
 
-    /// Delete word forward (Ctrl+Delete)
     pub fn deleteWordForward(self: *GapBuffer) void {
-        if (self.gap_end >= self.buf.len) return;
-        var end = self.gap_end;
-        // Skip current word chars
-        while (end < self.buf.len and self.buf[end] != ' ' and self.buf[end] != '\n') end += 1;
-        // Skip whitespace
-        while (end < self.buf.len and self.buf[end] == ' ') end += 1;
-        self.gap_end = end;
-        self.len = self.gap_start + (self.buf.len - self.gap_end);
+        var end = self.gap_start;
+        while (end < self.len and !self.isSeparator(end)) end = self.nextBoundary(end);
+        while (end < self.len and self.isSeparator(end)) end = self.nextBoundary(end);
+        self.deleteRange(self.gap_start, end);
     }
 };
 
