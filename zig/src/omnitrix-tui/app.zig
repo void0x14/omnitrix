@@ -171,6 +171,27 @@ pub const App = struct {
             },
         });
 
+        // Deterministic UI-only state gallery for screenshot review.
+        try s.addMessage(.{
+            .role = .assistant,
+            .is_streaming = true,
+            .stream_committed_len = 48,
+            .parts = &.{
+                .{ .text = "Streaming response with a safe committed prefix; the uncommitted tail stays hidden." },
+            },
+        });
+
+        try s.addMessage(.{
+            .role = .system,
+            .parts = &.{
+                .{ .thinking = "Thinking state: checking bounded ownership before render." },
+                .{ .code = .{ .lang = "zig", .code = "const ui = UiState.init(allocator);" } },
+                .{ .tool_use = .{ .name = "read_file", .input = "zig/src/omnitrix-tui/app.zig" } },
+                .{ .tool_result = .{ .name = "read_file", .output = "bounded fixture payload loaded" } },
+                .{ .err_text = "Provider fixture error: retry is available; draft is preserved." },
+            },
+        });
+
         // Update sidebar info
         s.sidebar.info = .{
             .session_title = "Omnitrix Architecture Review",

@@ -16,7 +16,6 @@ pub const DiffState = struct {
     selected_file: ?u16 = null,
     selected_hunk: ?u16 = null,
     fullscreen: bool = false,
-    unavailable: bool = false,
 };
 
 pub fn render(buf: *Buffer, rect: Rect, info: SidebarInfo, state: DiffState, theme: Theme) void {
@@ -41,17 +40,6 @@ pub fn render(buf: *Buffer, rect: Rect, info: SidebarInfo, state: DiffState, the
     const meta = std.fmt.bufPrint(&meta_buf, "File {d}/{d}  •  hunk {d}/1  •  fixture preview", .{ selected + 1, count, @as(usize, @intCast(state.selected_hunk orelse 0)) + 1 }) catch "fixture preview";
     _ = buf.writeStringBounded(rect.x + 1, rect.y +| 1, meta, .{ .fg = theme.text_dim, .bg = theme.background }, rect.width -| 2);
 
-    if (state.unavailable) {
-        _ = buf.writeStringBounded(rect.x + 2, rect.y +| 3, "@@ fixture hunk 1 @@", .{ .fg = theme.diff_hunk_fg, .bg = theme.diff_hunk_bg }, rect.width -| 4);
-        var add_buf: [96]u8 = undefined;
-        const add_line = std.fmt.bufPrint(&add_buf, "+ changed lines: {d}", .{file.added}) catch "+ changed lines";
-        _ = buf.writeStringBounded(rect.x + 2, rect.y +| 4, add_line, .{ .fg = theme.diff_add_fg, .bg = theme.diff_add_bg }, rect.width -| 4);
-        var del_buf: [96]u8 = undefined;
-        const del_line = std.fmt.bufPrint(&del_buf, "- changed lines: {d}", .{file.removed}) catch "- changed lines";
-        _ = buf.writeStringBounded(rect.x + 2, rect.y +| 5, del_line, .{ .fg = theme.diff_del_fg, .bg = theme.diff_del_bg }, rect.width -| 4);
-        _ = buf.writeStringBounded(rect.x + 2, rect.y +| 7, "Hunk payload unavailable in SidebarInfo fixture.", .{ .fg = theme.warning, .bg = theme.background }, rect.width -| 4);
-        return;
-    }
 
     var add_buf: [96]u8 = undefined;
     const add_line = std.fmt.bufPrint(&add_buf, "+ fixture additions: {d}", .{file.added}) catch "+ fixture additions";

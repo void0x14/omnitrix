@@ -407,7 +407,6 @@ pub const SessionView = struct {
                 .selected_file = self.selected_file,
                 .selected_hunk = self.selected_hunk,
                 .fullscreen = frame.fullscreen_diff,
-                .unavailable = true,
             }, theme),
         }
 
