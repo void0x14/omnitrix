@@ -245,6 +245,12 @@ pub const CommandPalette = struct {
             }
         }
 
+
+        if (max_items == 0 and list_h > 0) {
+            const empty_style = Style{ .fg = self.theme.text_dim, .bg = self.theme.background_elevated };
+            _ = buf.writeStringBounded(palette_x + 2, list_y, "No commands found.", empty_style, palette_w -| 4);
+        }
+
         // Footer hint
         const footer_y = palette_y + palette_h -| 1;
         const hint = "↑↓ navigate  Enter select  Esc cancel";
