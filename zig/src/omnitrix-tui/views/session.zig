@@ -73,6 +73,7 @@ pub const SessionView = struct {
     message_bytes: usize,
     blocks: BlockStore,
     next_block_id: u32,
+    last_streaming_id: ?u32,
     scroll: ScrollContainer,
     prompt: TextareaWidget,
     markdown: MarkdownRenderer,
@@ -96,6 +97,7 @@ pub const SessionView = struct {
             .message_bytes = 0,
             .blocks = BlockStore.init(allocator),
             .next_block_id = 1,
+            .last_streaming_id = null,
             .scroll = ScrollContainer.init(30, 80),
             .prompt = try TextareaWidget.init(
                 allocator,
@@ -128,6 +130,7 @@ pub const SessionView = struct {
     /// The caller keeps ownership of whatever it passed in and is free to
     /// release it as soon as this returns.
     pub fn addMessage(self: *SessionView, msg: Message) !void {
+        self.last_streaming_id = null;
         const estimated = @min(estimateMessageBytes(msg), max_message_bytes);
         if (self.messages.items.len >= max_message_count or
             self.message_bytes > max_message_bytes -| estimated)
@@ -207,6 +210,7 @@ pub const SessionView = struct {
             .committed_len = if (streaming) initialStreamingPrefix(text, committed_len) else text.len,
             .is_streaming = streaming,
         });
+        if (streaming) self.last_streaming_id = id;
     }
 
     /// Append a progressive UI chunk into the BlockStore-owned streaming text.
@@ -214,6 +218,11 @@ pub const SessionView = struct {
         const updated = try self.blocks.appendStreamingChunk(id, chunk);
         if (updated) self.scrollToBottom();
         return updated;
+    }
+
+    /// Returns the most recently created streaming block, if any.
+    pub fn lastStreamingBlockId(self: *const SessionView) ?u32 {
+        return self.last_streaming_id;
     }
 
     pub fn commitStreaming(self: *SessionView, id: u32, committed_len: usize) bool {

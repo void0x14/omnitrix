@@ -251,8 +251,9 @@ pub const TextareaWidget = struct {
             const item = self.gap.codepointAt(current) orelse break;
             if (item.cp == '\n') break;
             const width = charWidth(item.cp);
-            if (column + width > target) break;
-            column += width;
+            const next_column = column +| width;
+            if (next_column > target) break;
+            column = next_column;
             current += item.len;
         }
         return current;

@@ -207,7 +207,7 @@ pub const BlockStore = struct {
         for (self.blocks.items) |*block| {
             if (block.id == id) {
                 block.is_streaming = false;
-                block.committed_len = block.text.len;
+                block.committed_len = safePrefixLen(block.text, block.text.len);
                 return true;
             }
         }

@@ -235,8 +235,17 @@ pub const MarkdownRenderer = struct {
         _ = self;
         if (width == 0) return 1;
         var height: u16 = 0;
+        var in_code_block = false;
         var lines = std.mem.splitScalar(u8, text, '\n');
         while (lines.next()) |line| {
+            if (std.mem.startsWith(u8, trimLeadingSpaces(line), "```")) {
+                in_code_block = !in_code_block;
+                continue;
+            }
+            if (in_code_block) {
+                height +|= 1;
+                continue;
+            }
             const trimmed = trimLeadingSpaces(line);
             if (headingLevel(trimmed)) |level| {
                 height +|= if (level <= 2) 2 else 1;
