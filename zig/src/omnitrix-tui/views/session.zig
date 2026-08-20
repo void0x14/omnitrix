@@ -52,10 +52,16 @@ pub const Message = struct {
     parts: []const MessagePart,
     timestamp: u64 = 0,
     is_streaming: bool = false,
+    stream_committed_len: usize = 0,
     id: []const u8 = "",
 };
 
 pub const SidebarTab = enum { conversation, changes, diff };
+
+const max_message_count: usize = 512;
+const max_message_bytes: usize = 256 * 1024;
+const max_message_parts: usize = 32;
+const max_message_field_bytes: usize = 1024;
 
 pub const SessionView = struct {
     allocator: std.mem.Allocator,
@@ -64,6 +70,7 @@ pub const SessionView = struct {
     /// deep-copies into this arena so rendering never touches freed memory.
     content_arena: std.heap.ArenaAllocator,
     messages: std.ArrayList(Message),
+    message_bytes: usize,
     blocks: BlockStore,
     next_block_id: u32,
     scroll: ScrollContainer,
@@ -86,6 +93,7 @@ pub const SessionView = struct {
             .allocator = allocator,
             .content_arena = std.heap.ArenaAllocator.init(allocator),
             .messages = .empty,
+            .message_bytes = 0,
             .blocks = BlockStore.init(allocator),
             .next_block_id = 1,
             .scroll = ScrollContainer.init(30, 80),
@@ -120,60 +128,111 @@ pub const SessionView = struct {
     /// The caller keeps ownership of whatever it passed in and is free to
     /// release it as soon as this returns.
     pub fn addMessage(self: *SessionView, msg: Message) !void {
-        const arena = self.content_arena.allocator();
+        const estimated = @min(estimateMessageBytes(msg), max_message_bytes);
+        if (self.messages.items.len >= max_message_count or
+            self.message_bytes > max_message_bytes -| estimated)
+        {
+            self.resetMessageRetention();
+        }
 
-        const parts = try arena.alloc(MessagePart, msg.parts.len);
-        for (msg.parts, 0..) |part, i| {
+        const arena = self.content_arena.allocator();
+        const part_count = @min(msg.parts.len, max_message_parts);
+        const parts = try arena.alloc(MessagePart, part_count);
+        for (msg.parts[0..part_count], 0..) |part, i| {
             parts[i] = try dupePart(arena, part);
         }
 
         var owned = msg;
         owned.parts = parts;
-        owned.id = try arena.dupe(u8, msg.id);
-
+        owned.id = try arena.dupe(u8, boundedText(msg.id, max_message_field_bytes));
         try self.messages.append(self.allocator, owned);
-        for (msg.parts) |part| {
+        self.message_bytes +|= estimated;
+
+        for (msg.parts[0..part_count]) |part| {
             switch (part) {
-                .text => |text| try self.appendConversationBlock(.text, text, msg.is_streaming),
-                .thinking => |text| try self.appendConversationBlock(.thinking, text, msg.is_streaming),
-                .err_text => |text| try self.appendConversationBlock(.@"error", text, msg.is_streaming),
-                .code => |code| try self.appendConversationBlock(.code, code.code, msg.is_streaming),
-                .tool_use => |tool| try self.appendConversationBlock(.tool_use, tool.input, msg.is_streaming),
-                .tool_result => |result| try self.appendConversationBlock(.tool_result, result.output, msg.is_streaming),
+                .text => |text| try self.appendConversationBlock(.text, text, msg.is_streaming, msg.stream_committed_len),
+                .thinking => |text| try self.appendConversationBlock(.thinking, text, msg.is_streaming, msg.stream_committed_len),
+                .err_text => |text| try self.appendConversationBlock(.@"error", text, msg.is_streaming, msg.stream_committed_len),
+                .code => |code| try self.appendConversationBlock(.code, code.code, msg.is_streaming, msg.stream_committed_len),
+                .tool_use => |tool| try self.appendConversationBlock(.tool_use, tool.input, msg.is_streaming, msg.stream_committed_len),
+                .tool_result => |result| try self.appendConversationBlock(.tool_result, result.output, msg.is_streaming, msg.stream_committed_len),
             }
         }
         self.scrollToBottom();
     }
 
-    fn appendConversationBlock(self: *SessionView, kind: conversation_mod.BlockKind, text: []const u8, streaming: bool) !void {
+    fn resetMessageRetention(self: *SessionView) void {
+        self.messages.clearRetainingCapacity();
+        _ = self.content_arena.reset(.retain_capacity);
+        self.message_bytes = 0;
+    }
+
+    fn boundedText(text: []const u8, cap: usize) []const u8 {
+        var end = @min(text.len, cap);
+        while (end > 0 and !std.unicode.utf8ValidateSlice(text[0..end])) end -= 1;
+        return text[0..end];
+    }
+
+    fn messagePartBytes(part: MessagePart) usize {
+        return switch (part) {
+            .text => |text| boundedText(text, max_message_field_bytes).len,
+            .thinking => |text| boundedText(text, max_message_field_bytes).len,
+            .err_text => |text| boundedText(text, max_message_field_bytes).len,
+            .code => |code| boundedText(code.lang, max_message_field_bytes).len + boundedText(code.code, max_message_field_bytes).len,
+            .tool_use => |tool| boundedText(tool.name, max_message_field_bytes).len + boundedText(tool.input, max_message_field_bytes).len,
+            .tool_result => |result| boundedText(result.name, max_message_field_bytes).len + boundedText(result.output, max_message_field_bytes).len,
+        };
+    }
+
+    fn estimateMessageBytes(msg: Message) usize {
+        const count = @min(msg.parts.len, max_message_parts);
+        var total: usize = @sizeOf(Message) + @sizeOf(MessagePart) * count;
+        total +|= boundedText(msg.id, max_message_field_bytes).len;
+        for (msg.parts[0..count]) |part| total +|= messagePartBytes(part);
+        return total;
+    }
+
+    fn initialStreamingPrefix(text: []const u8, requested: usize) usize {
+        const target = if (requested > 0) requested else text.len / 2;
+        return conversation_mod.BlockStore.safePrefixLen(text, target);
+    }
+
+    fn appendConversationBlock(self: *SessionView, kind: conversation_mod.BlockKind, text: []const u8, streaming: bool, committed_len: usize) !void {
         const id = self.next_block_id;
         self.next_block_id +%= 1;
         try self.blocks.append(.{
             .id = id,
             .kind = kind,
             .text = text,
-            .committed_len = text.len,
+            .committed_len = if (streaming) initialStreamingPrefix(text, committed_len) else text.len,
             .is_streaming = streaming,
         });
     }
 
+    pub fn commitStreaming(self: *SessionView, id: u32, committed_len: usize) bool {
+        return self.blocks.setCommittedPrefix(id, committed_len);
+    }
+
+    pub fn finishStreaming(self: *SessionView, id: u32) bool {
+        return self.blocks.finishStreaming(id);
+    }
 
     fn dupePart(arena: std.mem.Allocator, part: MessagePart) !MessagePart {
         return switch (part) {
-            .text => |t| .{ .text = try arena.dupe(u8, t) },
-            .thinking => |t| .{ .thinking = try arena.dupe(u8, t) },
-            .err_text => |t| .{ .err_text = try arena.dupe(u8, t) },
+            .text => |t| .{ .text = try arena.dupe(u8, boundedText(t, max_message_field_bytes)) },
+            .thinking => |t| .{ .thinking = try arena.dupe(u8, boundedText(t, max_message_field_bytes)) },
+            .err_text => |t| .{ .err_text = try arena.dupe(u8, boundedText(t, max_message_field_bytes)) },
             .code => |c| .{ .code = .{
-                .lang = try arena.dupe(u8, c.lang),
-                .code = try arena.dupe(u8, c.code),
+                .lang = try arena.dupe(u8, boundedText(c.lang, max_message_field_bytes)),
+                .code = try arena.dupe(u8, boundedText(c.code, max_message_field_bytes)),
             } },
             .tool_use => |c| .{ .tool_use = .{
-                .name = try arena.dupe(u8, c.name),
-                .input = try arena.dupe(u8, c.input),
+                .name = try arena.dupe(u8, boundedText(c.name, max_message_field_bytes)),
+                .input = try arena.dupe(u8, boundedText(c.input, max_message_field_bytes)),
             } },
             .tool_result => |c| .{ .tool_result = .{
-                .name = try arena.dupe(u8, c.name),
-                .output = try arena.dupe(u8, c.output),
+                .name = try arena.dupe(u8, boundedText(c.name, max_message_field_bytes)),
+                .output = try arena.dupe(u8, boundedText(c.output, max_message_field_bytes)),
             } },
         };
     }

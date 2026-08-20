@@ -60,11 +60,21 @@ pub const GapBuffer = struct {
         self.gap_end = new_gap_end;
     }
 
-    /// Move cursor to absolute position
+    /// Normalize an arbitrary byte offset to the start of a UTF-8 codepoint.
+    pub fn normalizeBoundary(self: GapBuffer, pos: usize) usize {
+        var p = @min(pos, self.len);
+        while (p > 0 and p < self.len) {
+            const byte = self.charAt(p) orelse break;
+            if ((byte & 0xc0) != 0x80) break;
+            p -= 1;
+        }
+        return p;
+    }
+
+    /// Move cursor to an absolute UTF-8 boundary.
     pub fn moveTo(self: *GapBuffer, pos: usize) void {
-        const p = @min(pos, self.len);
+        const p = self.normalizeBoundary(pos);
         if (p < self.gap_start) {
-            // Move gap left
             const move = self.gap_start - p;
             const new_gap_start = p;
             const new_gap_end = self.gap_end - move;
@@ -72,7 +82,6 @@ pub const GapBuffer = struct {
             self.gap_start = new_gap_start;
             self.gap_end = new_gap_end;
         } else if (p > self.gap_start) {
-            // Move gap right
             const move = p - self.gap_start;
             const new_gap_start = p;
             const new_gap_end = self.gap_end + move;
@@ -130,13 +139,14 @@ pub const GapBuffer = struct {
         return deleted;
     }
 
-    /// Delete range [start, end) from the buffer
+    /// Delete a range after normalizing both endpoints to UTF-8 boundaries.
     pub fn deleteRange(self: *GapBuffer, start: usize, end: usize) void {
-        if (start >= end or end > self.len) return;
-        self.moveTo(start);
-        const delete_count = end - start;
-        self.gap_end += delete_count;
-        self.len -= delete_count;
+        const normalized_start = self.normalizeBoundary(start);
+        const normalized_end = self.normalizeBoundary(end);
+        if (normalized_start >= normalized_end) return;
+        self.moveTo(normalized_start);
+        self.gap_end += normalized_end - normalized_start;
+        self.len -= normalized_end - normalized_start;
     }
 
     /// Get character at position (relative to buffer start, not gap)
@@ -189,7 +199,7 @@ pub const GapBuffer = struct {
         try self.insertText(text);
     }
 
-    fn previousBoundary(self: GapBuffer, pos: usize) usize {
+    pub fn previousBoundary(self: GapBuffer, pos: usize) usize {
         var p = pos;
         while (p > 0) {
             p -= 1;
@@ -199,14 +209,15 @@ pub const GapBuffer = struct {
         return 0;
     }
 
-    fn nextBoundary(self: GapBuffer, pos: usize) usize {
-        if (pos >= self.len) return self.len;
-        const first = self.charAt(pos) orelse return pos;
+    pub fn nextBoundary(self: GapBuffer, pos: usize) usize {
+        const boundary = self.normalizeBoundary(pos);
+        if (boundary >= self.len) return self.len;
+        const first = self.charAt(boundary) orelse return boundary;
         const sequence_len = std.unicode.utf8ByteSequenceLength(first) catch 1;
-        return @min(self.len, pos + @as(usize, sequence_len));
+        return @min(self.len, boundary + @as(usize, sequence_len));
     }
 
-    fn codepointAt(self: GapBuffer, pos: usize) ?struct { cp: u21, len: usize } {
+    pub fn codepointAt(self: GapBuffer, pos: usize) ?struct { cp: u21, len: usize } {
         if (pos >= self.len) return null;
         const first = self.charAt(pos) orelse return null;
         const sequence_len = std.unicode.utf8ByteSequenceLength(first) catch 1;
@@ -217,7 +228,7 @@ pub const GapBuffer = struct {
         return .{ .cp = cp, .len = len };
     }
 
-    fn isSeparator(self: GapBuffer, pos: usize) bool {
+    pub fn isSeparator(self: GapBuffer, pos: usize) bool {
         const item = self.codepointAt(pos) orelse return true;
         return item.cp == ' ' or item.cp == '\n' or item.cp == '\t' or item.cp == '\r';
     }

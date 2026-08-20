@@ -34,32 +34,74 @@ pub const Block = struct {
 };
 
 pub const BlockStore = struct {
+    allocator: std.mem.Allocator,
     arena: std.heap.ArenaAllocator,
     blocks: std.ArrayList(Block),
     max_blocks: usize = 512,
+    max_bytes: usize = 256 * 1024,
+    max_block_bytes: usize = 16 * 1024,
+    retained_bytes: usize = 0,
 
     pub fn init(parent: std.mem.Allocator) BlockStore {
         return .{
+            .allocator = parent,
             .arena = std.heap.ArenaAllocator.init(parent),
             .blocks = .empty,
         };
     }
 
     pub fn deinit(self: *BlockStore) void {
-        self.blocks.deinit(self.arena.allocator());
+        self.blocks.deinit(self.allocator);
         self.arena.deinit();
     }
 
     pub fn append(self: *BlockStore, block: Block) !void {
-        if (self.max_blocks == 0) return;
-        const owned_text = try self.arena.allocator().dupe(u8, block.text);
+        if (self.max_blocks == 0 or self.max_bytes == 0) return;
+
+        const copy_cap = @min(self.max_block_bytes, self.max_bytes);
+        const source = boundedText(block.text, copy_cap);
+        while (self.blocks.items.len > 0 and
+            (self.blocks.items.len >= self.max_blocks or
+                self.retained_bytes > self.max_bytes -| source.len))
+        {
+            try self.rebuildRetained(1);
+        }
+
+        const owned_text = try self.arena.allocator().dupe(u8, source);
         var owned = block;
         owned.text = owned_text;
-        owned.committed_len = @min(block.committed_len, owned_text.len);
-        if (self.blocks.items.len == self.max_blocks) {
-            _ = self.blocks.orderedRemove(0);
+        owned.committed_len = if (block.is_streaming) safePrefixLen(source, block.committed_len) else source.len;
+        try self.blocks.append(self.allocator, owned);
+        self.retained_bytes += owned_text.len;
+    }
+
+    fn rebuildRetained(self: *BlockStore, first_index: usize) !void {
+        const first = @min(first_index, self.blocks.items.len);
+        const retained_count = self.blocks.items.len - first;
+        var metadata = try self.allocator.alloc(Block, retained_count);
+        defer self.allocator.free(metadata);
+        var snapshot = try self.allocator.alloc(u8, self.retained_bytes);
+        defer self.allocator.free(snapshot);
+
+        var offset: usize = 0;
+        for (self.blocks.items[first..], 0..) |block, i| {
+            var retained = block;
+            const len = block.text.len;
+            @memcpy(snapshot[offset..][0..len], block.text);
+            retained.text = snapshot[offset..][0..len];
+            metadata[i] = retained;
+            offset += len;
         }
-        try self.blocks.append(self.arena.allocator(), owned);
+
+        _ = self.arena.reset(.retain_capacity);
+        self.blocks.clearRetainingCapacity();
+        self.retained_bytes = 0;
+        for (metadata) |block| {
+            var rebuilt = block;
+            rebuilt.text = try self.arena.allocator().dupe(u8, block.text);
+            try self.blocks.append(self.allocator, rebuilt);
+            self.retained_bytes += rebuilt.text.len;
+        }
     }
 
     pub fn toggleCollapsed(self: *BlockStore, id: u32) bool {
@@ -70,6 +112,33 @@ pub const BlockStore = struct {
             }
         }
         return false;
+    }
+
+    pub fn setCommittedPrefix(self: *BlockStore, id: u32, committed_len: usize) bool {
+        for (self.blocks.items) |*block| {
+            if (block.id == id) {
+                block.committed_len = safePrefixLen(block.text, committed_len);
+                return true;
+            }
+        }
+        return false;
+    }
+
+    pub fn finishStreaming(self: *BlockStore, id: u32) bool {
+        for (self.blocks.items) |*block| {
+            if (block.id == id) {
+                block.is_streaming = false;
+                block.committed_len = block.text.len;
+                return true;
+            }
+        }
+        return false;
+    }
+
+    pub fn safePrefixLen(text: []const u8, requested: usize) usize {
+        var end = @min(requested, text.len);
+        while (end > 0 and !std.unicode.utf8ValidateSlice(text[0..end])) end -= 1;
+        return end;
     }
 
     pub fn safeText(block: Block) []const u8 {
@@ -130,8 +199,9 @@ pub fn blockAtScreenY(store: *const BlockStore, scroll: ScrollContainer, rect: R
     if (screen_y < rect.y or screen_y >= rect.y + rect.height) return null;
     const content_y = scroll.screenToContent(screen_y - rect.y);
     var row: u16 = 0;
+    const layout_markdown = MarkdownRenderer.init(Theme.dark);
     for (store.blocks.items) |block| {
-        const height = blockHeightSimple(block, rect.width -| 4);
+        const height = blockHeight(layout_markdown, block, rect.width -| 4);
         if (content_y >= row and content_y < row + height) return block.id;
         row +|= height;
     }
@@ -139,20 +209,23 @@ pub fn blockAtScreenY(store: *const BlockStore, scroll: ScrollContainer, rect: R
 }
 
 fn blockHeight(markdown: MarkdownRenderer, block: Block, width: u16) u16 {
-    if (block.kind == .tool_use or block.kind == .tool_result) {
-        return if (block.collapsed) 1 else 1 + markdown.measureHeight(width, boundedText(BlockStore.safeText(block), max_tool_detail));
-    }
-    if (block.kind == .code) return 1 + codeLineCount(BlockStore.safeText(block), width);
-    return 1 + markdown.measureHeight(width, BlockStore.safeText(block));
-}
-
-fn blockHeightSimple(block: Block, width: u16) u16 {
+    const detail_width = blockDetailWidth(block, width);
+    if (detail_width == 0) return 1;
     const text = BlockStore.safeText(block);
     if (block.kind == .tool_use or block.kind == .tool_result) {
-        return if (block.collapsed) 1 else 1 + boundedLineCount(text, width, max_tool_detail);
+        return if (block.collapsed) 1 else 1 + markdown.measureHeight(detail_width, boundedText(text, max_tool_detail));
     }
-    if (block.kind == .code) return 1 + codeLineCount(text, width);
-    return 1 + boundedLineCount(text, width, text.len);
+    if (block.kind == .code) return 1 + codeLineCount(text, detail_width);
+    return markdown.measureHeight(detail_width, text);
+}
+
+fn blockDetailOffset(block: Block) u16 {
+    const marker_width: u16 = if (block.kind == .tool_use or block.kind == .tool_result) 1 else 0;
+    return marker_width +| buffer_mod.stringWidth(kindLabel(block.kind)) +| 1;
+}
+
+fn blockDetailWidth(block: Block, width: u16) u16 {
+    return width -| @min(blockDetailOffset(block), width);
 }
 
 fn renderBlock(markdown: MarkdownRenderer, block: Block, buf: *Buffer, x: u16, y: u16, width: u16, theme: Theme) void {
@@ -172,10 +245,10 @@ fn renderBlock(markdown: MarkdownRenderer, block: Block, buf: *Buffer, x: u16, y
     const prefix = std.fmt.bufPrint(&prefix_buf, "{s}{s}", .{ marker, label }) catch label;
     _ = buf.writeStringBounded(x, y, prefix, label_style, width);
 
-    const detail_x = x +| @min(buffer_mod.stringWidth(prefix) + 1, width);
-    const detail_width = width -| (detail_x - x);
+    const detail_offset = @min(blockDetailOffset(block), width);
+    const detail_x = x +| detail_offset;
+    const detail_width = width - detail_offset;
     if (detail_width == 0) return;
-
     switch (block.kind) {
         .tool_use, .tool_result => {
             if (block.collapsed) {

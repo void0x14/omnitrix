@@ -340,14 +340,6 @@ pub const App = struct {
     }
 
     fn handleEvent(self: *App, event: InputEvent) !void {
-        // Ctrl+C must always quit, before any overlay gets a chance to consume
-        // it. The terminal runs with ISIG disabled, so the kernel never turns
-        // this into SIGINT -- if the app swallows it too, the only way out is
-        // SIGKILL from another shell.
-        if (event == .key and event.key.ctrl and (event.key.char orelse 0) == 'c') {
-            self.is_running = false;
-            return;
-        }
 
         // Overlay input order is deterministic: question/confirm, select/alert,
         // palette, then page. ModalDialog is mutually exclusive by type.
@@ -383,6 +375,12 @@ pub const App = struct {
                 .backspace = if (event == .key) event.key.key == .backspace else false,
             });
             if (result) |cmd_name| try self.executeCommand(cmd_name);
+            return;
+        }
+
+        // Overlays have first refusal; Ctrl+C exits only when no overlay is active.
+        if (event == .key and event.key.ctrl and (event.key.char orelse 0) == 'c') {
+            self.is_running = false;
             return;
         }
 

@@ -47,6 +47,21 @@ pub const MarkdownRenderer = struct {
         return leading[0..end];
     }
 
+    fn clippedWidth(buf: *Buffer, x: u16, width: u16) u16 {
+        if (x >= buf.cols) return 0;
+        return @min(width, buf.cols - x);
+    }
+
+    fn setCellClipped(buf: *Buffer, x: u16, y: u16, cell: Cell) void {
+        if (x >= buf.cols or y >= buf.rows) return;
+        buf.setCell(x, y, cell);
+    }
+
+    fn writeStringClipped(buf: *Buffer, x: u16, y: u16, text: []const u8, style: Style, width: u16) u16 {
+        if (x >= buf.cols or y >= buf.rows) return x;
+        return buf.writeStringBounded(x, y, text, style, clippedWidth(buf, x, width));
+    }
+
     /// Render markdown text into buffer starting at (x, y)
     /// Returns the y position after rendering
     pub fn render(self: MarkdownRenderer, buf: *Buffer, x: u16, y: u16, width: u16, text: []const u8) u16 {
@@ -153,44 +168,46 @@ pub const MarkdownRenderer = struct {
             else => Style{ .fg = self.theme.text, .bg = self.theme.background, .attr = .{ .bold = true, .dim = true } },
         };
 
-        // Render heading with underline on h1/h2
-        _ = buf.writeStringBounded(x, y, text, style, width);
+        const clipped_width = clippedWidth(buf, x, width);
+        _ = writeStringClipped(buf, x, y, text, style, clipped_width);
         if (level <= 2) {
             const underline_char: u21 = if (level == 1) '━' else '─';
             var underline_style = style;
             underline_style.attr.bold = false;
             underline_style.attr.dim = true;
-            for (0..@min(stringWidth(text), width)) |i| {
-                buf.setCell(x + @as(u16, @intCast(i)), y + 1, .{
+            const underline_width = @min(stringWidth(text), clipped_width);
+            for (0..underline_width) |i| {
+                setCellClipped(buf, x + @as(u16, @intCast(i)), y +| 1, .{
                     .char = .{ .char = underline_char },
                     .style = underline_style,
                 });
             }
-            return y + 2;
+            return y +| 2;
         }
-        return y + 1;
+        return y +| 1;
     }
 
     fn renderCodeLine(self: MarkdownRenderer, buf: *Buffer, x: u16, y: u16, width: u16, line: []const u8) u16 {
         const code_style = Style{ .fg = self.theme.syntax_string, .bg = self.theme.background_panel };
+        const clipped_width = clippedWidth(buf, x, width);
         // Code background
-        for (0..width) |i| {
-            buf.setCell(x + @as(u16, @intCast(i)), y, .{ .style = code_style });
+        for (0..clipped_width) |i| {
+            setCellClipped(buf, x + @as(u16, @intCast(i)), y, .{ .style = code_style });
         }
-        _ = buf.writeStringBounded(x + 1, y, line, code_style, width -| 1);
-        return y + 1;
+        _ = writeStringClipped(buf, x +| 1, y, line, code_style, width -| 1);
+        return y +| 1;
     }
 
     fn renderBlockquote(self: MarkdownRenderer, buf: *Buffer, x: u16, y: u16, width: u16, text: []const u8) u16 {
         const quote_style = Style{ .fg = self.theme.text_muted, .bg = self.theme.background };
         // Vertical bar
-        buf.setCell(x - 2, y, .{ .char = .{ .char = '│' }, .style = Style{ .fg = self.theme.border_active, .bg = self.theme.background } });
-        _ = buf.writeStringBounded(x, y, text, quote_style, width);
-        return y + 1;
+        setCellClipped(buf, x -| 2, y, .{ .char = .{ .char = '│' }, .style = Style{ .fg = self.theme.border_active, .bg = self.theme.background } });
+        _ = writeStringClipped(buf, x, y, text, quote_style, width);
+        return y +| 1;
     }
 
     fn renderBulletItem(self: MarkdownRenderer, buf: *Buffer, x: u16, y: u16, width: u16, text: []const u8) u16 {
-        buf.setCell(x - 2, y, .{ .char = .{ .char = '•' }, .style = Style{ .fg = self.theme.accent, .bg = self.theme.background } });
+        setCellClipped(buf, x -| 2, y, .{ .char = .{ .char = '•' }, .style = Style{ .fg = self.theme.accent, .bg = self.theme.background } });
         return self.renderInline(buf, x, y, width, text, self.theme.fgStyle(self.theme.text));
     }
 
@@ -198,14 +215,15 @@ pub const MarkdownRenderer = struct {
         var num_buf: [8]u8 = undefined;
         const num_str = std.fmt.bufPrint(&num_buf, "{d}. ", .{num}) catch "   ";
         const num_style = Style{ .fg = self.theme.accent, .bg = self.theme.background };
-        _ = buf.writeStringBounded(x - @as(u16, @intCast(num_str.len)), y, num_str, num_style, @as(u16, @intCast(num_str.len)));
+        _ = writeStringClipped(buf, x -| @as(u16, @intCast(num_str.len)), y, num_str, num_style, @as(u16, @intCast(num_str.len)));
         return self.renderInline(buf, x, y, width, text, self.theme.fgStyle(self.theme.text));
     }
 
     fn renderHr(self: MarkdownRenderer, buf: *Buffer, x: u16, y: u16, width: u16) void {
         const style = Style{ .fg = self.theme.border, .bg = self.theme.background };
-        for (0..width) |i| {
-            buf.setCell(x + @as(u16, @intCast(i)), y, .{ .char = .{ .char = '─' }, .style = style });
+        const clipped_width = clippedWidth(buf, x, width);
+        for (0..clipped_width) |i| {
+            setCellClipped(buf, x + @as(u16, @intCast(i)), y, .{ .char = .{ .char = '─' }, .style = style });
         }
     }
 
@@ -241,30 +259,34 @@ pub const MarkdownRenderer = struct {
 
     /// Render markdown with word-aware line breaks and hidden inline markers.
     fn renderInline(self: MarkdownRenderer, buf: *Buffer, start_x: u16, y: u16, width: u16, text: []const u8, base_style: Style) u16 {
-        if (width == 0) return y + 1;
+        const effective_width = clippedWidth(buf, start_x, width);
+        if (effective_width == 0) return y +| 1;
         var line_y = y;
         var line_x = start_x;
+        const line_end = start_x + effective_width;
         var words = std.mem.splitScalar(u8, text, ' ');
         while (words.next()) |word| {
             const word_width = stringWidth(word);
-            if (line_x > start_x and line_x - start_x + 1 + word_width > width) {
-                line_y += 1;
+            const used = line_x - start_x;
+            if (used > 0 and @as(u32, used) + 1 + @as(u32, word_width) > @as(u32, effective_width)) {
+                line_y +|= 1;
                 line_x = start_x;
             }
-            line_x = self.renderInlineToken(buf, line_x, line_y, width -| (line_x - start_x), word, base_style);
-            if (line_x < start_x + width) {
-                buf.setCell(line_x, line_y, .{ .char = .{ .char = ' ' }, .style = base_style });
-                line_x += 1;
+            const remaining = effective_width -| (line_x - start_x);
+            line_x = self.renderInlineToken(buf, line_x, line_y, remaining, word, base_style);
+            if (line_x < line_end) {
+                setCellClipped(buf, line_x, line_y, .{ .char = .{ .char = ' ' }, .style = base_style });
+                line_x +|= 1;
             } else {
-                line_y += 1;
+                line_y +|= 1;
                 line_x = start_x;
             }
         }
-        while (line_x < start_x + width) {
-            buf.setCell(line_x, line_y, .{ .style = base_style });
-            line_x += 1;
+        while (line_x < line_end) {
+            setCellClipped(buf, line_x, line_y, .{ .style = base_style });
+            line_x +|= 1;
         }
-        return line_y + 1;
+        return line_y +| 1;
     }
 
     fn renderInlineToken(self: MarkdownRenderer, buf: *Buffer, start_x: u16, y: u16, width: u16, text: []const u8, base_style: Style) u16 {
@@ -313,9 +335,9 @@ pub const MarkdownRenderer = struct {
             const n = @min(@as(usize, seq), text.len - i);
             const cp = std.unicode.wtf8Decode(text[i .. i + n]) catch @as(u21, text[i]);
             const cw = buffer_mod.charWidth(cp);
-            if (cw > 0 and x - start_x + cw <= width) {
-                buf.setCell(x, y, .{ .char = .{ .char = cp }, .style = base_style, .width = cw });
-                if (cw == 2) buf.setCell(x + 1, y, .{ .char = .wide_right, .style = base_style, .width = 0 });
+            if (cw > 0 and @as(u32, x - start_x) + @as(u32, cw) <= @as(u32, width)) {
+                setCellClipped(buf, x, y, .{ .char = .{ .char = cp }, .style = base_style, .width = cw });
+                if (cw == 2) setCellClipped(buf, x +| 1, y, .{ .char = .wide_right, .style = base_style, .width = 0 });
                 x += cw;
             }
             i += n;
@@ -324,16 +346,18 @@ pub const MarkdownRenderer = struct {
     }
 
     fn renderStyled(buf: *Buffer, start_x: u16, y: u16, width: u16, text: []const u8, style: Style) u16 {
+        if (start_x >= buf.cols or y >= buf.rows) return start_x;
+        const clipped_width = clippedWidth(buf, start_x, width);
         var x = start_x;
         var i: usize = 0;
-        while (i < text.len and x - start_x < width) {
+        while (i < text.len and x - start_x < clipped_width) {
             const seq = std.unicode.utf8ByteSequenceLength(text[i]) catch 1;
             const n = @min(@as(usize, seq), text.len - i);
             const cp = std.unicode.wtf8Decode(text[i .. i + n]) catch @as(u21, text[i]);
             const cw = buffer_mod.charWidth(cp);
-            if (cw > 0 and x - start_x + cw <= width) {
-                buf.setCell(x, y, .{ .char = .{ .char = cp }, .style = style, .width = cw });
-                if (cw == 2) buf.setCell(x + 1, y, .{ .char = .wide_right, .style = style, .width = 0 });
+            if (cw > 0 and @as(u32, x - start_x) + @as(u32, cw) <= @as(u32, clipped_width)) {
+                setCellClipped(buf, x, y, .{ .char = .{ .char = cp }, .style = style, .width = cw });
+                if (cw == 2) setCellClipped(buf, x +| 1, y, .{ .char = .wide_right, .style = style, .width = 0 });
                 x += cw;
             }
             i += n;

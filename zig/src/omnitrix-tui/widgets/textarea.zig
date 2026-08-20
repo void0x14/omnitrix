@@ -171,111 +171,114 @@ pub const TextareaWidget = struct {
     }
 
     fn deleteWordBackward(self: *TextareaWidget) void {
-        const cursor = self.gap.cursor();
+        const cursor = self.gap.normalizeBoundary(self.gap.cursor());
         if (cursor == 0) return;
         var pos = cursor;
         while (pos > 0) {
-            const ch = self.gap.charAt(pos - 1) orelse break;
-            if (ch != ' ' and ch != '\n') break;
-            pos -= 1;
+            const previous = self.gap.previousBoundary(pos);
+            if (!self.gap.isSeparator(previous)) break;
+            pos = previous;
         }
         while (pos > 0) {
-            const ch = self.gap.charAt(pos - 1) orelse break;
-            if (ch == ' ' or ch == '\n') break;
-            pos -= 1;
+            const previous = self.gap.previousBoundary(pos);
+            if (self.gap.isSeparator(previous)) break;
+            pos = previous;
         }
         self.gap.deleteRange(pos, cursor);
     }
 
     fn moveWordLeft(self: *TextareaWidget) void {
-        var pos = self.gap.cursor();
+        var pos = self.gap.normalizeBoundary(self.gap.cursor());
         if (pos == 0) return;
         while (pos > 0) {
-            const ch = self.gap.charAt(pos - 1) orelse break;
-            if (ch != ' ' and ch != '\n') break;
-            pos -= 1;
+            const previous = self.gap.previousBoundary(pos);
+            if (!self.gap.isSeparator(previous)) break;
+            pos = previous;
         }
         while (pos > 0) {
-            const ch = self.gap.charAt(pos - 1) orelse break;
-            if (ch == ' ' or ch == '\n') break;
-            pos -= 1;
+            const previous = self.gap.previousBoundary(pos);
+            if (self.gap.isSeparator(previous)) break;
+            pos = previous;
         }
         self.gap.moveTo(pos);
     }
 
     fn moveWordRight(self: *TextareaWidget) void {
         const len = self.gap.length();
-        var pos = self.gap.cursor();
-        while (pos < len) {
-            const ch = self.gap.charAt(pos) orelse break;
-            if (ch == ' ' or ch == '\n') break;
-            pos += 1;
-        }
-        while (pos < len) {
-            const ch = self.gap.charAt(pos) orelse break;
-            if (ch != ' ' and ch != '\n') break;
-            pos += 1;
-        }
+        var pos = self.gap.normalizeBoundary(self.gap.cursor());
+        while (pos < len and !self.gap.isSeparator(pos)) pos = self.gap.nextBoundary(pos);
+        while (pos < len and self.gap.isSeparator(pos)) pos = self.gap.nextBoundary(pos);
         self.gap.moveTo(pos);
     }
 
+    fn lineStart(self: TextareaWidget, pos: usize) usize {
+        var current = self.gap.normalizeBoundary(pos);
+        while (current > 0) {
+            const previous = self.gap.previousBoundary(current);
+            const item = self.gap.codepointAt(previous) orelse break;
+            if (item.cp == '\n') break;
+            current = previous;
+        }
+        return current;
+    }
+
+    fn lineEnd(self: TextareaWidget, pos: usize) usize {
+        var current = self.gap.normalizeBoundary(pos);
+        while (current < self.gap.length()) {
+            const item = self.gap.codepointAt(current) orelse break;
+            if (item.cp == '\n') break;
+            current += item.len;
+        }
+        return current;
+    }
+
+    fn displayColumn(self: TextareaWidget, start: usize, end: usize) u16 {
+        var current = start;
+        var column: u16 = 0;
+        while (current < end) {
+            const item = self.gap.codepointAt(current) orelse break;
+            if (item.cp == '\n') break;
+            column +|= charWidth(item.cp);
+            current += item.len;
+        }
+        return column;
+    }
+
+    fn boundaryAtColumn(self: TextareaWidget, start: usize, end: usize, target: u16) usize {
+        var current = start;
+        var column: u16 = 0;
+        while (current < end) {
+            const item = self.gap.codepointAt(current) orelse break;
+            if (item.cp == '\n') break;
+            const width = charWidth(item.cp);
+            if (column + width > target) break;
+            column += width;
+            current += item.len;
+        }
+        return current;
+    }
+
     fn moveLineUp(self: *TextareaWidget) void {
-        const cursor = self.gap.cursor();
-        var line_start = cursor;
-        while (line_start > 0) {
-            const ch = self.gap.charAt(line_start - 1) orelse break;
-            if (ch == '\n') break;
-            line_start -= 1;
-        }
-        if (line_start == 0) return;
-        var prev_line_start = line_start - 1;
-        while (prev_line_start > 0) {
-            const ch = self.gap.charAt(prev_line_start - 1) orelse break;
-            if (ch == '\n') break;
-            prev_line_start -= 1;
-        }
-        const col = cursor - line_start;
-        const prev_line_end = line_start - 1;
-        const prev_line_len = prev_line_end - prev_line_start;
-        const target = prev_line_start + @min(col, prev_line_len);
-        self.gap.moveTo(target);
+        const cursor = self.gap.normalizeBoundary(self.gap.cursor());
+        const current_start = self.lineStart(cursor);
+        if (current_start == 0) return;
+
+        const previous_line_end = self.gap.previousBoundary(current_start);
+        const previous_line_start = self.lineStart(previous_line_end);
+        const column = self.displayColumn(current_start, cursor);
+        self.gap.moveTo(self.boundaryAtColumn(previous_line_start, previous_line_end, column));
     }
 
     fn moveLineDown(self: *TextareaWidget) void {
-        const cursor = self.gap.cursor();
-        const len = self.gap.length();
-        var line_end = cursor;
-        while (line_end < len) {
-            const ch = self.gap.charAt(line_end) orelse break;
-            if (ch == '\n') {
-                line_end += 1;
-                break;
-            }
-            line_end += 1;
-        }
-        if (line_end >= len) return;
-        var line_start = cursor;
-        while (line_start > 0) {
-            const ch = self.gap.charAt(line_start - 1) orelse break;
-            if (ch == '\n') break;
-            line_start -= 1;
-        }
-        const col_offset = cursor - line_start;
-        const next_line_end = blk: {
-            var e = line_end;
-            while (e < len) {
-                const ch = self.gap.charAt(e) orelse break;
-                if (ch == '\n') {
-                    e += 1;
-                    break;
-                }
-                e += 1;
-            }
-            break :blk e;
-        };
-        const next_line_len = next_line_end - line_end;
-        const target = line_end + @min(col_offset, next_line_len);
-        self.gap.moveTo(@min(target, len));
+        const cursor = self.gap.normalizeBoundary(self.gap.cursor());
+        const current_start = self.lineStart(cursor);
+        const current_end = self.lineEnd(cursor);
+        if (current_end >= self.gap.length()) return;
+
+        const next_line_start = self.gap.nextBoundary(current_end);
+        const next_line_end = self.lineEnd(next_line_start);
+        const column = self.displayColumn(current_start, cursor);
+        self.gap.moveTo(self.boundaryAtColumn(next_line_start, next_line_end, column));
     }
 
     fn recalcLines(self: *TextareaWidget) void {
