@@ -376,6 +376,28 @@ describe("cross-spawn spawner", () => {
     )
   })
 
+  describe("foreground exit vs stdio close", () => {
+    fx.effect(
+      "resolves exit code on exit event even when a background grandchild keeps stdio open",
+      Effect.gen(function* () {
+        if (process.platform === "win32") return
+        const handle = yield* js(
+          [
+            'const { spawn } = require("child_process")',
+            // grandchild inherits the parent's stdout pipe, so the parent's `close`
+            // never fires while the grandchild stays alive; the exit code must still
+            // resolve on the parent's `exit` event.
+            'const child = spawn(process.execPath, ["-e", "setTimeout(() => process.exit(0), 2000)"], { stdio: "inherit" })',
+            'process.stdout.write("done")',
+            "process.exit(0)",
+          ].join("\n"),
+        )
+        const code = yield* handle.exitCode
+        expect(code).toBe(ChildProcessSpawner.ExitCode(0))
+      }),
+    )
+  })
+
   describe("Windows-specific", () => {
     fx.effect(
       "uses shell routing on Windows",
