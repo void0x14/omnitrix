@@ -134,7 +134,12 @@ export const TaskTool = Tool.define<typeof Parameters, TaskExecuteMetadata, Task
             metadata: { sessionId: SessionID.make(params.task_id) },
             output: `Task ${params.task_id} not found`,
           }
-        if (infos.length === 0) return yield* Effect.fail(new Error("No running tasks found"))
+        if (infos.length === 0)
+          return {
+            title: params.description,
+            metadata: { sessionId: ctx.sessionID },
+            output: "No running tasks found",
+          }
         const text = infos
           .map((job) => {
             const tail = job.output ? job.output.trim().slice(-500) : job.error ?? ""

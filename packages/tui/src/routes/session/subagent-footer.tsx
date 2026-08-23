@@ -125,6 +125,7 @@ export function SubagentFooter() {
               <text fg={theme.text}>
                 Next <span style={{ fg: theme.textMuted }}>{nextShortcut()}</span>
               </text>
+            </box>
             <box
               onMouseOver={() => setHover("stop")}
               onMouseOut={() => setHover(null)}
@@ -132,7 +133,6 @@ export function SubagentFooter() {
               backgroundColor={hover() === "stop" ? theme.backgroundElement : theme.backgroundPanel}
             >
               <text fg={theme.error}>Stop</text>
-            </box>
             </box>
           </box>
         </box>
