@@ -170,7 +170,7 @@ export const VerifyTool = Tool.define<
         const degisen = gitVarmi ? (yield* git.status(cwd)).map((item) => item.file) : []
         const dil = yield* dilTespit(cwd)
 
-        const testIsteniyor = /test/i.test(params.eylem)
+        const testIsteniyor = /(pytest|cargo test|go test|zig build test|testleri|testler|test et|test calistir|testleri gecsin)/i.test(params.eylem)
         const lintIsteniyor = /(lint|clippy|ruff|mypy|fmt|format)/i.test(params.eylem)
         const komut = params.komut
 
