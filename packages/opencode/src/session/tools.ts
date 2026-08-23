@@ -10,6 +10,7 @@ import { ToolJsonSchema } from "@/tool/json-schema"
 import { ToolRegistry } from "@/tool/registry"
 import { Truncate } from "@/tool/truncate"
 import { AppProcess } from "@opencode-ai/core/process"
+import { Cekirdek } from "./invoke"
 
 import { Plugin } from "@/plugin"
 import type { TaskPromptOps } from "@/tool/task"
@@ -152,15 +153,7 @@ export const resolve = Effect.fn("SessionTools.resolve")(function* (input: {
               { tool: item.id, sessionID: ctx.sessionID, callID: ctx.callID },
               { args },
             )
-            let result = yield* item.execute(args, ctx)
-            if (OTO_DOSYALAR.has(item.id)) {
-              const instance = yield* InstanceState.context
-              for (const dosya of otoHedef(item.id, args)) {
-                const v = yield* otoDogrula(dosya, instance.directory)
-                result = { ...result, output: v, metadata: { ...result.metadata, hamCikti: result.output } }
-                if (v !== "OLDU") break
-              }
-            }
+            const result = yield* Cekirdek.invoke({ item, args: toRecord(args), ctx })
             const output = {
               ...result,
               attachments: result.attachments?.map((attachment) => ({
