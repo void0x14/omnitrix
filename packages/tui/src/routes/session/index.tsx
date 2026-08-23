@@ -211,6 +211,21 @@ export function Session() {
       .toSorted((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
   })
   const messages = createMemo(() => sync.data.message[route.sessionID] ?? [])
+  // Window the rendered message list so we never lay out the entire
+  // transcript on the main thread on every focus change. sync already caps
+  // stored messages at 100, so this bounds the rendered tree to the most
+  // recent messages and avoids a full synchronous re-layout for long
+  // subagent transcripts (keeps the view switch instant).
+  const MAX_RENDERED_MESSAGES = 100
+  const renderedMessages = createMemo(() => {
+    const all = messages()
+    return all.length <= MAX_RENDERED_MESSAGES ? all : all.slice(all.length - MAX_RENDERED_MESSAGES)
+  })
+  const renderedRevertMessageIndex = createMemo(() => {
+    const messageID = revertMessageID()
+    if (!messageID) return -1
+    return renderedMessages().findIndex((message) => message.id === messageID)
+  })
   const messagesBeforeRevert = () => {
     const messageID = session()?.revert?.messageID
     if (!messageID) return messages()
@@ -288,6 +303,29 @@ export function Session() {
     const sessionID = route.sessionID
     void (async () => {
       const previousWorkspace = untrack(() => project.workspace.current())
+      const cached = untrack(() => sync.session.get(sessionID))
+
+      // Cached session metadata is already in the store (it drives the
+      // subagent footer / sidebar). Skip the per-click network round-trip so
+      // entering AND exiting a subagent view is instant. The route change
+      // itself is a reactive setStore and switches the view immediately.
+      if (cached) {
+        editor.reconnect(cached.directory)
+        // Position instantly instead of waiting behind a network await.
+        if (route.sessionID === sessionID && scroll) scroll.scrollBy(100_000)
+        if (cached.workspaceID !== previousWorkspace) {
+          project.workspace.set(cached.workspaceID)
+          try {
+            await sync.bootstrap({ fatal: false })
+          } catch {}
+        }
+        // sync.session.sync is cached-safe (no-op once loaded), so this
+        // never blocks the view switch again.
+        await sync.session.sync(sessionID)
+        if (route.sessionID === sessionID && scroll) scroll.scrollBy(100_000)
+        return
+      }
+
       const result = await sdk.client.session.get({ sessionID }, { throwOnError: true })
       if (!result.data) {
         toast.show({
@@ -322,6 +360,22 @@ export function Session() {
       })
       navigate({ type: "home" })
     })
+  })
+
+
+  // Eagerly preload child subagent transcripts while the current session is
+  // still on screen, so entering a subagent renders from cache only (no
+  // first-time network load / pop-in delay on click). sync.session.sync is
+  // cached-safe, so repeated runs are no-ops.
+  createEffect(() => {
+    const current = session()
+    if (!current) return
+    const parentID = current.parentID ?? current.id
+    for (const child of sync.data.session) {
+      if (child.parentID === parentID && child.id !== current.id) {
+        void sync.session.sync(child.id).catch(() => {})
+      }
+    }
   })
 
   let lastSwitch: string | undefined = undefined
@@ -1197,7 +1251,7 @@ export function Session() {
                 scrollAcceleration={scrollAcceleration()}
               >
                 <box height={1} />
-                <For each={messages()}>
+                <For each={renderedMessages()}>
                   {(message, index) => (
                     <Switch>
                       <Match when={message.id === revert()?.messageID}>
@@ -1261,7 +1315,7 @@ export function Session() {
                         })()}
                       </Match>
                       <Match
-                        when={revert()?.messageID && revertMessageIndex() !== -1 && index() >= revertMessageIndex()}
+                        when={revert()?.messageID && renderedRevertMessageIndex() !== -1 && index() >= renderedRevertMessageIndex()}
                       >
                         <></>
                       </Match>

@@ -6,19 +6,23 @@ export default {
   parsers: [
     {
       filetype: "bash",
-      wasm: "https://github.com/tree-sitter/tree-sitter-bash/releases/download/v0.25.0/tree-sitter-bash.wasm",
+      // Vendored locally so the first parse of a bash block never blocks on a
+      // network fetch (previously loaded from github releases on first paint).
+      wasm: new URL("./bash/tree-sitter-bash.wasm", import.meta.url).href,
       queries: {
         highlights: [
-          "https://raw.githubusercontent.com/nvim-treesitter/nvim-treesitter/refs/heads/master/queries/bash/highlights.scm",
+          new URL("./bash/highlights.scm", import.meta.url).href,
         ],
       },
     },
     {
       filetype: "json",
-      wasm: "https://github.com/tree-sitter/tree-sitter-json/releases/download/v0.24.8/tree-sitter-json.wasm",
+      // Vendored locally so the first parse of a json block never blocks on a
+      // network fetch (previously loaded from github releases on first paint).
+      wasm: new URL("./json/tree-sitter-json.wasm", import.meta.url).href,
       queries: {
         highlights: [
-          "https://raw.githubusercontent.com/nvim-treesitter/nvim-treesitter/refs/heads/master/queries/json/highlights.scm",
+          new URL("./json/highlights.scm", import.meta.url).href,
         ],
       },
     },
