@@ -166,7 +166,7 @@ const layer: Layer.Layer<Service, never, FSUtil.Service | AppProcess.Service | C
 
         const enabled = Effect.fnUntraced(function* () {
           if (state.vcs !== "git") return false
-          return (yield* config.get()).snapshot !== false
+          return (yield* config.get()).snapshot === true
         })
 
         const excludes = Effect.fnUntraced(function* () {

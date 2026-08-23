@@ -55,6 +55,7 @@ const initialize = Effect.fn("SnapshotTest.initialize")(function* (dir: string) 
   const bContent = `B${unique}`
   yield* write(`${dir}/a.txt`, aContent)
   yield* write(`${dir}/b.txt`, bContent)
+  yield* write(`${dir}/opencode.json`, JSON.stringify({ snapshot: true }))
   return { aContent, bContent }
 })
 
@@ -82,7 +83,7 @@ const bootstrapScoped = Effect.fn("SnapshotTest.bootstrapScoped")(function* () {
 })
 
 const scopedGitTmpdir = () =>
-  tmpdirScoped({ git: true }).pipe(Effect.provide(LayerNode.compile(CrossSpawnSpawner.node)))
+  tmpdirScoped({ git: true, config: { snapshot: true } }).pipe(Effect.provide(LayerNode.compile(CrossSpawnSpawner.node)))
 
 const cleanupWorktree = (repo: string, worktree: string, files: string[] = []) =>
   Effect.promise(async () => {
@@ -694,6 +695,7 @@ it.live(
     const tmp = yield* bootstrapScoped()
     const worktreePath = `${tmp.path}-worktree`
     yield* exec(tmp.path, ["git", "worktree", "add", worktreePath, "HEAD"])
+    yield* write(`${worktreePath}/opencode.json`, JSON.stringify({ snapshot: true }))
     yield* Effect.addFinalizer(() => cleanupWorktree(tmp.path, worktreePath))
     yield* Effect.gen(function* () {
       const snapshot = yield* Snapshot.Service
@@ -717,6 +719,7 @@ it.live(
     const worktreePath = `${tmp.path}-worktree`
     const primaryFile = `${tmp.path}/worktree.txt`
     yield* exec(tmp.path, ["git", "worktree", "add", worktreePath, "HEAD"])
+    yield* write(`${worktreePath}/opencode.json`, JSON.stringify({ snapshot: true }))
     yield* Effect.addFinalizer(() => cleanupWorktree(tmp.path, worktreePath, [primaryFile]))
     yield* Effect.gen(function* () {
       const snapshot = yield* Snapshot.Service
@@ -743,6 +746,7 @@ it.live(
     const tmp = yield* bootstrapScoped()
     const worktreePath = `${tmp.path}-worktree`
     yield* exec(tmp.path, ["git", "worktree", "add", worktreePath, "HEAD"])
+    yield* write(`${worktreePath}/opencode.json`, JSON.stringify({ snapshot: true }))
     yield* Effect.addFinalizer(() =>
       cleanupWorktree(tmp.path, worktreePath, [`${tmp.path}/shared.txt`, `${tmp.path}/primary-only.txt`]),
     )
