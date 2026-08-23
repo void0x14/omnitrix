@@ -1,0 +1,30 @@
+## Dogrulayici — basariyi sadece O ilan eder
+
+Bu arac bir isin gercekten olup olmadigini makineyle kontrol eder. Sen tahmin edemezsin, "oldu" diyemezsin; isin kapanmasi icin dogrulayicidan gecmesi gerekir.
+
+Kontrol sirasi (ilk basarisiz katmanda durur):
+1. Sozdizimi (py_compile / zig ast-check / gofmt -e)
+2. Derleme (zig build / cargo check / go build / tsc --noEmit)
+3. Lint/format (ruff / clippy / zig fmt --check) — sadece niyette istenirse
+4. Test (pytest / cargo test / zig build test / go test / bun test) — sadece niyette istenirse
+5. Calisma (verilen komut kosulur) — sadece komut varsa
+6. Sart/fark — niyette gecen dosya degismis mi, istenen sembol uretilen kodda var mi
+
+Cikti sadece ikisinden biri:
+OLDU
+OLMADI: <tek satirlik neden>
+
+Ne zaman kullan:
+- Bir istegi bitirdigini dusundugun an, "bitti" demeden once
+- "Derle", "test et", "calisiyor mu", "kontrol et" anlamindaki her istekte
+- Dogrulamayi atlayip kod yazmaya devam etme
+
+Parametreler:
+- eylem: dogal dilde niyet (bayrak yok). Ornek: "zig build derlensin ve testler gecsin", "src/main.zig degismeli"
+- kosul: uretilen kodda aranacak sembol (zorunlu). Ornek: "TaskGroup". Kod calissa bile kosul yoksa sonuc OLMADI olur.
+- komut: calisma katmaninin komutu. Ornek: "python main.py"
+
+Kurallar:
+- OLMADI aldiysan tek satirlik nedeni oku, duzelt, tekrar dogrula
+- OLDU alana kadar is bitmis sayilmaz
+- Ciktiyi oldugu gibi kabul et; uzerine ek yorum yazma

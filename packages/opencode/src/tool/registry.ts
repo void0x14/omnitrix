@@ -14,6 +14,7 @@ import { Database } from "@opencode-ai/core/database/database"
 import { TodoWriteTool } from "./todo"
 import { WebFetchTool } from "./webfetch"
 import { WriteTool } from "./write"
+import { VerifyTool } from "./verify"
 import { InvalidTool } from "./invalid"
 import { SkillTool } from "./skill"
 import * as Tool from "./tool"
@@ -42,6 +43,8 @@ import { Question } from "../question"
 import { Todo } from "../session/todo"
 import { LSP } from "@/lsp/lsp"
 import { Instruction } from "../session/instruction"
+import { Git } from "../git"
+import { AppProcess } from "@opencode-ai/core/process"
 import { FSUtil } from "@opencode-ai/core/fs-util"
 import { EventV2Bridge } from "@/event-v2-bridge"
 import { Agent } from "../agent/agent"
@@ -106,6 +109,7 @@ const layer = Layer.effect(
     const lsptool = yield* LspTool
     const plan = yield* PlanExitTool
     const webfetch = yield* WebFetchTool
+    const verify = yield* VerifyTool
     const websearch = yield* WebSearchTool
     const shell = yield* ShellTool
     const globtool = yield* GlobTool
@@ -215,6 +219,7 @@ const layer = Layer.effect(
           edit: Tool.init(edit),
           write: Tool.init(writetool),
           task: Tool.init(task),
+          verify: Tool.init(verify),
           fetch: Tool.init(webfetch),
           todo: Tool.init(todo),
           search: Tool.init(websearch),
@@ -237,6 +242,7 @@ const layer = Layer.effect(
             tool.grep,
             tool.edit,
             tool.write,
+            tool.verify,
             tool.task,
             tool.fetch,
             tool.todo,
@@ -444,6 +450,8 @@ export const node = LayerNode.make({
     httpClient,
     CrossSpawnSpawner.node,
     Format.node,
+    AppProcess.node,
+    Git.node,
     Truncate.node,
     RuntimeFlags.node,
     MCP.node,

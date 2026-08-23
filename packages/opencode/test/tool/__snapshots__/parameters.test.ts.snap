@@ -335,6 +335,30 @@ exports[`tool parameters JSON Schema (wire shape) task 1`] = `
 }
 `;
 
+exports[`tool parameters JSON Schema (wire shape) verify 1`] = `
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+    "eylem": {
+      "description": "Ne istendigi dogal dilde (bayrak yok). Ornek: 'zig build derlensin ve testler gecsin', 'src/main.zig degismeli'",
+      "type": "string",
+    },
+    "komut": {
+      "description": "Calisma katmani icin kosulacak komut. Ornek: 'python main.py'",
+      "type": "string",
+    },
+    "kosul": {
+      "description": "Uretilen kodda bulunmasi zorunlu sembol/kosul. Ornek: 'TaskGroup'. Kod calissa bile kosul yoksa sonuc OLMADI olur.",
+      "type": "string",
+    },
+  },
+  "required": [
+    "eylem",
+  ],
+  "type": "object",
+}
+`;
+
 exports[`tool parameters JSON Schema (wire shape) todo 1`] = `
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
