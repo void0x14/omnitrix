@@ -301,6 +301,16 @@ exports[`tool parameters JSON Schema (wire shape) task 1`] = `
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "properties": {
+    "action": {
+      "description": "Controls what the tool does: launch starts a new task (default), status reports on a running task, cancel stops a running task, update sends additional context to a running task",
+      "enum": [
+        "launch",
+        "status",
+        "cancel",
+        "update",
+      ],
+      "type": "string",
+    },
     "background": {
       "description": "Run the agent in the background. You will be notified when it completes. DO NOT sleep, poll, or proactively check on its progress",
       "type": "boolean",

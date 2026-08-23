@@ -76,13 +76,6 @@ const neden = (numara: number, ad: string, exit: number, text: string, dil: stri
   return `${ad} hatasi: ${ilkSatir(text)}`
 }
 
-const tirnakliKomut = (eylem: string) => {
-  const tirnak = eylem.match(/["'`]([^"'`]+)["'`]/)
-  if (tirnak?.[1]) return tirnak[1]
-  const emir = eylem.match(/(?:calistir|kos|run|execute)\s*[:=]\s*(.+)$/i)
-  return emir?.[1]?.trim()
-}
-
 const dosyaBahsi = (eylem: string) =>
   Array.from(
     eylem.matchAll(/[A-Za-z0-9_.\-/]+\.(?:zig|rs|py|go|ts|tsx|js|jsx|mjs|cjs|sh|toml|json|yaml|yml|md|c|h|cpp|hpp)\b/g),
@@ -167,7 +160,7 @@ export const VerifyTool = Tool.define<
   return {
     description: DESCRIPTION,
     parameters: Parameters,
-    execute: (params: Schema.Schema.Type<typeof Parameters>) =>
+    execute: (params: Schema.Schema.Type<typeof Parameters>, ctx: Tool.Context) =>
       Effect.gen(function* () {
         const instance = yield* InstanceState.context
         const cwd = instance.directory
@@ -179,7 +172,7 @@ export const VerifyTool = Tool.define<
 
         const testIsteniyor = /test/i.test(params.eylem)
         const lintIsteniyor = /(lint|clippy|ruff|mypy|fmt|format)/i.test(params.eylem)
-        const komut = params.komut ?? tirnakliKomut(params.eylem)
+        const komut = params.komut
 
         const zigs = uzantili(degisen, ".zig")
         const pys = uzantili(degisen, ".py")
@@ -306,10 +299,12 @@ export const VerifyTool = Tool.define<
         if (hata2) return sonuc(`OLMADI: ${hata2.satir}`)
         const hata3 = yield* kos(3, "test", tablo[3], "180 seconds")
         if (hata3) return sonuc(`OLMADI: ${hata3.satir}`)
+        if (komut) yield* ctx.ask({ permission: "bash", patterns: [komut], always: [], metadata: { command: komut } })
         const hata4 = yield* kos(4, "calisma", komut ? ["sh", "-c", komut] : undefined, "60 seconds")
         if (hata4) return sonuc(`OLMADI: ${hata4.satir}`)
 
-        for (const bahis of dosyaBahsi(params.eylem)) {
+        const bahisler = dosyaBahsi(params.eylem)
+        for (const bahis of bahisler) {
           if (!gitVarmi) return sonuc("OLMADI: git deposu yok, dosya degisimi dogrulanamadi")
           const degisti = degisen.some((dosya) => dosya === bahis || path.basename(dosya) === path.basename(bahis))
           if (!degisti) return sonuc(`OLMADI: beklenen dosya degismemis: ${bahis}`)
@@ -320,6 +315,8 @@ export const VerifyTool = Tool.define<
           if (!varMi) return sonuc(`OLMADI: istenen ${params.kosul} bulunamadi (degisen dosyalarda yok)`)
         }
 
+        if (!params.kosul && bahisler.length === 0 && katmanlar.every((k) => k.sonuc === "atlandi"))
+          return sonuc("OLMADI: dogrulanacak bir is bulunamadi (katman calismadi)")
         return sonuc("OLDU")
       }),
   } satisfies Tool.DefWithoutID<typeof Parameters, Metadata>

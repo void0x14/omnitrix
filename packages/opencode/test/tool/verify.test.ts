@@ -185,4 +185,14 @@ describe("tool.verify", () => {
     { git: true },
     30000,
   )
+
+  it.instance(
+    "bos dizinde katman calismazsa OLMADI der",
+    () =>
+      Effect.gen(function* () {
+        const result = yield* run({ eylem: "kod derlensin" })
+        expect(result.output).toBe("OLMADI: dogrulanacak bir is bulunamadi (katman calismadi)")
+      }),
+    { git: false },
+  )
 })

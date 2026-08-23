@@ -126,7 +126,8 @@ export const TaskTool = Tool.define<typeof Parameters, TaskExecuteMetadata, Task
 
       if (action === "status") {
         const infos = (yield* background.list()).filter(
-          (job) => job.type === id && (!params.task_id || job.id === params.task_id),
+          (job) =>
+            job.type === id && job.metadata?.parentSessionId === ctx.sessionID && (!params.task_id || job.id === params.task_id),
         )
         if (infos.length === 0 && params.task_id)
           return {
@@ -155,6 +156,13 @@ export const TaskTool = Tool.define<typeof Parameters, TaskExecuteMetadata, Task
 
       if (action === "cancel") {
         if (!params.task_id) return yield* Effect.fail(new Error("cancel requires a task_id"))
+        const job = yield* background.get(params.task_id)
+        if (!job || job.metadata?.parentSessionId !== ctx.sessionID)
+          return {
+            title: params.description,
+            metadata: { sessionId: SessionID.make(params.task_id) },
+            output: `Task ${params.task_id} not found or not running`,
+          }
         const cancelled = yield* background.cancel(params.task_id)
         if (!cancelled)
           return {

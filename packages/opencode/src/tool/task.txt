@@ -17,5 +17,5 @@ Usage notes:
 5. The agent's outputs should generally be trusted
 6. Clearly tell the agent whether you expect it to write code or just to do research (search, file reads, web fetches, etc.), since it is not aware of the user's intent. Tell it how to verify its work if possible (e.g., relevant test commands).
 7. If the agent description mentions that it should be used proactively, then you should try your best to use it without the user having to ask for it first. Use your judgement.
-8. To check on a running task, call the Task tool with action="status" and the task_id. To stop a running task, use action="cancel" with its task_id. To send additional context to a running task, use action="update" with its task_id and a new prompt — the same subagent session continues.
+8. To check on a running task, call the Task tool with action="status" and the task_id. To stop a running task, use action="cancel" with its task_id. To send additional context to a running background task, use action="update" with its task_id and a new prompt — the running task continues with the new instructions.
 9. If you are running as a subagent, you may spawn further subagents only if the task tool is present in your tools and the session is below the configured subagent_depth limit.
