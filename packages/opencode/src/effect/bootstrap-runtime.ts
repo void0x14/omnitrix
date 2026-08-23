@@ -10,10 +10,11 @@ import { Vcs } from "@/project/vcs"
 import { Snapshot } from "@/snapshot"
 import { Config } from "@/config/config"
 import * as Observability from "@opencode-ai/core/observability"
+import { truthy } from "@opencode-ai/core/flag/flag"
 import { memoMap } from "@opencode-ai/core/effect/memo-map"
 
 export const BootstrapLayer = AppNodeBuilder.build(
   LayerNode.group([Config.node, Plugin.node, ShareNext.node, Format.node, LSP.node, Vcs.node, Snapshot.node]),
-).pipe(Layer.provide(Observability.layer))
+).pipe(Layer.provide(truthy("OPENCODE_EXPERIMENTAL") ? Observability.layer : Layer.empty))
 
 export const BootstrapRuntime = ManagedRuntime.make(BootstrapLayer, { memoMap })
