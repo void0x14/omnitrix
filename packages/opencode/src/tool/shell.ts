@@ -1,5 +1,6 @@
 import { Effect, Stream } from "effect"
 import os from "os"
+import { randomUUID } from "node:crypto"
 import { createWriteStream } from "node:fs"
 import * as Tool from "./tool"
 import path from "path"
@@ -19,6 +20,7 @@ import * as Truncate from "./truncate"
 import { Plugin } from "@/plugin"
 import { ChildProcess } from "effect/unstable/process"
 import { ChildProcessSpawner } from "effect/unstable/process/ChildProcessSpawner"
+import type { StandardCommand } from "effect/unstable/process/ChildProcess"
 import { ShellPrompt, type Parameters } from "./shell/prompt"
 import { BashArity } from "@/permission/arity"
 
@@ -290,23 +292,37 @@ const ask = Effect.fn("ShellTool.ask")(function* (ctx: Tool.Context, scan: Scan,
   })
 })
 
-function cmd(shell: string, command: string, cwd: string, env: NodeJS.ProcessEnv) {
-  if (process.platform === "win32" && Shell.ps(shell)) {
-    return ChildProcess.make(shell, ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", command], {
-      cwd,
-      env,
-      stdin: "ignore",
-      detached: false,
+function cmd(
+  shell: string,
+  command: string,
+  cwd: string,
+  env: NodeJS.ProcessEnv,
+): Promise<{ process: StandardCommand; scriptPath: string | undefined }> {
+  if (process.platform === "win32") {
+    if (Shell.ps(shell)) {
+      return Promise.resolve({
+        process: ChildProcess.make(
+          shell,
+          ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", command],
+          { cwd, env, stdin: "ignore", detached: false },
+        ),
+        scriptPath: undefined,
+      })
+    }
+    return Promise.resolve({
+      process: ChildProcess.make(command, [], { shell, cwd, env, stdin: "ignore", detached: false }),
+      scriptPath: undefined,
     })
   }
 
-  return ChildProcess.make(command, [], {
-    shell,
-    cwd,
-    env,
-    stdin: "ignore",
-    detached: process.platform !== "win32",
-  })
+  const scriptPath = path.join(os.tmpdir(), `oc-${randomUUID()}.sh`)
+  return (async () => {
+    await Bun.write(scriptPath, command)
+    return {
+      process: ChildProcess.make(shell, [scriptPath], { cwd, env, stdin: "ignore" }),
+      scriptPath,
+    }
+  })()
 }
 const parser = lazy(async () => {
   const { Parser } = await import("web-tree-sitter")
@@ -481,7 +497,13 @@ export const ShellTool = Tool.define(
       const code: number | null = yield* Effect.scoped(
         Effect.gen(function* () {
           yield* Effect.addFinalizer(closeSink)
-          const handle = yield* spawner.spawn(cmd(input.shell, input.command, input.cwd, input.env))
+          const built = yield* Effect.promise(() => cmd(input.shell, input.command, input.cwd, input.env))
+          yield* Effect.addFinalizer(() =>
+            built.scriptPath
+              ? Effect.promise(() => Bun.file(built.scriptPath!).unlink().catch(() => undefined))
+              : Effect.void,
+          )
+          const handle = yield* spawner.spawn(built.process)
 
           yield* Effect.forkScoped(
             Stream.runForEach(Stream.decodeText(handle.all), (chunk) => {
@@ -530,32 +552,27 @@ export const ShellTool = Tool.define(
             }),
           )
 
-          const abort = Effect.callback<void>((resume) => {
-            if (ctx.abort.aborted) return resume(Effect.void)
-            const handler = () => resume(Effect.void)
+          const waitForAbort = Effect.callback<number | null>((resume) => {
+            if (ctx.abort.aborted) {
+              aborted = true
+              return resume(Effect.succeed(null))
+            }
+            const handler = () => {
+              aborted = true
+              resume(Effect.succeed(null))
+            }
             ctx.abort.addEventListener("abort", handler, { once: true })
             return Effect.sync(() => ctx.abort.removeEventListener("abort", handler))
           })
 
-          const timeout = Effect.sleep(`${input.timeout + 100} millis`)
-
-          const exit = yield* Effect.raceAll([
-            handle.exitCode.pipe(Effect.map((code) => ({ kind: "exit" as const, code }))),
-            abort.pipe(Effect.map(() => ({ kind: "abort" as const, code: null }))),
-            timeout.pipe(Effect.map(() => ({ kind: "timeout" as const, code: null }))),
-          ])
-
-          if (exit.kind === "abort") {
-            aborted = true
-            yield* handle.kill({ forceKillAfter: "3 seconds" }).pipe(Effect.orDie)
-          }
-          if (exit.kind === "timeout") {
-            expired = true
-            yield* handle.kill({ forceKillAfter: "3 seconds" }).pipe(Effect.orDie)
-          }
-
-          return exit.kind === "exit" ? exit.code : null
-        }),
+          return yield* Effect.timeoutOrElse(handle.exitCode, {
+            duration: `${input.timeout + 100} millis`,
+            orElse: () => {
+              expired = true
+              return Effect.succeed(null)
+            },
+          }).pipe(Effect.raceFirst(waitForAbort))
+          })
       ).pipe(Effect.orDie)
 
       const meta: string[] = []

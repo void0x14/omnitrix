@@ -1,5 +1,6 @@
 import { PermissionV1 } from "@opencode-ai/core/v1/permission"
 import { describe, expect } from "bun:test"
+import { randomUUID } from "node:crypto"
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
 import { Cause, Effect, Exit, Layer } from "effect"
 import type * as Scope from "effect/Scope"
@@ -1196,4 +1197,39 @@ describe("tool.shell truncation", () => {
       }),
     ),
   )
+})
+
+describe("tool.shell pkill -f regression", () => {
+  if (process.platform !== "win32") {
+    each("does not hang when a command matches its own runner via pkill -f", () =>
+      runIn(
+        projectRoot,
+        Effect.gen(function* () {
+          const token = randomUUID()
+          const start = performance.now()
+          const result = yield* run({
+            command: `pkill -f "${token}" 2>/dev/null; echo killed`,
+            timeout: 10000,
+          })
+          const elapsed = performance.now() - start
+          expect(result.output).toContain("killed")
+          expect(elapsed).toBeLessThan(5000)
+        }),
+      ),
+    )
+
+    each("runner cmdline does not embed the raw command text", () =>
+      runIn(
+        projectRoot,
+        Effect.gen(function* () {
+          const marker = randomUUID()
+          const command = `RUNNER=$(ps -o args= -p $$); echo "runner:\${RUNNER}"; pkill -f "${marker}" 2>/dev/null; echo killed`
+          const result = yield* run({ command, timeout: 10000 })
+          expect(result.output).toContain("killed")
+          expect(result.output).toContain("runner:")
+          expect(result.output).not.toContain(marker)
+        }),
+      ),
+    )
+  }
 })
