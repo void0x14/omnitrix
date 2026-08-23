@@ -2,13 +2,64 @@ import { LayerNode } from "@opencode-ai/core/effect/layer-node"
 import { NodePath } from "@effect/platform-node"
 import { Cause, Duration, Effect, Layer, Option, Schedule, Context } from "effect"
 import path from "path"
+import os from "node:os"
+import { randomUUID } from "node:crypto"
 import type { Agent } from "../agent/agent"
 import { FSUtil } from "@opencode-ai/core/fs-util"
-import { evaluate } from "@/permission/evaluate"
 import { Config } from "@/config/config"
 import { ToolID } from "./schema"
 import { TRUNCATION_DIR } from "./truncation-dir"
 
+
+const SPILL_DIR = path.join(os.tmpdir(), "opencode-spill")
+const PREVIEW_LINES = 20
+
+export interface SpillOptions {
+  maxLines?: number
+  maxBytes?: number
+  direction?: "head" | "tail"
+}
+
+export interface SpillResult {
+  spilled: boolean
+  /** Full text when within limits; otherwise a bounded preview envelope (head/tail + saved path + counts). */
+  content: string
+  outputPath?: string
+  bytes: number
+  lines: number
+}
+
+/**
+ * Codex-style auto-spill. Within the byte/line budget the text is returned unchanged
+ * (no data loss, normal usage unaffected). Above the budget the FULL text is written to
+ * `os.tmpdir()/opencode-spill/<uuid>.txt` and only a bounded preview envelope enters context.
+ */
+export async function spillOrInline(text: string, opts: SpillOptions = {}): Promise<SpillResult> {
+  const maxLines = opts.maxLines ?? MAX_LINES
+  const maxBytes = opts.maxBytes ?? MAX_BYTES
+  const lines = text.split("\n")
+  const bytes = Buffer.byteLength(text, "utf-8")
+
+  if (lines.length <= maxLines && bytes <= maxBytes) {
+    return { spilled: false, content: text, bytes, lines: lines.length }
+  }
+
+  const head = lines.slice(0, PREVIEW_LINES)
+  const tail = lines.length > PREVIEW_LINES * 2 ? lines.slice(-PREVIEW_LINES) : []
+  const file = path.join(SPILL_DIR, `${randomUUID()}.txt`)
+
+  await Bun.write(file, text)
+
+  const note = `Tam cikti (${bytes} bayt, ${lines.length} satir) kayitli: ${file}`
+  const envelope = [
+    ...head,
+    ...(tail.length ? ["", "... (ortadan kesildi) ...", "", ...tail] : []),
+    "",
+    note,
+  ].join("\n")
+
+  return { spilled: true, content: envelope, outputPath: file, bytes, lines: lines.length }
+}
 const RETENTION = Duration.days(7)
 
 export const MAX_LINES = 2000
@@ -26,17 +77,13 @@ export interface Options {
   direction?: "head" | "tail"
 }
 
-function hasTaskTool(agent?: Agent.Info) {
-  if (!agent?.permission) return false
-  return evaluate("task", "*", agent.permission).action !== "deny"
-}
 
 export interface Interface {
   readonly cleanup: () => Effect.Effect<void>
   readonly write: (text: string) => Effect.Effect<string>
   /**
-   * Returns output unchanged when it fits within the limits, otherwise writes the full text
-   * to the truncation directory and returns a preview plus a hint to inspect the saved file.
+   * Returns output unchanged when it fits within the limits, otherwise spills the full
+   * text to a temp file and returns a bounded preview envelope plus the saved path.
    */
   readonly output: (text: string, options?: Options, agent?: Agent.Info) => Effect.Effect<Result>
   /**
@@ -54,16 +101,18 @@ const layer = Layer.effect(
 
     const cleanup = Effect.fn("Truncate.cleanup")(function* () {
       const cutoff = Date.now() - Duration.toMillis(RETENTION)
-      const entries = yield* fs.readDirectory(TRUNCATION_DIR).pipe(
-        Effect.map((all) => all.filter((name) => name.startsWith("tool_"))),
-        Effect.catch(() => Effect.succeed([])),
-      )
-      for (const entry of entries) {
-        const file = path.join(TRUNCATION_DIR, entry)
-        const info = yield* fs.stat(file).pipe(Effect.catch(() => Effect.succeed(undefined)))
-        const mtime = info && Option.getOrUndefined(info.mtime)
-        if (!mtime || mtime.getTime() >= cutoff) continue
-        yield* fs.remove(file).pipe(Effect.catch(() => Effect.void))
+      for (const dir of [TRUNCATION_DIR, SPILL_DIR]) {
+        const entries = yield* fs.readDirectory(dir).pipe(
+          Effect.map((all) => all.filter((name) => name.endsWith(".txt"))),
+          Effect.catch(() => Effect.succeed([])),
+        )
+        for (const entry of entries) {
+          const file = path.join(dir, entry)
+          const info = yield* fs.stat(file).pipe(Effect.catch(() => Effect.succeed(undefined)))
+          const mtime = info && Option.getOrUndefined(info.mtime)
+          if (!mtime || mtime.getTime() >= cutoff) continue
+          yield* fs.remove(file).pipe(Effect.catch(() => Effect.void))
+        }
       }
     })
 
@@ -84,62 +133,15 @@ const layer = Layer.effect(
       }
     })
 
-    const output = Effect.fn("Truncate.output")(function* (text: string, options: Options = {}, agent?: Agent.Info) {
+    const output = Effect.fn("Truncate.output")(function* (text: string, options: Options = {}, _agent?: Agent.Info) {
       const resolved = yield* limits()
       const maxLines = options.maxLines ?? resolved.maxLines
       const maxBytes = options.maxBytes ?? resolved.maxBytes
-      const direction = options.direction ?? "head"
-      const lines = text.split("\n")
-      const totalBytes = Buffer.byteLength(text, "utf-8")
-
-      if (lines.length <= maxLines && totalBytes <= maxBytes) {
-        return { content: text, truncated: false } as const
-      }
-
-      const out: string[] = []
-      let i = 0
-      let bytes = 0
-      let hitBytes = false
-
-      if (direction === "head") {
-        for (i = 0; i < lines.length && i < maxLines; i++) {
-          const size = Buffer.byteLength(lines[i], "utf-8") + (i > 0 ? 1 : 0)
-          if (bytes + size > maxBytes) {
-            hitBytes = true
-            break
-          }
-          out.push(lines[i])
-          bytes += size
-        }
-      } else {
-        for (i = lines.length - 1; i >= 0 && out.length < maxLines; i--) {
-          const size = Buffer.byteLength(lines[i], "utf-8") + (out.length > 0 ? 1 : 0)
-          if (bytes + size > maxBytes) {
-            hitBytes = true
-            break
-          }
-          out.unshift(lines[i])
-          bytes += size
-        }
-      }
-
-      const removed = hitBytes ? totalBytes - bytes : lines.length - out.length
-      const unit = hitBytes ? "bytes" : "lines"
-      const preview = out.join("\n")
-      const file = yield* write(text)
-
-      const hint = hasTaskTool(agent)
-        ? `Sonuc dogrulandi. Ham cikti kayitli: ${file}`
-        : `Sonuc dogrulandi. Ham cikti kayitli: ${file}`
-
-      return {
-        content:
-          direction === "head"
-            ? `${preview}\n\n${hint}`
-            : `${hint}\n\n${preview}`,
-        truncated: false,
-        outputPath: file,
-      } as const
+      const spill = yield* Effect.promise(() =>
+        spillOrInline(text, { maxLines, maxBytes, direction: options.direction ?? "head" }),
+      )
+      if (!spill.spilled) return { content: text, truncated: false } as const
+      return { content: spill.content, truncated: true, outputPath: spill.outputPath! } as const
     })
 
     yield* cleanup().pipe(

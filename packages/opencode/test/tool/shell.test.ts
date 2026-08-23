@@ -1133,7 +1133,7 @@ describe("tool.shell abort", () => {
 })
 
 describe("tool.shell truncation", () => {
-  it.live("truncates output exceeding line limit", () =>
+  it.live("spills output exceeding line limit to file (no data loss)", () =>
     runIn(
       projectRoot,
       Effect.gen(function* () {
@@ -1142,13 +1142,24 @@ describe("tool.shell truncation", () => {
           command: fill("lines", lineCount),
         })
         mustTruncate(result)
-        expect(result.output).toMatch(/\.\.\.output truncated\.\.\./)
-        expect(result.output).toMatch(/Full output saved to:\s+\S+/)
+        const filepath = (result.metadata as { outputPath?: string }).outputPath
+        expect(filepath).toBeTruthy()
+
+        const saved = yield* (yield* FSUtil.Service).readFileString(filepath!)
+        const lines = saved.trim().split(/\r?\n/)
+        expect(lines.length).toBe(lineCount)
+        expect(lines[0]).toBe("1")
+        expect(lines[lineCount - 1]).toBe(String(lineCount))
+
+        // Only a bounded preview enters context; full output lives on disk.
+        expect(result.output).toContain(filepath!)
+        expect(result.output).toMatch(/Ham cikti \(/)
+        expect(result.output.length).toBeLessThan(saved.length)
       }),
     ),
   )
 
-  it.live("truncates output exceeding byte limit", () =>
+  it.live("spills output exceeding byte limit to file (no data loss)", () =>
     runIn(
       projectRoot,
       Effect.gen(function* () {
@@ -1157,8 +1168,15 @@ describe("tool.shell truncation", () => {
           command: fill("bytes", byteCount),
         })
         mustTruncate(result)
-        expect(result.output).toMatch(/\.\.\.output truncated\.\.\./)
-        expect(result.output).toMatch(/Full output saved to:\s+\S+/)
+        const filepath = (result.metadata as { outputPath?: string }).outputPath
+        expect(filepath).toBeTruthy()
+
+        const saved = yield* (yield* FSUtil.Service).readFileString(filepath!)
+        expect(saved.length).toBeGreaterThanOrEqual(byteCount)
+
+        expect(result.output).toContain(filepath!)
+        expect(result.output).toMatch(/Ham cikti \(/)
+        expect(result.output.length).toBeLessThan(saved.length)
       }),
     ),
   )
@@ -1176,7 +1194,7 @@ describe("tool.shell truncation", () => {
     ),
   )
 
-  it.live("full output is saved to file when truncated", () =>
+  it.live("full output is saved to file when spilled (no data lost)", () =>
     runIn(
       projectRoot,
       Effect.gen(function* () {
@@ -1194,6 +1212,9 @@ describe("tool.shell truncation", () => {
         expect(lines.length).toBe(lineCount)
         expect(lines[0]).toBe("1")
         expect(lines[lineCount - 1]).toBe(String(lineCount))
+
+        // Preview envelope references the spill file and is bounded.
+        expect(result.output).toContain(filepath!)
       }),
     ),
   )

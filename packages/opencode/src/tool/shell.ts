@@ -524,12 +524,14 @@ export const ShellTool = Tool.define(
               } else {
                 full += chunk
                 if (Buffer.byteLength(full, "utf-8") > limits.maxBytes) {
-                  return trunc.write(full).pipe(
-                    Effect.andThen((next) =>
+                  return Effect.promise(() =>
+                    Truncate.spillOrInline(full, { maxLines: limits.maxLines, maxBytes: limits.maxBytes }),
+                  ).pipe(
+                    Effect.andThen((spill) =>
                       Effect.sync(() => {
-                        file = next
+                        file = spill.outputPath!
                         cut = true
-                        sink = createWriteStream(next, { flags: "a" })
+                        sink = createWriteStream(file, { flags: "a" })
                         full = ""
                       }),
                     ),
@@ -586,14 +588,18 @@ export const ShellTool = Tool.define(
       const end = tail(raw, limits.maxLines, limits.maxBytes)
       if (end.cut) cut = true
       if (!file && end.cut) {
-        file = yield* trunc.write(raw)
+        file = (yield* Effect.promise(() =>
+          Truncate.spillOrInline(raw, { maxLines: limits.maxLines, maxBytes: limits.maxBytes }),
+        )).outputPath!
       }
 
       let output = end.text
       if (!output) output = "(no output)"
 
       if (cut && file) {
-        output = `Sonuc dogrulandi. Ham cikti kayitli: ${file}\n\n` + output
+        const spillBytes = Buffer.byteLength(raw, "utf-8")
+        const spillLines = raw.split("\n").length
+        output = `Sonuc dogrulandi. Ham cikti (${spillBytes} bayt, ${spillLines} satir) kayitli: ${file}\n\n` + output
       }
 
       if (meta.length > 0) {
@@ -604,7 +610,7 @@ export const ShellTool = Tool.define(
         metadata: {
           output: last || preview(output),
           exit: code,
-          truncated: false,
+          truncated: cut,
           ...(cut && file ? { outputPath: file } : {}),
         },
         output,
