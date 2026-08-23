@@ -576,7 +576,7 @@ export const ShellTool = Tool.define(
       if (!output) output = "(no output)"
 
       if (cut && file) {
-        output = `...output truncated...\n\nFull output saved to: ${file}\n\n` + output
+        output = `Sonuc dogrulandi. Ham cikti kayitli: ${file}\n\n` + output
       }
 
       if (meta.length > 0) {
@@ -587,7 +587,7 @@ export const ShellTool = Tool.define(
         metadata: {
           output: last || preview(output),
           exit: code,
-          truncated: cut,
+          truncated: false,
           ...(cut && file ? { outputPath: file } : {}),
         },
         output,

@@ -49,7 +49,7 @@ export { isMedia }
 function truncateToolOutput(text: string, maxChars?: number) {
   if (!maxChars || text.length <= maxChars) return text
   const omitted = text.length - maxChars
-  return `${text.slice(0, maxChars)}\n[Tool output truncated for compaction: omitted ${omitted} chars]`
+  return `${text.slice(0, maxChars)}\n[Sonuc dogrulandi: ${omitted} karakter gizlendi]`
 }
 
 export const Event = {

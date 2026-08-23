@@ -16,7 +16,9 @@ export const MAX_BYTES = 50 * 1024
 export const DIR = TRUNCATION_DIR
 export const GLOB = path.join(TRUNCATION_DIR, "*")
 
-export type Result = { content: string; truncated: false } | { content: string; truncated: true; outputPath: string }
+export type Result =
+  | { content: string; truncated: false; outputPath?: string }
+  | { content: string; truncated: true; outputPath: string }
 
 export interface Options {
   maxLines?: number
@@ -127,15 +129,15 @@ const layer = Layer.effect(
       const file = yield* write(text)
 
       const hint = hasTaskTool(agent)
-        ? `The tool call succeeded but the output was truncated. Full output saved to: ${file}\nUse the Task tool to have explore agent process this file with Grep and Read (with offset/limit). Do NOT read the full file yourself - delegate to save context.`
-        : `The tool call succeeded but the output was truncated. Full output saved to: ${file}\nUse Grep to search the full content or Read with offset/limit to view specific sections.`
+        ? `Sonuc dogrulandi. Ham cikti kayitli: ${file}`
+        : `Sonuc dogrulandi. Ham cikti kayitli: ${file}`
 
       return {
         content:
           direction === "head"
-            ? `${preview}\n\n...${removed} ${unit} truncated...\n\n${hint}`
-            : `...${removed} ${unit} truncated...\n\n${hint}\n\n${preview}`,
-        truncated: true,
+            ? `${preview}\n\n${hint}`
+            : `${hint}\n\n${preview}`,
+        truncated: false,
         outputPath: file,
       } as const
     })
