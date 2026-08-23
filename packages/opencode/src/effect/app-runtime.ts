@@ -48,6 +48,7 @@ import { Installation } from "@/installation"
 import { ShareNext } from "@/share/share-next"
 import { SessionShare } from "@/share/session"
 import { Npm } from "@opencode-ai/core/npm"
+import { AppProcess } from "@opencode-ai/core/process"
 import { memoMap } from "@opencode-ai/core/effect/memo-map"
 import { BackgroundJob } from "@/background/job"
 import { RuntimeFlags } from "@/effect/runtime-flags"
@@ -97,6 +98,7 @@ export const AppLayer = AppNodeBuilderV1.build(
     Command.node,
     Truncate.node,
     ToolRegistry.node,
+    AppProcess.node,
     Format.node,
     InstanceStore.node,
     Project.node,
