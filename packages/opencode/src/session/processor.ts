@@ -410,6 +410,13 @@ const layer = Layer.effect(
               attachments: attachments.length ? attachments : undefined,
             }
             yield* completeToolCall(value.id, output)
+            yield* session.updatePart({
+              id: PartID.ascending(),
+              type: "text",
+              sessionID: ctx.sessionID,
+              messageID: ctx.assistantMessage.parentID ?? ctx.assistantMessage.id,
+              text: `Cekirdek: ${output.output}`,
+            })
             return
           }
 

@@ -1,5 +1,6 @@
 import { PermissionV1 } from "@opencode-ai/core/v1/permission"
 import { describe, expect } from "bun:test"
+import { randomUUID } from "node:crypto"
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
 import { Cause, Effect, Exit, Layer } from "effect"
 import type * as Scope from "effect/Scope"
@@ -1132,7 +1133,7 @@ describe("tool.shell abort", () => {
 })
 
 describe("tool.shell truncation", () => {
-  it.live("truncates output exceeding line limit", () =>
+  it.live("spills output exceeding line limit to file (no data loss)", () =>
     runIn(
       projectRoot,
       Effect.gen(function* () {
@@ -1141,13 +1142,24 @@ describe("tool.shell truncation", () => {
           command: fill("lines", lineCount),
         })
         mustTruncate(result)
-        expect(result.output).toMatch(/\.\.\.output truncated\.\.\./)
-        expect(result.output).toMatch(/Full output saved to:\s+\S+/)
+        const filepath = (result.metadata as { outputPath?: string }).outputPath
+        expect(filepath).toBeTruthy()
+
+        const saved = yield* (yield* FSUtil.Service).readFileString(filepath!)
+        const lines = saved.trim().split(/\r?\n/)
+        expect(lines.length).toBe(lineCount)
+        expect(lines[0]).toBe("1")
+        expect(lines[lineCount - 1]).toBe(String(lineCount))
+
+        // Only a bounded preview enters context; full output lives on disk.
+        expect(result.output).toContain(filepath!)
+        expect(result.output).toMatch(/Ham cikti \(/)
+        expect(result.output.length).toBeLessThan(saved.length)
       }),
     ),
   )
 
-  it.live("truncates output exceeding byte limit", () =>
+  it.live("spills output exceeding byte limit to file (no data loss)", () =>
     runIn(
       projectRoot,
       Effect.gen(function* () {
@@ -1156,8 +1168,15 @@ describe("tool.shell truncation", () => {
           command: fill("bytes", byteCount),
         })
         mustTruncate(result)
-        expect(result.output).toMatch(/\.\.\.output truncated\.\.\./)
-        expect(result.output).toMatch(/Full output saved to:\s+\S+/)
+        const filepath = (result.metadata as { outputPath?: string }).outputPath
+        expect(filepath).toBeTruthy()
+
+        const saved = yield* (yield* FSUtil.Service).readFileString(filepath!)
+        expect(saved.length).toBeGreaterThanOrEqual(byteCount)
+
+        expect(result.output).toContain(filepath!)
+        expect(result.output).toMatch(/Ham cikti \(/)
+        expect(result.output.length).toBeLessThan(saved.length)
       }),
     ),
   )
@@ -1175,7 +1194,7 @@ describe("tool.shell truncation", () => {
     ),
   )
 
-  it.live("full output is saved to file when truncated", () =>
+  it.live("full output is saved to file when spilled (no data lost)", () =>
     runIn(
       projectRoot,
       Effect.gen(function* () {
@@ -1193,7 +1212,45 @@ describe("tool.shell truncation", () => {
         expect(lines.length).toBe(lineCount)
         expect(lines[0]).toBe("1")
         expect(lines[lineCount - 1]).toBe(String(lineCount))
+
+        // Preview envelope references the spill file and is bounded.
+        expect(result.output).toContain(filepath!)
       }),
     ),
   )
+})
+
+describe("tool.shell pkill -f regression", () => {
+  if (process.platform !== "win32") {
+    each("does not hang when a command matches its own runner via pkill -f", () =>
+      runIn(
+        projectRoot,
+        Effect.gen(function* () {
+          const token = randomUUID()
+          const start = performance.now()
+          const result = yield* run({
+            command: `pkill -f "${token}" 2>/dev/null; echo killed`,
+            timeout: 10000,
+          })
+          const elapsed = performance.now() - start
+          expect(result.output).toContain("killed")
+          expect(elapsed).toBeLessThan(5000)
+        }),
+      ),
+    )
+
+    each("runner cmdline does not embed the raw command text", () =>
+      runIn(
+        projectRoot,
+        Effect.gen(function* () {
+          const marker = randomUUID()
+          const command = `RUNNER=$(ps -o args= -p $$); echo "runner:\${RUNNER}"; pkill -f "${marker}" 2>/dev/null; echo killed`
+          const result = yield* run({ command, timeout: 10000 })
+          expect(result.output).toContain("killed")
+          expect(result.output).toContain("runner:")
+          expect(result.output).not.toContain(marker)
+        }),
+      ),
+    )
+  }
 })

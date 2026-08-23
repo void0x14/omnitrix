@@ -1,5 +1,6 @@
-import { Effect, Stream } from "effect"
+import { Effect, Fiber, Stream } from "effect"
 import os from "os"
+import { randomUUID } from "node:crypto"
 import { createWriteStream } from "node:fs"
 import * as Tool from "./tool"
 import path from "path"
@@ -19,6 +20,7 @@ import * as Truncate from "./truncate"
 import { Plugin } from "@/plugin"
 import { ChildProcess } from "effect/unstable/process"
 import { ChildProcessSpawner } from "effect/unstable/process/ChildProcessSpawner"
+import type { StandardCommand } from "effect/unstable/process/ChildProcess"
 import { ShellPrompt, type Parameters } from "./shell/prompt"
 import { BashArity } from "@/permission/arity"
 
@@ -290,23 +292,37 @@ const ask = Effect.fn("ShellTool.ask")(function* (ctx: Tool.Context, scan: Scan,
   })
 })
 
-function cmd(shell: string, command: string, cwd: string, env: NodeJS.ProcessEnv) {
-  if (process.platform === "win32" && Shell.ps(shell)) {
-    return ChildProcess.make(shell, ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", command], {
-      cwd,
-      env,
-      stdin: "ignore",
-      detached: false,
+function cmd(
+  shell: string,
+  command: string,
+  cwd: string,
+  env: NodeJS.ProcessEnv,
+): Promise<{ process: StandardCommand; scriptPath: string | undefined }> {
+  if (process.platform === "win32") {
+    if (Shell.ps(shell)) {
+      return Promise.resolve({
+        process: ChildProcess.make(
+          shell,
+          ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", command],
+          { cwd, env, stdin: "ignore", detached: false },
+        ),
+        scriptPath: undefined,
+      })
+    }
+    return Promise.resolve({
+      process: ChildProcess.make(command, [], { shell, cwd, env, stdin: "ignore", detached: false }),
+      scriptPath: undefined,
     })
   }
 
-  return ChildProcess.make(command, [], {
-    shell,
-    cwd,
-    env,
-    stdin: "ignore",
-    detached: process.platform !== "win32",
-  })
+  const scriptPath = path.join(os.tmpdir(), `oc-${randomUUID()}.sh`)
+  return (async () => {
+    await Bun.write(scriptPath, command)
+    return {
+      process: ChildProcess.make(shell, [scriptPath], { cwd, env, stdin: "ignore" }),
+      scriptPath,
+    }
+  })()
 }
 const parser = lazy(async () => {
   const { Parser } = await import("web-tree-sitter")
@@ -445,6 +461,7 @@ export const ShellTool = Tool.define(
       let sink: ReturnType<typeof createWriteStream> | undefined
       let cut = false
       let expired = false
+      let timedOut = false
       let aborted = false
 
       const closeSink = Effect.fnUntraced(function* () {
@@ -467,7 +484,13 @@ export const ShellTool = Tool.define(
               stream.once("close", done)
               stream.once("error", done)
               stream.once("finish", done)
-              stream.end(done)
+              // Guard teardown so a stream that never emits close/error/finish
+              // cannot hang the finalizer (#28780).
+              const guard = setTimeout(done, 2000)
+              stream.end(() => {
+                clearTimeout(guard)
+                done()
+              })
             }),
         ).pipe(Effect.catch(() => Effect.void))
       })
@@ -481,9 +504,23 @@ export const ShellTool = Tool.define(
       const code: number | null = yield* Effect.scoped(
         Effect.gen(function* () {
           yield* Effect.addFinalizer(closeSink)
-          const handle = yield* spawner.spawn(cmd(input.shell, input.command, input.cwd, input.env))
+          const built = yield* Effect.promise(() => cmd(input.shell, input.command, input.cwd, input.env)).pipe(
+            Effect.timeout("10 seconds"),
+          )
+          yield* Effect.addFinalizer(() =>
+            built.scriptPath
+              ? Effect.promise(() => Bun.file(built.scriptPath!).unlink().catch(() => undefined)).pipe(
+                Effect.timeout("5 seconds"),
+                Effect.catch(() => Effect.void),
+              )
+              : Effect.void,
+          )
+          const handle = yield* spawner.spawn(built.process)
 
-          yield* Effect.forkScoped(
+          // Collect output in a detached fiber so resolution happens on process
+          // EXIT and never blocks on stdio `close` (#25672). The fiber is
+          // interrupted by a guarded finalizer so teardown cannot hang (#28780).
+          const streamFiber = yield* Effect.forkDetach(
             Stream.runForEach(Stream.decodeText(handle.all), (chunk) => {
               const size = Buffer.byteLength(chunk, "utf-8")
               list.push({ text: chunk, size })
@@ -502,12 +539,14 @@ export const ShellTool = Tool.define(
               } else {
                 full += chunk
                 if (Buffer.byteLength(full, "utf-8") > limits.maxBytes) {
-                  return trunc.write(full).pipe(
-                    Effect.andThen((next) =>
+                  return Effect.promise(() =>
+                    Truncate.spillOrInline(full, { maxLines: limits.maxLines, maxBytes: limits.maxBytes }),
+                  ).pipe(
+                    Effect.andThen((spill) =>
                       Effect.sync(() => {
-                        file = next
+                        file = spill.outputPath!
                         cut = true
-                        sink = createWriteStream(next, { flags: "a" })
+                        sink = createWriteStream(file, { flags: "a" })
                         full = ""
                       }),
                     ),
@@ -527,34 +566,52 @@ export const ShellTool = Tool.define(
                   output: last,
                 },
               })
-            }),
+            }).pipe(Effect.catch(() => Effect.void)),
+          )
+          yield* Effect.addFinalizer(() =>
+            Fiber.interrupt(streamFiber).pipe(Effect.timeout("1 second"), Effect.catch(() => Effect.void)),
           )
 
-          const abort = Effect.callback<void>((resume) => {
-            if (ctx.abort.aborted) return resume(Effect.void)
-            const handler = () => resume(Effect.void)
+          const waitForAbort = Effect.callback<number | null>((resume) => {
+            if (ctx.abort.aborted) {
+              aborted = true
+              return resume(Effect.succeed(null))
+            }
+            const handler = () => {
+              aborted = true
+              resume(Effect.succeed(null))
+            }
             ctx.abort.addEventListener("abort", handler, { once: true })
             return Effect.sync(() => ctx.abort.removeEventListener("abort", handler))
           })
 
-          const timeout = Effect.sleep(`${input.timeout + 100} millis`)
+          // Robust multi-stage timeout (#35241): wait for a clean exit, then on
+          // expiry mark the run as expired/timed-out, best-effort kill the still
+          // running process, and resolve fail-open without throwing.
+          const waited = yield* Effect.timeoutOrElse(handle.exitCode, {
+            duration: `${input.timeout + 100} millis`,
+            orElse: () => {
+              expired = true
+              timedOut = true
+              return Effect.succeed(null)
+            },
+          }).pipe(
+            Effect.raceFirst(waitForAbort),
+            Effect.catch(() => Effect.succeed(null as number | null)),
+          )
 
-          const exit = yield* Effect.raceAll([
-            handle.exitCode.pipe(Effect.map((code) => ({ kind: "exit" as const, code }))),
-            abort.pipe(Effect.map(() => ({ kind: "abort" as const, code: null }))),
-            timeout.pipe(Effect.map(() => ({ kind: "timeout" as const, code: null }))),
-          ])
-
-          if (exit.kind === "abort") {
-            aborted = true
-            yield* handle.kill({ forceKillAfter: "3 seconds" }).pipe(Effect.orDie)
+          // Guarantee the process does not leak after a timeout or abort by
+          // best-effort killing it; the kill also closes its stdio so the
+          // detached stream fiber can settle (#35241 / #25672).
+          if (expired || aborted) {
+            yield* handle.kill().pipe(
+              Effect.catch(() => Effect.void),
+              Effect.timeout("2 seconds"),
+              Effect.catch(() => Effect.void),
+            )
           }
-          if (exit.kind === "timeout") {
-            expired = true
-            yield* handle.kill({ forceKillAfter: "3 seconds" }).pipe(Effect.orDie)
-          }
 
-          return exit.kind === "exit" ? exit.code : null
+          return waited
         }),
       ).pipe(Effect.orDie)
 
@@ -569,14 +626,18 @@ export const ShellTool = Tool.define(
       const end = tail(raw, limits.maxLines, limits.maxBytes)
       if (end.cut) cut = true
       if (!file && end.cut) {
-        file = yield* trunc.write(raw)
+        file = (yield* Effect.promise(() =>
+          Truncate.spillOrInline(raw, { maxLines: limits.maxLines, maxBytes: limits.maxBytes }),
+        )).outputPath!
       }
 
       let output = end.text
       if (!output) output = "(no output)"
 
       if (cut && file) {
-        output = `...output truncated...\n\nFull output saved to: ${file}\n\n` + output
+        const spillBytes = Buffer.byteLength(raw, "utf-8")
+        const spillLines = raw.split("\n").length
+        output = `Sonuc dogrulandi. Ham cikti (${spillBytes} bayt, ${spillLines} satir) kayitli: ${file}\n\n` + output
       }
 
       if (meta.length > 0) {
@@ -588,6 +649,7 @@ export const ShellTool = Tool.define(
           output: last || preview(output),
           exit: code,
           truncated: cut,
+          timedOut,
           ...(cut && file ? { outputPath: file } : {}),
         },
         output,

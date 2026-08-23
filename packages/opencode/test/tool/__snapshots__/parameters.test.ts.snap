@@ -301,6 +301,16 @@ exports[`tool parameters JSON Schema (wire shape) task 1`] = `
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "properties": {
+    "action": {
+      "description": "Controls what the tool does: launch starts a new task (default), status reports on a running task, cancel stops a running task, update sends additional context to a running task",
+      "enum": [
+        "launch",
+        "status",
+        "cancel",
+        "update",
+      ],
+      "type": "string",
+    },
     "background": {
       "description": "Run the agent in the background. You will be notified when it completes. DO NOT sleep, poll, or proactively check on its progress",
       "type": "boolean",
@@ -330,6 +340,30 @@ exports[`tool parameters JSON Schema (wire shape) task 1`] = `
     "description",
     "prompt",
     "subagent_type",
+  ],
+  "type": "object",
+}
+`;
+
+exports[`tool parameters JSON Schema (wire shape) verify 1`] = `
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+    "eylem": {
+      "description": "Ne istendigi dogal dilde (bayrak yok). Ornek: 'zig build derlensin ve testler gecsin', 'src/main.zig degismeli'",
+      "type": "string",
+    },
+    "komut": {
+      "description": "Calisma katmani icin kosulacak komut. Ornek: 'python main.py'",
+      "type": "string",
+    },
+    "kosul": {
+      "description": "Uretilen kodda bulunmasi zorunlu sembol/kosul. Ornek: 'TaskGroup'. Kod calissa bile kosul yoksa sonuc OLMADI olur.",
+      "type": "string",
+    },
+  },
+  "required": [
+    "eylem",
   ],
   "type": "object",
 }

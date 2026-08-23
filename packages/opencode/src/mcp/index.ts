@@ -415,10 +415,18 @@ const layer = Layer.effect(
     )
     const cfgSvc = yield* Config.Service
 
-    const descendants = Effect.fnUntraced(
+    const stdioPid = (client: MCPClient): number | null =>
+      client.transport instanceof StdioClientTransport ? client.transport.pid : null
+
+    /**
+     * Collect the full process tree rooted at `pid` (pid included) via a
+     * recursive pgrep walk. On win32 descendant pids are unavailable, so we
+     * keep just the root pid and rely on taskkill's /T flag to reap children.
+     */
+    const processTree = Effect.fnUntraced(
       function* (pid: number) {
-        if (process.platform === "win32") return [] as number[]
-        const pids: number[] = []
+        if (process.platform === "win32") return [pid] as number[]
+        const pids: number[] = [pid]
         const queue = [pid]
         for (let index = 0; index < queue.length; index++) {
           const current = queue[index]
@@ -437,6 +445,75 @@ const layer = Layer.effect(
       },
       Effect.scoped,
       Effect.catch(() => Effect.succeed([] as number[])),
+    )
+
+    /**
+     * Force-kill an MCP server and its entire process tree so no orphaned
+     * sidecar, child, or worker process survives a dispose / replace / rollback.
+     *
+     * The tree is sent SIGTERM first, then escalated to SIGKILL after a grace
+     * period. Kill failures are logged instead of being silently swallowed.
+     */
+    const killProcessTree = Effect.fnUntraced(
+      function* (pid: number | null) {
+        if (!(typeof pid === "number" && pid > 0)) return
+        if (process.platform === "win32") {
+          const handle = yield* spawner.spawn(
+            ChildProcess.make("taskkill", ["/pid", String(pid), "/T", "/F"], { stdin: "ignore" }),
+          )
+          yield* handle.exitCode.pipe(
+            Effect.catch((err) =>
+              Effect.logWarning("Failed to kill MCP process tree (windows)", {
+                pid,
+                error: err instanceof Error ? err.message : String(err),
+              }),
+            ),
+            Effect.ignore,
+          )
+          return
+        }
+        const pids = yield* processTree(pid)
+        for (const p of pids) {
+          try {
+            process.kill(p, "SIGTERM")
+          } catch (err) {
+            if ((err as NodeJS.ErrnoException).code !== "ESRCH") {
+              yield* Effect.logDebug("MCP process already exited", { pid: p })
+            }
+          }
+        }
+        // Escalate survivors to SIGKILL after a grace period without blocking the caller.
+        yield* Effect.forkDetach(
+          Effect.sleep(1000).pipe(
+            Effect.andThen(
+              Effect.forEach(
+                pids,
+                (p) =>
+                  Effect.gen(function* () {
+                    try {
+                      process.kill(p, "SIGKILL")
+                    } catch (err) {
+                      const code = (err as NodeJS.ErrnoException).code
+                      if (code !== "ESRCH") {
+                        yield* Effect.logWarning("Failed to force-kill MCP process", {
+                          pid: p,
+                          error: err instanceof Error ? err.message : String(err),
+                        })
+                      }
+                    }
+                  }),
+                { concurrency: "unbounded" },
+              ),
+            ),
+          ),
+        )
+      },
+      Effect.scoped,
+      Effect.catch((err) =>
+        Effect.logWarning("Failed to reap MCP process tree", {
+          error: err instanceof Error ? err.message : String(err),
+        }),
+      ),
     )
 
     function watch(s: State, name: string, client: MCPClient, bridge: EffectBridge.Shape, timeout?: number) {
@@ -538,15 +615,7 @@ const layer = Layer.effect(
               clients,
               (client) =>
                 Effect.gen(function* () {
-                  const pid = client.transport instanceof StdioClientTransport ? client.transport.pid : null
-                  if (typeof pid === "number") {
-                    const pids = yield* descendants(pid)
-                    for (const dpid of pids) {
-                      try {
-                        process.kill(dpid, "SIGTERM")
-                      } catch {}
-                    }
-                  }
+                  yield* killProcessTree(stdioPid(client))
                   yield* Effect.tryPromise(() => client.close()).pipe(Effect.ignore)
                 }),
               { concurrency: "unbounded" },
@@ -565,7 +634,10 @@ const layer = Layer.effect(
       delete s.defs[name]
       delete s.instructions[name]
       if (!client) return Effect.void
-      return Effect.tryPromise(() => client.close()).pipe(Effect.ignore)
+      return Effect.gen(function* () {
+        yield* killProcessTree(stdioPid(client))
+        yield* Effect.tryPromise(() => client.close()).pipe(Effect.ignore)
+      })
     }
 
     const storeClient = Effect.fnUntraced(function* (
@@ -584,7 +656,10 @@ const layer = Layer.effect(
       if (instructions) s.instructions[name] = instructions
       else delete s.instructions[name]
       watch(s, name, client, bridge, timeout)
-      if (previous) yield* Effect.tryPromise(() => previous.close()).pipe(Effect.ignore)
+      if (previous) {
+        yield* killProcessTree(stdioPid(previous))
+        yield* Effect.tryPromise(() => previous.close()).pipe(Effect.ignore)
+      }
       return s.status[name]
     })
 

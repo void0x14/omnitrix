@@ -1,6 +1,7 @@
 import { Layer, ManagedRuntime } from "effect"
 import { attach } from "./run-service"
 import * as Observability from "@opencode-ai/core/observability"
+import { truthy } from "@opencode-ai/core/flag/flag"
 
 import { FSUtil } from "@opencode-ai/core/fs-util"
 import { Database } from "@opencode-ai/core/database/database"
@@ -47,6 +48,7 @@ import { Installation } from "@/installation"
 import { ShareNext } from "@/share/share-next"
 import { SessionShare } from "@/share/session"
 import { Npm } from "@opencode-ai/core/npm"
+import { AppProcess } from "@opencode-ai/core/process"
 import { memoMap } from "@opencode-ai/core/effect/memo-map"
 import { BackgroundJob } from "@/background/job"
 import { RuntimeFlags } from "@/effect/runtime-flags"
@@ -96,6 +98,7 @@ export const AppLayer = AppNodeBuilderV1.build(
     Command.node,
     Truncate.node,
     ToolRegistry.node,
+    AppProcess.node,
     Format.node,
     InstanceStore.node,
     Project.node,
@@ -106,7 +109,10 @@ export const AppLayer = AppNodeBuilderV1.build(
     ShareNext.node,
     SessionShare.node,
   ]),
-).pipe(Layer.provideMerge(AppNodeBuilderV1.build(Ripgrep.node)), Layer.provideMerge(Observability.layer))
+).pipe(
+  Layer.provideMerge(AppNodeBuilderV1.build(Ripgrep.node)),
+  Layer.provideMerge(truthy("OPENCODE_EXPERIMENTAL") ? Observability.layer : Layer.empty),
+)
 
 const rt = ManagedRuntime.make(AppLayer, { memoMap })
 type Runtime = Pick<typeof rt, "runSync" | "runPromise" | "runPromiseExit" | "runFork" | "runCallback" | "dispose">

@@ -9,6 +9,8 @@ import { Tool } from "@/tool/tool"
 import { ToolJsonSchema } from "@/tool/json-schema"
 import { ToolRegistry } from "@/tool/registry"
 import { Truncate } from "@/tool/truncate"
+import { AppProcess } from "@opencode-ai/core/process"
+import { Cekirdek } from "./invoke"
 
 import { Plugin } from "@/plugin"
 import type { TaskPromptOps } from "@/tool/task"
@@ -16,13 +18,56 @@ import { type Tool as AITool, tool, jsonSchema, type ToolExecutionOptions, asSch
 import { Effect } from "effect"
 import { MessageV2 } from "./message-v2"
 import { Session } from "./session"
+import { ChildProcess } from "effect/unstable/process"
 import { SessionProcessor } from "./processor"
 import { PartID } from "./schema"
+const OTO_DOSYALAR = new Set(["write", "edit", "apply_patch", "patch"])
+
+const otoHedef = (toolId: string, args: Record<string, unknown>) => {
+  if (toolId === "write" || toolId === "edit") {
+    const fp = args.filePath
+    return typeof fp === "string" ? [fp] : []
+  }
+  const text = args.patchText
+  if (typeof text !== "string") return []
+  return Array.from(text.matchAll(/(?:Update File|Add File|Move to|Rename from|Delete File):\s*(\S+)/g)).map((m) => m[1])
+}
+
+const otoDogrula = Effect.fn("Tools.otoDogrula")(function* (dosya: string, cwd: string) {
+  const appProcess = yield* AppProcess.Service
+  const env = { ...process.env, LANG: "C", LC_ALL: "C", CI: "1" }
+  const komut = (() => {
+    if (dosya.endsWith(".py")) return ["python3", "-m", "py_compile", dosya] as string[]
+    if (dosya.endsWith(".zig")) return ["zig", "ast-check", dosya] as string[]
+    if (dosya.endsWith(".go")) return ["gofmt", "-e", "-l", dosya] as string[]
+    if (dosya.endsWith(".ts") || dosya.endsWith(".tsx")) return ["tsc", "--noEmit", dosya] as string[]
+    if (dosya.endsWith(".js") || dosya.endsWith(".mjs")) return ["node", "--check", dosya] as string[]
+    return undefined
+  })()
+  if (!komut) return "OLDU"
+  const r = yield* appProcess
+    .run(ChildProcess.make(komut[0], komut.slice(1), { cwd, env, stdin: "ignore" }), {
+      combineOutput: true,
+      maxOutputBytes: 8192,
+      timeout: "20 seconds",
+    })
+    .pipe(Effect.catch(() => Effect.succeed({ exitCode: 127, output: Buffer.from("") })))
+  if (r.exitCode !== 0) {
+    const text = r.output?.toString("utf8") ?? ""
+    const konum = text.match(/([A-Za-z0-9_.\-/]+):(\d+)/)
+    const hata = text.split("\n").find((l) => /error|SyntaxError|unexpected|expected|found/i.test(l)) ?? text.trim()
+    const mesaj = hata.trim().slice(0, 200)
+    return konum ? `OLMADI: ${konum[1]}:${konum[2]} — ${mesaj}` : `OLMADI: ${mesaj}`
+  }
+  return "OLDU"
+})
+
 import { EffectBridge } from "@/effect/bridge"
 import { ProviderV2 } from "@opencode-ai/core/provider"
 import { ModelV2 } from "@opencode-ai/core/model"
 import { isRecord } from "@/util/record"
 import { RuntimeFlags } from "@/effect/runtime-flags"
+import { InstanceState } from "@/effect/instance-state"
 
 const MCP_RESOURCE_TOOLS = {
   list: "list_mcp_resources",
@@ -108,7 +153,7 @@ export const resolve = Effect.fn("SessionTools.resolve")(function* (input: {
               { tool: item.id, sessionID: ctx.sessionID, callID: ctx.callID },
               { args },
             )
-            const result = yield* item.execute(args, ctx)
+            const result = yield* Cekirdek.invoke({ item, args: toRecord(args), ctx })
             const output = {
               ...result,
               attachments: result.attachments?.map((attachment) => ({

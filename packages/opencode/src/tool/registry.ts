@@ -42,6 +42,8 @@ import { Question } from "../question"
 import { Todo } from "../session/todo"
 import { LSP } from "@/lsp/lsp"
 import { Instruction } from "../session/instruction"
+import { Git } from "../git"
+import { AppProcess } from "@opencode-ai/core/process"
 import { FSUtil } from "@opencode-ai/core/fs-util"
 import { EventV2Bridge } from "@/event-v2-bridge"
 import { Agent } from "../agent/agent"
@@ -444,6 +446,8 @@ export const node = LayerNode.make({
     httpClient,
     CrossSpawnSpawner.node,
     Format.node,
+    AppProcess.node,
+    Git.node,
     Truncate.node,
     RuntimeFlags.node,
     MCP.node,

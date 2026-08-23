@@ -28,7 +28,6 @@ import { SessionCommand } from "./cli/cmd/session"
 import { DbCommand } from "./cli/cmd/db"
 import { errorMessage } from "./util/error"
 import { PluginCommand } from "./cli/cmd/plug"
-import { Heap } from "./cli/heap"
 
 const args = hideBin(process.argv)
 
@@ -69,8 +68,6 @@ const cli = yargs(args)
     if (opts.pure) {
       process.env.OPENCODE_PURE = "1"
     }
-
-    Heap.start()
 
     process.env.AGENT = "1"
     process.env.OPENCODE = "1"

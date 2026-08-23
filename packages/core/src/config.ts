@@ -40,13 +40,15 @@ export class Info extends Schema.Class<Info>("Config.Info")({
     description: "Default primary agent to use when no session agent is selected",
   }),
   autoupdate: Schema.Union([Schema.Boolean, Schema.Literal("notify")])
-    .pipe(Schema.optional)
+    .pipe(Schema.optional, Schema.withDecodingDefault(Effect.succeed(false)))
     .annotate({
       description: "Automatically update or notify when a new version is available",
     }),
-  share: Schema.Literals(["manual", "auto", "disabled"]).pipe(Schema.optional).annotate({
-    description: "Control whether sessions may be shared manually, automatically, or not at all",
-  }),
+  share: Schema.Literals(["manual", "auto", "disabled"])
+    .pipe(Schema.optional, Schema.withDecodingDefault(Effect.succeed("disabled" as const)))
+    .annotate({
+      description: "Control whether sessions may be shared manually, automatically, or not at all",
+    }),
   enterprise: Schema.Struct({
     url: Schema.String.pipe(Schema.optional),
   })
@@ -63,7 +65,7 @@ export class Info extends Schema.Class<Info>("Config.Info")({
   agents: Schema.Record(Schema.String, ConfigAgent.Info).pipe(Schema.optional).annotate({
     description: "Named built-in agent overrides and custom agent definitions",
   }),
-  snapshots: Schema.Boolean.pipe(Schema.optional).annotate({
+  snapshots: Schema.Boolean.pipe(Schema.optional, Schema.withDecodingDefault(Effect.succeed(false))).annotate({
     description: "Enable snapshots used for undo and revert behavior",
   }),
   watcher: ConfigWatcher.Info.pipe(Schema.optional).annotate({

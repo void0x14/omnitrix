@@ -12,6 +12,7 @@ import * as Predicate from "effect/Predicate"
 import type * as Scope from "effect/Scope"
 import * as Sink from "effect/Sink"
 import * as Stream from "effect/Stream"
+import * as Duration from "effect/Duration"
 import * as ChildProcess from "effect/unstable/process/ChildProcess"
 import type { ChildProcessHandle } from "effect/unstable/process/ChildProcessSpawner"
 import {
@@ -95,6 +96,11 @@ const toPlatformError = (
 }
 
 type ExitSignal = Deferred.Deferred<readonly [code: number | null, signal: NodeJS.Signals | null]>
+
+// Grace period before escalating an explicit `kill` to SIGKILL. Mirrors the
+// upstream opencode `Process.stop()` SIGKILL fallback: after SIGTERM, if the
+// process has not exited within this window, send SIGKILL.
+const SIGKILL_FALLBACK_GRACE = Duration.seconds(5)
 
 export const make = Effect.gen(function* () {
   const fs = yield* FileSystem.FileSystem
@@ -275,6 +281,14 @@ export const make = Effect.gen(function* () {
       })
       proc.on("exit", (...args) => {
         exit = args
+        // Resolve the exit signal on `exit`, not only on `close`. A command that
+        // spawns a background grandchild keeping the stdio pipe open will never
+        // emit `close`, which previously hung the tool. Resolving on `exit` makes
+        // the foreground command's completion resolve immediately while stdio
+        // still drains via the existing stream loop.
+        if (end) return
+        end = true
+        Deferred.doneUnsafe(signal, Exit.succeed(args))
       })
       proc.on("close", (...args) => {
         if (end) return
@@ -429,9 +443,11 @@ export const make = Effect.gen(function* () {
               const send = (s: NodeJS.Signals) =>
                 Effect.catch(killGroup(command, proc, s), () => killOne(command, proc, s))
               const attempt = send(sig).pipe(Effect.andThen(Deferred.await(signal)), Effect.asVoid)
-              if (!opts?.forceKillAfter) return attempt
+              // Explicit stop path: always escalate to SIGKILL after a grace period
+              // if the process has not exited (SIGTERM fallback per upstream PR #36559).
+              const grace = opts?.forceKillAfter ?? SIGKILL_FALLBACK_GRACE
               return Effect.timeoutOrElse(attempt, {
-                duration: opts.forceKillAfter,
+                duration: grace,
                 orElse: () => send("SIGKILL").pipe(Effect.andThen(Deferred.await(signal)), Effect.asVoid),
               })
             },
