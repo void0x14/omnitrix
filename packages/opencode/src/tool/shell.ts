@@ -1,4 +1,4 @@
-import { Effect, Stream } from "effect"
+import { Effect, Fiber, Stream } from "effect"
 import os from "os"
 import { randomUUID } from "node:crypto"
 import { createWriteStream } from "node:fs"
@@ -461,6 +461,7 @@ export const ShellTool = Tool.define(
       let sink: ReturnType<typeof createWriteStream> | undefined
       let cut = false
       let expired = false
+      let timedOut = false
       let aborted = false
 
       const closeSink = Effect.fnUntraced(function* () {
@@ -483,7 +484,13 @@ export const ShellTool = Tool.define(
               stream.once("close", done)
               stream.once("error", done)
               stream.once("finish", done)
-              stream.end(done)
+              // Guard teardown so a stream that never emits close/error/finish
+              // cannot hang the finalizer (#28780).
+              const guard = setTimeout(done, 2000)
+              stream.end(() => {
+                clearTimeout(guard)
+                done()
+              })
             }),
         ).pipe(Effect.catch(() => Effect.void))
       })
@@ -497,15 +504,23 @@ export const ShellTool = Tool.define(
       const code: number | null = yield* Effect.scoped(
         Effect.gen(function* () {
           yield* Effect.addFinalizer(closeSink)
-          const built = yield* Effect.promise(() => cmd(input.shell, input.command, input.cwd, input.env))
+          const built = yield* Effect.promise(() => cmd(input.shell, input.command, input.cwd, input.env)).pipe(
+            Effect.timeout("10 seconds"),
+          )
           yield* Effect.addFinalizer(() =>
             built.scriptPath
-              ? Effect.promise(() => Bun.file(built.scriptPath!).unlink().catch(() => undefined))
+              ? Effect.promise(() => Bun.file(built.scriptPath!).unlink().catch(() => undefined)).pipe(
+                Effect.timeout("5 seconds"),
+                Effect.catch(() => Effect.void),
+              )
               : Effect.void,
           )
           const handle = yield* spawner.spawn(built.process)
 
-          yield* Effect.forkScoped(
+          // Collect output in a detached fiber so resolution happens on process
+          // EXIT and never blocks on stdio `close` (#25672). The fiber is
+          // interrupted by a guarded finalizer so teardown cannot hang (#28780).
+          const streamFiber = yield* Effect.forkDetach(
             Stream.runForEach(Stream.decodeText(handle.all), (chunk) => {
               const size = Buffer.byteLength(chunk, "utf-8")
               list.push({ text: chunk, size })
@@ -551,7 +566,10 @@ export const ShellTool = Tool.define(
                   output: last,
                 },
               })
-            }),
+            }).pipe(Effect.catch(() => Effect.void)),
+          )
+          yield* Effect.addFinalizer(() =>
+            Fiber.interrupt(streamFiber).pipe(Effect.timeout("1 second"), Effect.catch(() => Effect.void)),
           )
 
           const waitForAbort = Effect.callback<number | null>((resume) => {
@@ -567,14 +585,34 @@ export const ShellTool = Tool.define(
             return Effect.sync(() => ctx.abort.removeEventListener("abort", handler))
           })
 
-          return yield* Effect.timeoutOrElse(handle.exitCode, {
+          // Robust multi-stage timeout (#35241): wait for a clean exit, then on
+          // expiry mark the run as expired/timed-out, best-effort kill the still
+          // running process, and resolve fail-open without throwing.
+          const waited = yield* Effect.timeoutOrElse(handle.exitCode, {
             duration: `${input.timeout + 100} millis`,
             orElse: () => {
               expired = true
+              timedOut = true
               return Effect.succeed(null)
             },
-          }).pipe(Effect.raceFirst(waitForAbort))
-          })
+          }).pipe(
+            Effect.raceFirst(waitForAbort),
+            Effect.catch(() => Effect.succeed(null as number | null)),
+          )
+
+          // Guarantee the process does not leak after a timeout or abort by
+          // best-effort killing it; the kill also closes its stdio so the
+          // detached stream fiber can settle (#35241 / #25672).
+          if (expired || aborted) {
+            yield* handle.kill().pipe(
+              Effect.catch(() => Effect.void),
+              Effect.timeout("2 seconds"),
+              Effect.catch(() => Effect.void),
+            )
+          }
+
+          return waited
+        }),
       ).pipe(Effect.orDie)
 
       const meta: string[] = []
@@ -611,6 +649,7 @@ export const ShellTool = Tool.define(
           output: last || preview(output),
           exit: code,
           truncated: cut,
+          timedOut,
           ...(cut && file ? { outputPath: file } : {}),
         },
         output,
