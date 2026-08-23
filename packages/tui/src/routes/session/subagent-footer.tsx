@@ -6,6 +6,7 @@ import { SplitBorder } from "../../ui/border"
 import type { AssistantMessage } from "@opencode-ai/sdk/v2"
 import { Locale } from "../../util/locale"
 import { useTerminalDimensions } from "@opentui/solid"
+import { useSDK } from "../../context/sdk"
 import { useCommandShortcut, useOpencodeKeymap } from "../../keymap"
 
 export function SubagentFooter() {
@@ -59,7 +60,8 @@ export function SubagentFooter() {
   const parentShortcut = useCommandShortcut("session.parent")
   const previousShortcut = useCommandShortcut("session.child.previous")
   const nextShortcut = useCommandShortcut("session.child.next")
-  const [hover, setHover] = createSignal<"parent" | "prev" | "next" | null>(null)
+  const [hover, setHover] = createSignal<"parent" | "prev" | "next" | "stop" | null>(null)
+  const sdk = useSDK()
   useTerminalDimensions()
 
   return (
@@ -123,6 +125,14 @@ export function SubagentFooter() {
               <text fg={theme.text}>
                 Next <span style={{ fg: theme.textMuted }}>{nextShortcut()}</span>
               </text>
+            <box
+              onMouseOver={() => setHover("stop")}
+              onMouseOut={() => setHover(null)}
+              onMouseUp={() => void sdk.client.session.abort({ sessionID: route.sessionID })}
+              backgroundColor={hover() === "stop" ? theme.backgroundElement : theme.backgroundPanel}
+            >
+              <text fg={theme.error}>Stop</text>
+            </box>
             </box>
           </box>
         </box>

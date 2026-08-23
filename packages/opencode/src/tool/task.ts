@@ -49,6 +49,12 @@ const BaseParameterFields = {
       "This should only be set if you mean to resume a previous task (you can pass a prior task_id and the task will continue the same subagent session as before instead of creating a fresh one)",
   }),
   command: Schema.optional(Schema.String).annotate({ description: "The command that triggered this task" }),
+  action: Schema.optional(
+    Schema.Union([Schema.Literal("launch"), Schema.Literal("status"), Schema.Literal("cancel"), Schema.Literal("update")]),
+  ).annotate({
+    description:
+      "Controls what the tool does: launch starts a new task (default), status reports on a running task, cancel stops a running task, update sends additional context to a running task",
+  }),
 }
 
 const BaseParameters = Schema.Struct(BaseParameterFields)
@@ -77,8 +83,23 @@ function renderOutput(input: {
     "</task>",
   ].join("\n")
 }
+type TaskExecuteMetadata = {
+  parentSessionId?: SessionID
+  sessionId: SessionID
+  model?: { modelID: string; providerID: string }
+  background?: boolean
+  jobId?: string
+}
+type TaskToolRequirements =
+  | Agent.Service
+  | BackgroundJob.Service
+  | Config.Service
+  | Session.Service
+  | Scope.Scope
+  | RuntimeFlags.Service
+  | Database.Service
 
-export const TaskTool = Tool.define(
+export const TaskTool = Tool.define<typeof Parameters, TaskExecuteMetadata, TaskToolRequirements>(
   id,
   Effect.gen(function* () {
     const agent = yield* Agent.Service
@@ -99,6 +120,54 @@ export const TaskTool = Tool.define(
         return yield* Effect.fail(
           new Error("Background subagents require OPENCODE_EXPERIMENTAL_BACKGROUND_SUBAGENTS=true"),
         )
+      }
+
+      const action = params.action ?? "launch"
+
+      if (action === "status") {
+        const infos = (yield* background.list()).filter(
+          (job) => job.type === id && (!params.task_id || job.id === params.task_id),
+        )
+        if (infos.length === 0 && params.task_id)
+          return {
+            title: params.description,
+            metadata: { sessionId: SessionID.make(params.task_id) },
+            output: `Task ${params.task_id} not found`,
+          }
+        if (infos.length === 0) return yield* Effect.fail(new Error("No running tasks found"))
+        const text = infos
+          .map((job) => {
+            const tail = job.output ? job.output.trim().slice(-500) : job.error ?? ""
+            return `${job.id} [${job.status}]${job.title ? ` ${job.title}` : ""}${tail ? `\n${tail}` : ""}`
+          })
+          .join("\n\n")
+        return {
+          title: params.description,
+          metadata: { sessionId: SessionID.make(params.task_id ?? infos[0]!.id) },
+          output: text,
+        }
+      }
+
+      if (action === "cancel") {
+        if (!params.task_id) return yield* Effect.fail(new Error("cancel requires a task_id"))
+        const cancelled = yield* background.cancel(params.task_id)
+        if (!cancelled)
+          return {
+            title: params.description,
+            metadata: { sessionId: SessionID.make(params.task_id) },
+            output: `Task ${params.task_id} not found or not running`,
+          }
+        const cancelOps = ctx.extra?.promptOps as TaskPromptOps | undefined
+        if (cancelOps) yield* cancelOps.cancel(SessionID.make(params.task_id))
+        return {
+          title: params.description,
+          metadata: { sessionId: SessionID.make(params.task_id), parentSessionId: ctx.sessionID },
+          output: `Task ${params.task_id} cancelled`,
+        }
+      }
+
+      if (action === "update" && !params.task_id) {
+        return yield* Effect.fail(new Error("update requires a task_id"))
       }
 
       const parent = yield* sessions.get(ctx.sessionID)

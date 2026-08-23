@@ -1293,6 +1293,26 @@ export function Session() {
                     </Switch>
                   )}
                 </For>
+                <Show when={foregroundTasks().length > 0}>
+                  <box flexDirection="row" gap={1} paddingLeft={2} paddingTop={1} flexShrink={0}>
+                    <text fg={theme.textMuted}>{foregroundTasks().length} subagent running</text>
+                    <For each={foregroundTasks()}>
+                      {(task) => (
+                        <box
+                          onMouseUp={() => {
+                            const state = task.state
+                            if (state.status !== "running") return
+                            const sessionID = state.metadata?.sessionId
+                            if (typeof sessionID === "string") void sdk.client.session.abort({ sessionID })
+                          }}
+                          backgroundColor={theme.backgroundElement}
+                        >
+                          <text fg={theme.text}>stop</text>
+                        </box>
+                      )}
+                    </For>
+                  </box>
+                </Show>
               </scrollbox>
               <box flexShrink={0}>
                 <Show when={permissions().length > 0}>
