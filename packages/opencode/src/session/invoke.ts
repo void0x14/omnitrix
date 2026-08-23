@@ -1,27 +1,3 @@
-import path from "path"
-const logYol = (dir: string) => path.join(dir, ".cekirdek.log")
-
-const hukmKaydet = Effect.fn("Cekirdek.hukmKaydet")(function* (input: {
-  cwd: string
-  toolId: string
-  args: Record<string, unknown>
-  hukm: string | undefined
-}) {
-  const satir = JSON.stringify({
-    ts: new Date().toISOString(),
-    tool: input.toolId,
-    hukm: input.hukm ?? "(hukumsuz)",
-    args: JSON.stringify(input.args).slice(0, 400),
-  })
-  const yaz = yield* Effect.sync(() => {
-    try {
-      const fs = require("node:fs")
-      fs.appendFileSync(logYol(input.cwd), satir + "\n", "utf8")
-    } catch {}
-  })
-  yield* yaz
-})
-
 
 import { Effect } from "effect"
 import { AppProcess } from "@opencode-ai/core/process"
@@ -127,14 +103,9 @@ export const invoke = Effect.fn("Cekirdek.invoke")(function* (input: {
     result,
   })
   if (v === undefined) return result
-  yield* hukmKaydet({
-    cwd: (yield* InstanceState.context).directory,
-    toolId: input.item.id,
-    args: input.args,
-    hukm: v,
-  })
   return {
     ...result,
+    title: v.split("\n")[0].slice(0, 80),
     output: v,
     metadata: { ...result.metadata, hamCikti: result.output },
   }
