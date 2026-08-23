@@ -528,6 +528,49 @@ it.instance("local stdio timeout terminates the real server process", () =>
   }),
 )
 
+it.instance("disconnect force-kills the server and its spawned child process tree", () =>
+  Effect.gen(function* () {
+    const test = yield* TestInstance
+    const pidFile = path.join(test.directory, "mcp-tree.pid")
+    const mcp = yield* MCP.Service
+    const result = yield* mcp.add("tree-stdio", {
+      type: "local",
+      command: [process.execPath, stdioFixture, "--spawn-child"],
+      environment: { MCP_LIFECYCLE_PID_FILE: pidFile },
+    })
+    expect(statusName(result.status, "tree-stdio")).toBe("connected")
+
+    const pids = yield* pollWithTimeout(
+      Effect.promise(async () => {
+        const file = Bun.file(pidFile)
+        if (!(await file.exists())) return undefined
+        const parts = (await file.text()).trim().split("\n").map(Number)
+        return parts.length === 2 ? (parts as [number, number]) : undefined
+      }),
+      "stdio fixture did not publish its pids",
+    )
+    const [parent, child] = pids
+
+    yield* mcp.disconnect("tree-stdio")
+
+    yield* pollWithTimeout(
+      Effect.sync(() => {
+        let alive = false
+        try {
+          process.kill(parent, 0)
+          alive = true
+        } catch {}
+        try {
+          process.kill(child, 0)
+          alive = true
+        } catch {}
+        return alive ? undefined : true
+      }),
+      "MCP process tree (parent + child) was not terminated on disconnect",
+    )
+  }),
+)
+
 it.instance("remote timeout aborts both real HTTP transport attempts", () =>
   Effect.gen(function* () {
     const server = yield* hangingLifecycleServer()
