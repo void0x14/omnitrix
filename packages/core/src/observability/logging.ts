@@ -54,14 +54,19 @@ export function fileLogger(file = path.join(Global.Path.log, "opencode.log"), id
 const stderrLogger = Logger.make((options) => process.stderr.write(formatter().log(options) + "\n"))
 
 export function minimumLogLevel() {
-  const value = process.env.OPENCODE_LOG_LEVEL?.toUpperCase()
+  // Check argv directly because yargs middleware sets env too late (after logger layer is created)
+  let raw = process.env.OPENCODE_LOG_LEVEL?.toUpperCase()
+  if (!raw) {
+    const idx = process.argv.indexOf("--log-level")
+    if (idx !== -1 && process.argv[idx + 1]) raw = process.argv[idx + 1].toUpperCase()
+  }
   const levels = {
     DEBUG: "Debug",
     INFO: "Info",
     WARN: "Warn",
     ERROR: "Error",
   } as const satisfies Record<string, LogLevel.LogLevel>
-  return value && value in levels ? levels[value as keyof typeof levels] : levels.INFO
+  return raw && raw in levels ? levels[raw as keyof typeof levels] : levels.INFO
 }
 
 export function loggers() {
