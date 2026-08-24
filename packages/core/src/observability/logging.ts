@@ -65,7 +65,7 @@ export function minimumLogLevel() {
 }
 
 export function loggers() {
-  return process.env.OPENCODE_PRINT_LOGS === "1" ? [fileLogger(), stderrLogger] : [fileLogger()]
+  return [fileLogger()]
 }
 
 export * as Logging from "./logging"
