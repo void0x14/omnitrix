@@ -32,3 +32,8 @@ UPCOMING_CHANGELOG.md
 logs/
 *.bun-build
 tsconfig.tsbuildinfo
+
+# tui-harness artifacts
+packages/tui-harness/__snapshots__/
+packages/tui-harness/__diffs__/
+screenshots/

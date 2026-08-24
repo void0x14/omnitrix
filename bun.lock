@@ -688,6 +688,15 @@
         "why-is-node-running": "3.2.2",
       },
     },
+    "packages/opencode-viewer": {
+      "name": "@opencode-ai/opencode-viewer",
+      "version": "0.1.0",
+      "dependencies": {
+        "@opentui/core": "catalog:",
+        "@opentui/solid": "catalog:",
+        "solid-js": "catalog:",
+      },
+    },
     "packages/plugin": {
       "name": "@opencode-ai/plugin",
       "version": "1.18.21",
@@ -1939,6 +1948,8 @@
     "@opencode-ai/httpapi-codegen": ["@opencode-ai/httpapi-codegen@workspace:packages/httpapi-codegen"],
 
     "@opencode-ai/llm": ["@opencode-ai/llm@workspace:packages/llm"],
+
+    "@opencode-ai/opencode-viewer": ["@opencode-ai/opencode-viewer@workspace:packages/opencode-viewer"],
 
     "@opencode-ai/plugin": ["@opencode-ai/plugin@workspace:packages/plugin"],
 

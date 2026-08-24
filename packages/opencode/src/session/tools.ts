@@ -156,7 +156,7 @@ export const resolve = Effect.fn("SessionTools.resolve")(function* (input: {
             const result = yield* Cekirdek.invoke({ item, args: toRecord(args), ctx })
             const output = {
               ...result,
-              attachments: result.attachments?.map((attachment) => ({
+              attachments: (result.attachments as unknown as SessionV1.FilePart[] | undefined)?.map((attachment) => ({
                 ...attachment,
                 id: PartID.ascending(),
                 sessionID: ctx.sessionID,
@@ -434,6 +434,7 @@ export const resolve = Effect.fn("SessionTools.resolve")(function* (input: {
 
   for (const [key, entry] of Object.entries(yield* mcp.tools())) {
     const item = McpCatalog.convertTool(entry.def, entry.client, entry.timeout)
+    const mcpItem = item as unknown as Tool.Def
     const execute = item.execute
     if (!execute) continue
 
@@ -449,19 +450,13 @@ export const resolve = Effect.fn("SessionTools.resolve")(function* (input: {
             { tool: key, sessionID: ctx.sessionID, callID: opts.toolCallId },
             { args },
           )
-          const result: Awaited<ReturnType<NonNullable<typeof execute>>> = yield* Effect.gen(function* () {
-            yield* ctx.ask({ permission: key, metadata: {}, patterns: ["*"], always: ["*"] })
-            return yield* Effect.promise(() => execute(args, opts))
-          }).pipe(
-            Effect.withSpan("Tool.execute", {
-              attributes: {
-                "tool.name": key,
-                "tool.call_id": opts.toolCallId,
-                "session.id": ctx.sessionID,
-                "message.id": input.processor.message.id,
-              },
-            }),
-          )
+          yield* ctx.ask({ permission: key, metadata: {}, patterns: ["*"], always: ["*"] })
+          const ham = yield* Cekirdek.invoke({
+            item: { id: key, description: item.description ?? "", parameters: mcpItem.parameters, execute: mcpItem.execute },
+            args: toRecord(args),
+            ctx,
+          })
+          const result = ham
           yield* plugin.trigger(
             "tool.execute.after",
             { tool: key, sessionID: ctx.sessionID, callID: opts.toolCallId, args },
@@ -514,9 +509,10 @@ export const resolve = Effect.fn("SessionTools.resolve")(function* (input: {
           }
 
           const output = {
-            title: "",
-            metadata,
-            output: truncated.content,
+            ...ham,
+            title: ham.title,
+            metadata: { ...ham.metadata, ...metadata },
+            output: ham.output,
             attachments: attachments.map((attachment) => ({
               ...attachment,
               id: PartID.ascending(),
