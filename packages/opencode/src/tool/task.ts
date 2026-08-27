@@ -394,49 +394,24 @@ export const TaskTool = Tool.define<typeof Parameters, TaskExecuteMetadata, Task
         }
       }
 
-      if (runInBackground) {
-        yield* notify(info.id)
-        return backgroundResult()
-      }
-
+      // Deterministic stateful hook: never block parent, always return running state immediately.
+      // Parent remains aware via [SUBAGENT STATE] injection and can use task status/cancel/update
+      // in real-time before child completes. This fixes the architectural flaw where
+      // foreground tasks blocked the parent and made it stateless.
       const runCancel = yield* EffectBridge.make()
       const cancel = ops.cancel(nextSession.id)
-
       function onAbort() {
         runCancel.fork(cancel)
       }
-
-      return yield* Effect.acquireUseRelease(
-        Effect.sync(() => {
-          ctx.abort.addEventListener("abort", onAbort)
-        }),
-        () =>
-          Effect.gen(function* () {
-            const result = yield* Effect.raceFirst(
-              background.wait({ id: nextSession.id }).pipe(Effect.map((waited) => waited.info)),
-              background.waitForPromotion(nextSession.id),
-            )
-            if (result?.metadata?.background === true) return backgroundResult()
-            if (result?.status === "error") return yield* Effect.fail(new Error(result.error ?? "Task failed"))
-            if (result?.status === "cancelled") return yield* Effect.fail(new Error("Task cancelled"))
-            return {
-              title: params.description,
-              metadata,
-              output: renderOutput({ sessionID: nextSession.id, state: "completed", text: result?.output ?? "" }),
-            }
-          }),
-        (_, exit) =>
-          Effect.gen(function* () {
-            if (Exit.hasInterrupts(exit))
-              yield* Effect.all([cancel, background.cancel(nextSession.id)], { discard: true })
-          }).pipe(
-            Effect.ensuring(
-              Effect.sync(() => {
-                ctx.abort.removeEventListener("abort", onAbort)
-              }),
-            ),
-          ),
+      // Setup abort handling (ESC -> cancel child) without blocking
+      yield* Effect.sync(() => {
+        ctx.abort.addEventListener("abort", onAbort)
+      }).pipe(
+        Effect.ensuring(Effect.sync(() => ctx.abort.removeEventListener("abort", onAbort))),
+        Effect.forkIn(scope, { startImmediately: true }),
       )
+      yield* notify(info.id)
+      return backgroundResult()
     })
 
     return {

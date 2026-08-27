@@ -408,17 +408,23 @@ function zodMetadataRegistry(schema: z.ZodType) {
   return registry
 }
 
-function normalizeZodJsonSchema(value: unknown): unknown {
-  if (Array.isArray(value)) return value.map((item) => normalizeZodJsonSchema(item))
+function normalizeZodJsonSchema(value: unknown, seen = new WeakSet<object>()): unknown {
+  if (Array.isArray(value)) {
+    if (seen.has(value)) return value
+    seen.add(value)
+    return value.map((item) => normalizeZodJsonSchema(item, seen))
+  }
   if (typeof value !== "object" || value === null) return value
+  if (seen.has(value as object)) return value
+  seen.add(value as object)
   return Object.fromEntries(
-    Object.entries(value)
+    Object.entries(value as Record<string, unknown>)
       .filter((entry) =>
         (entry[0] === "exclusiveMaximum" || entry[0] === "exclusiveMinimum") && typeof entry[1] === "boolean"
           ? false
           : true,
       )
-      .map(([key, item]) => [key, normalizeZodJsonSchema(item)]),
+      .map(([key, item]) => [key, normalizeZodJsonSchema(item, seen)]),
   )
 }
 

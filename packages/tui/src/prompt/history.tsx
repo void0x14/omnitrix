@@ -43,7 +43,14 @@ export function parsePromptHistory(text: string) {
 
 export function isDuplicateEntry(previous: PromptInfo | undefined, next: PromptInfo): boolean {
   if (!previous) return false
-  return JSON.stringify(previous) === JSON.stringify(next)
+  if (previous.input !== next.input) return false
+  if (previous.mode !== next.mode) return false
+  if (previous.parts.length !== next.parts.length) return false
+  try {
+    return JSON.stringify(previous.parts) === JSON.stringify(next.parts)
+  } catch {
+    return false
+  }
 }
 
 export const { use: usePromptHistory, provider: PromptHistoryProvider } = createSimpleContext({
