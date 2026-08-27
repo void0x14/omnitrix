@@ -70,7 +70,15 @@ export function minimumLogLevel() {
 }
 
 export function loggers() {
-  return [fileLogger()]
+  const list: ReturnType<typeof fileLogger>[] = [fileLogger()]
+  // When --print-logs is explicitly requested, also mirror to stderr.
+  // In TUI mode the terminal guard will still capture these writes after
+  // alternate-screen is entered, so TUI remains uncorrupted; in non-TUI
+  // mode (run/serve) the logs become visible as the user expects.
+  if (process.env.OPENCODE_PRINT_LOGS === "1" || process.argv.includes("--print-logs")) {
+    list.push(stderrLogger as any)
+  }
+  return list
 }
 
 export * as Logging from "./logging"

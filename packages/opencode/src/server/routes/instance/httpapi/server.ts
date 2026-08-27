@@ -4,7 +4,6 @@ import { HttpClient, HttpMiddleware, HttpRouter, HttpServer, HttpServerResponse 
 import * as Socket from "effect/unstable/socket/Socket"
 import { FSUtil } from "@opencode-ai/core/fs-util"
 import * as Observability from "@opencode-ai/core/observability"
-import { truthy } from "@opencode-ai/core/flag/flag"
 import { Account } from "@/account/account"
 import { Agent } from "@/agent/agent"
 import { Auth } from "@/auth"
@@ -309,7 +308,7 @@ export function createRoutes(
     // so Observability must come after every service graph. Otherwise eagerly forked
     // fibers (e.g. the ModelsDev background refresh) capture Effect's default stdout
     // logger and corrupt the TUI (#34730).
-    Layer.provideMerge(truthy("OPENCODE_EXPERIMENTAL") ? Observability.layer : Layer.empty),
+    Layer.provideMerge(Observability.layer),
   )
 }
 
