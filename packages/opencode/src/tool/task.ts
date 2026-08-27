@@ -40,9 +40,9 @@ const BACKGROUND_UPDATED = [
 ].join("\n")
 
 const BaseParameterFields = {
-  description: Schema.String.annotate({ description: "A short (3-5 words) description of the task" }),
-  prompt: Schema.String.annotate({ description: "The task for the agent to perform" }),
-  subagent_type: Schema.String.annotate({ description: "The type of specialized agent to use for this task" }),
+  description: Schema.optional(Schema.String).annotate({ description: "A short (3-5 words) description of the task (required for launch, optional for status/cancel/update with task_id)" }),
+  prompt: Schema.optional(Schema.String).annotate({ description: "The task for the agent to perform (required for launch, optional for status/cancel/update)" }),
+  subagent_type: Schema.optional(Schema.String).annotate({ description: "The type of specialized agent to use for this task (required for launch, optional for status/cancel/update)" }),
   task_id: Schema.optional(Schema.String).annotate({
     description:
       "This should only be set if you mean to resume a previous task (you can pass a prior task_id and the task will continue the same subagent session as before instead of creating a fresh one)",
@@ -122,7 +122,9 @@ export const TaskTool = Tool.define<typeof Parameters, TaskExecuteMetadata, Task
       }
 
       const action = params.action ?? "launch"
-
+      if (action === "launch" && (!params.description || !params.prompt || !params.subagent_type)) {
+        return yield* Effect.fail(new Error("description, prompt, and subagent_type are required for launch (task_id optional for resume)"))
+      }
       if (action === "status") {
         const infos = (yield* background.list()).filter(
           (job) =>
@@ -130,14 +132,12 @@ export const TaskTool = Tool.define<typeof Parameters, TaskExecuteMetadata, Task
         )
         if (infos.length === 0 && params.task_id)
           return {
-            title: params.description,
-            metadata: { sessionId: SessionID.make(params.task_id) },
+            title: params.description ?? "task",
             output: `Task ${params.task_id} not found`,
           }
         if (infos.length === 0)
           return {
-            title: params.description,
-            metadata: { sessionId: ctx.sessionID },
+            title: params.description ?? "task",
             output: "No running tasks found",
           }
         const text = infos
@@ -147,8 +147,7 @@ export const TaskTool = Tool.define<typeof Parameters, TaskExecuteMetadata, Task
           })
           .join("\n\n")
         return {
-          title: params.description,
-          metadata: { sessionId: SessionID.make(params.task_id ?? infos[0]!.id) },
+          title: params.description ?? infos[0]?.title ?? "task",
           output: text,
         }
       }
@@ -158,22 +157,19 @@ export const TaskTool = Tool.define<typeof Parameters, TaskExecuteMetadata, Task
         const job = yield* background.get(params.task_id)
         if (!job || job.metadata?.parentSessionId !== ctx.sessionID)
           return {
-            title: params.description,
-            metadata: { sessionId: SessionID.make(params.task_id) },
+            title: params.description ?? "task",
             output: `Task ${params.task_id} not found or not running`,
           }
         const cancelled = yield* background.cancel(params.task_id)
         if (!cancelled)
           return {
-            title: params.description,
-            metadata: { sessionId: SessionID.make(params.task_id) },
+            title: params.description ?? "task",
             output: `Task ${params.task_id} not found or not running`,
           }
         const cancelOps = ctx.extra?.promptOps as TaskPromptOps | undefined
         if (cancelOps) yield* cancelOps.cancel(SessionID.make(params.task_id))
         return {
-          title: params.description,
-          metadata: { sessionId: SessionID.make(params.task_id), parentSessionId: ctx.sessionID },
+          title: params.description ?? "task",
           output: `Task ${params.task_id} cancelled`,
         }
       }
