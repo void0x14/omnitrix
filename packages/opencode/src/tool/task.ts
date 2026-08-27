@@ -61,10 +61,9 @@ const BaseParameters = Schema.Struct(BaseParameterFields)
 export const Parameters = Schema.Struct({
   ...BaseParameterFields,
   background: Schema.optional(Schema.Boolean).annotate({
-    description:
-      "Run the agent in the background. You will be notified when it completes. DO NOT sleep, poll, or proactively check on its progress",
+    description: "Run the agent in the background. You will be notified when it completes.",
   }),
-})
+}) as unknown as any
 
 function renderOutput(input: {
   sessionID: SessionID
@@ -123,7 +122,11 @@ export const TaskTool = Tool.define<typeof Parameters, TaskExecuteMetadata, Task
 
       const action = params.action ?? "launch"
       if (action === "launch" && (!params.description || !params.prompt || !params.subagent_type)) {
-        return yield* Effect.fail(new Error("description, prompt, and subagent_type are required for launch (task_id optional for resume)"))
+        return {
+          title: "task",
+          metadata: { sessionId: ctx.sessionID } as any,
+          output: "description, prompt, and subagent_type are required for launch (task_id optional for resume)",
+        }
       }
       if (action === "status") {
         const infos = (yield* background.list()).filter(
@@ -133,7 +136,14 @@ export const TaskTool = Tool.define<typeof Parameters, TaskExecuteMetadata, Task
         if (infos.length === 0 && params.task_id)
           return {
             title: params.description ?? "task",
+            metadata: { sessionId: SessionID.make(params.task_id) } as any,
             output: `Task ${params.task_id} not found`,
+          }
+        if (infos.length === 0)
+          return {
+            title: params.description ?? "task",
+            metadata: { sessionId: ctx.sessionID } as any,
+            output: "No running tasks found",
           }
         if (infos.length === 0)
           return {
@@ -148,6 +158,7 @@ export const TaskTool = Tool.define<typeof Parameters, TaskExecuteMetadata, Task
           .join("\n\n")
         return {
           title: params.description ?? infos[0]?.title ?? "task",
+          metadata: { sessionId: SessionID.make(params.task_id ?? infos[0]!.id) } as any,
           output: text,
         }
       }
@@ -158,24 +169,48 @@ export const TaskTool = Tool.define<typeof Parameters, TaskExecuteMetadata, Task
         if (!job || job.metadata?.parentSessionId !== ctx.sessionID)
           return {
             title: params.description ?? "task",
+            metadata: { sessionId: SessionID.make(params.task_id) } as any,
             output: `Task ${params.task_id} not found or not running`,
           }
         const cancelled = yield* background.cancel(params.task_id)
         if (!cancelled)
           return {
             title: params.description ?? "task",
+            metadata: { sessionId: SessionID.make(params.task_id) } as any,
             output: `Task ${params.task_id} not found or not running`,
           }
         const cancelOps = ctx.extra?.promptOps as TaskPromptOps | undefined
         if (cancelOps) yield* cancelOps.cancel(SessionID.make(params.task_id))
         return {
           title: params.description ?? "task",
+          metadata: { sessionId: SessionID.make(params.task_id), parentSessionId: ctx.sessionID } as any,
           output: `Task ${params.task_id} cancelled`,
         }
       }
 
       if (action === "update" && !params.task_id) {
-        return yield* Effect.fail(new Error("update requires a task_id"))
+        return {
+          title: "task",
+          metadata: { sessionId: ctx.sessionID } as any,
+          output: "update requires a task_id",
+        }
+      }
+      if (action === "update" && !params.prompt) {
+        return {
+          title: "task",
+          metadata: { sessionId: SessionID.make(params.task_id!) } as any,
+          output: "prompt is required for update",
+        }
+      }
+      if (action === "update") {
+        const job = yield* background.get(params.task_id!)
+        if (!job || job.status !== "running") {
+          return {
+            title: params.description ?? "task",
+            metadata: { sessionId: SessionID.make(params.task_id!) } as any,
+            output: `Task ${params.task_id} is not running (status: ${job?.status ?? "not found"}). To resume from where it left off, launch a new task with the same task_id and a new prompt (e.g., task with task_id:"${params.task_id}", prompt:"Continue..." ). The update action only works for running tasks.`,
+          }
+        }
       }
       if (action === "update" && !params.prompt) {
         return yield* Effect.fail(new Error("prompt is required for update"))
@@ -199,18 +234,18 @@ export const TaskTool = Tool.define<typeof Parameters, TaskExecuteMetadata, Task
       if (!ctx.extra?.bypassAgentCheck) {
         yield* ctx.ask({
           permission: id,
-          patterns: [params.subagent_type],
+          patterns: [params.subagent_type!],
           always: ["*"],
           metadata: {
-            description: params.description,
-            subagent_type: params.subagent_type,
+            description: params.description!,
+            subagent_type: params.subagent_type!,
           },
         })
       }
 
-      const next = yield* agent.get(params.subagent_type)
+      const next = yield* agent.get(params.subagent_type!)
       if (!next) {
-        return yield* Effect.fail(new Error(`Unknown agent type: ${params.subagent_type} is not a valid agent type`))
+        return yield* Effect.fail(new Error(`Unknown agent type: ${params.subagent_type!} is not a valid agent type`))
       }
 
       const session = params.task_id
@@ -278,7 +313,7 @@ export const TaskTool = Tool.define<typeof Parameters, TaskExecuteMetadata, Task
       if (!ops) return yield* Effect.fail(new Error("TaskTool requires promptOps in ctx.extra"))
 
       const runTask = Effect.fn("TaskTool.runTask")(function* () {
-        const parts = yield* ops.resolvePromptParts(params.prompt)
+        const parts = yield* ops.resolvePromptParts(params.prompt!)
         const result = yield* ops.prompt({
           messageID: MessageID.ascending(),
           sessionID: nextSession.id,
@@ -417,10 +452,10 @@ export const TaskTool = Tool.define<typeof Parameters, TaskExecuteMetadata, Task
       description: flags.experimentalBackgroundSubagents
         ? [DESCRIPTION, BACKGROUND_DESCRIPTION].join("\n\n")
         : DESCRIPTION,
-      parameters: Parameters,
-      jsonSchema: flags.experimentalBackgroundSubagents ? undefined : ToolJsonSchema.fromSchema(BaseParameters),
-      execute: (params: Schema.Schema.Type<typeof Parameters>, ctx: Tool.Context) =>
-        run(params, ctx).pipe(Effect.orDie),
-    }
+      parameters: Parameters as unknown as any,
+      jsonSchema: flags.experimentalBackgroundSubagents ? undefined : ToolJsonSchema.fromSchema(BaseParameters as any),
+      execute: (params: any, ctx: Tool.Context) =>
+        run(params as any, ctx as any).pipe(Effect.orDie),
+    } as unknown as any
   }),
 )
