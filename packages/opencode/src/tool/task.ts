@@ -24,20 +24,19 @@ export interface TaskPromptOps {
 const id = "task"
 const BACKGROUND_DESCRIPTION = [
   "Background mode: background=true launches the subagent asynchronously and returns immediately.",
-  "Foreground is the default; use it when you need the result before continuing.",
+  "Foreground is the default; use it when you need the result before continuing. Both foreground and background tasks are tracked in real-time by a deterministic state hook.",
   "Use background only for independent work that can run while you continue elsewhere.",
-  "You will be notified automatically when it finishes.",
+  "While any subagent is running you will see a real-time [SUBAGENT STATE] injection before each turn. You can also explicitly query via task status, cancel via task cancel, or update via task update. You are stateful and must remain aware and in control.",
 ].join(" ")
 const BACKGROUND_STARTED = [
-  "The task is working in the background. You will be notified automatically when it finishes.",
-  "DO NOT sleep, poll for progress, ask the task for status, or duplicate this task's work — avoid working with the same files or topics it is using.",
-  "Work on non-overlapping tasks, or briefly tell the user what you launched and end your response.",
+  "The task is running. You can monitor it in real-time: use task with action:\"status\" (optionally task_id) to see live output, action:\"cancel\" to stop it, or action:\"update\" to send more context.",
+  "A deterministic hook will inject [SUBAGENT STATE] before your next turn so you remain aware of all running subagents — you are not stateless.",
+  "You will also be notified automatically when it finishes. While it runs, you may work on other independent tasks that do not overlap in files/topics, or wait and poll via status.",
 ].join("\n")
 const BACKGROUND_UPDATED = [
   "Additional context sent to the running background task.",
-  "The task is still working in the background. You will be notified automatically when it finishes.",
-  "DO NOT sleep, poll for progress, ask the task for status, or duplicate this task's work — avoid working with the same files or topics it is using.",
-  "Work on non-overlapping tasks, or briefly tell the user what you sent and end your response.",
+  "The task is still running. Continue to monitor via task status if needed; the [SUBAGENT STATE] hook will keep you aware and in control.",
+  "You will be notified automatically when it finishes. While it runs, avoid duplicating its work on overlapping files/topics.",
 ].join("\n")
 
 const BaseParameterFields = {

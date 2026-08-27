@@ -45,6 +45,7 @@ import { Process } from "@/util/process"
 import { Cause, Effect, Exit, Latch, Layer, Option, Scope, Context, Schema, Types } from "effect"
 import { InstanceState } from "@/effect/instance-state"
 import { TaskTool, type TaskPromptOps } from "@/tool/task"
+import { BackgroundJob } from "@/background/job"
 import { SessionRunState } from "./run-state"
 import { RuntimeFlags } from "@/effect/runtime-flags"
 import { EventV2Bridge } from "@/event-v2-bridge"
@@ -140,6 +141,7 @@ const layer = Layer.effect(
     const events = yield* EventV2Bridge.Service
     const flags = yield* RuntimeFlags.Service
     const database = yield* Database.Service
+    const background = yield* BackgroundJob.Service
     const { db } = database
     const ops = Effect.fn("SessionPrompt.ops")(function* () {
       return {
@@ -1267,6 +1269,20 @@ const layer = Layer.effect(
               ...(mcpInstructions ? [mcpInstructions] : []),
               ...(skills ? [skills] : []),
             ]
+            // Deterministic subagent state hook: force model to be stateful and aware (beka problemi icin)
+            {
+              const allJobs = yield* background.list()
+              const running = allJobs.filter((j) => j.status === "running" && (j.metadata as any)?.parentSessionId === sessionID)
+              if (running.length > 0) {
+                const lines = running.map((j) => {
+                  const title = j.title ?? j.id
+                  const elapsed = Math.floor((Date.now() - j.started_at) / 1000)
+                  const tail = j.output ? j.output.trim().slice(-300).replace(/\n/g, " ") : ""
+                  return `- ${j.id} [running] "${title}" elapsed=${elapsed}s${tail ? ` tail="${tail.slice(0, 120)}"` : ""} (use task status/cancel/update)`
+                })
+                system.push(`[SUBAGENT STATE] You have ${running.length} running subagent(s):\n${lines.join("\n")}\nYou are stateful and must remain aware and in control. Use the task tool to monitor, cancel, or update them before they complete.`)
+              }
+            }
             const format = lastUser.format ?? { type: "text" as const }
             if (format.type === "json_schema") system.push(STRUCTURED_OUTPUT_SYSTEM_PROMPT)
             const result = yield* handle.process({
@@ -1625,6 +1641,7 @@ export const node = LayerNode.make({
     EventV2Bridge.node,
     RuntimeFlags.node,
     Database.node,
+    BackgroundJob.node,
   ],
 })
 
