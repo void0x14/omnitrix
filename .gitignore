@@ -37,3 +37,16 @@ tsconfig.tsbuildinfo
 packages/tui-harness/__snapshots__/
 packages/tui-harness/__diffs__/
 screenshots/
+
+# local loop / plugin artifacts (worktree)
+.opencode/opencode-loop/
+.opencode/plugin/
+.superpowers/
+ANLASILAN.md
+PLAN.md
+RESEARCH_*.txt
+packages/opencode-viewer/
+packages/opencode/.opencode/
+packages/opencode/test_verify.py
+test_verify.py
+tui.sh
