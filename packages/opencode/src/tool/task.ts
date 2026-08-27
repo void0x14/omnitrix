@@ -177,6 +177,9 @@ export const TaskTool = Tool.define<typeof Parameters, TaskExecuteMetadata, Task
       if (action === "update" && !params.task_id) {
         return yield* Effect.fail(new Error("update requires a task_id"))
       }
+      if (action === "update" && !params.prompt) {
+        return yield* Effect.fail(new Error("prompt is required for update"))
+      }
 
       const parent = yield* sessions.get(ctx.sessionID)
       let current = parent
