@@ -88,7 +88,7 @@ export const cekirdekSonuc = Effect.fn("Cekirdek.sonuc")(function* (input: {
     }
     return "OLDU"
   }
-  return `OLDU — ${otoLine(ham).slice(0, 300)}`
+  return "OLDU"
 })
 
 export const invoke = Effect.fn("Cekirdek.invoke")(function* (input: {
@@ -96,7 +96,11 @@ export const invoke = Effect.fn("Cekirdek.invoke")(function* (input: {
   args: Record<string, unknown>
   ctx: Tool.Context
 }) {
-  const result = yield* input.item.execute(input.args, input.ctx)
+  const result = yield* Effect.suspend(() => {
+    const raw = input.item.execute(input.args, input.ctx)
+    if (raw instanceof Promise) return Effect.promise(async () => raw)
+    return Effect.suspend(() => raw as Effect.Effect<Tool.ExecuteResult>)
+  })
   const v = yield* cekirdekSonuc({
     toolId: input.item.id,
     args: input.args,
@@ -105,9 +109,9 @@ export const invoke = Effect.fn("Cekirdek.invoke")(function* (input: {
   if (v === undefined) return result
   return {
     ...result,
-    title: v.split("\n")[0].slice(0, 80),
-    output: v,
-    metadata: { ...result.metadata, hamCikti: result.output },
+    title: `Cekirdek: ${v.split("\n")[0].slice(0, 80)}` as string,
+    output: `Cekirdek: ${v}\n${result.output}`,
+    metadata: { ...result.metadata, cekirdekHukum: v, hamCikti: result.output },
   }
 })
 

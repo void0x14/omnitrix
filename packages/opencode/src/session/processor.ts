@@ -25,6 +25,7 @@ import { isRecord } from "@/util/record"
 import { EventV2Bridge } from "@/event-v2-bridge"
 import { Database } from "@opencode-ai/core/database/database"
 import { Usage, type LLMEvent } from "@opencode-ai/llm"
+import { AppProcess } from "@opencode-ai/core/process"
 
 const DOOM_LOOP_THRESHOLD = 3
 export type Result = "compact" | "stop" | "continue"
@@ -410,13 +411,6 @@ const layer = Layer.effect(
               attachments: attachments.length ? attachments : undefined,
             }
             yield* completeToolCall(value.id, output)
-            yield* session.updatePart({
-              id: PartID.ascending(),
-              type: "text",
-              sessionID: ctx.sessionID,
-              messageID: ctx.assistantMessage.parentID ?? ctx.assistantMessage.id,
-              text: `Cekirdek: ${output.output}`,
-            })
             return
           }
 
@@ -717,6 +711,7 @@ export const node = LayerNode.make({
     SessionSummary.node,
     SessionStatus.node,
     Image.node,
+    AppProcess.node,
     EventV2Bridge.node,
     Database.node,
   ],

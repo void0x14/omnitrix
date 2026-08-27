@@ -1,7 +1,6 @@
 import { Layer, ManagedRuntime } from "effect"
 import { attach } from "./run-service"
 import * as Observability from "@opencode-ai/core/observability"
-import { truthy } from "@opencode-ai/core/flag/flag"
 
 import { FSUtil } from "@opencode-ai/core/fs-util"
 import { Database } from "@opencode-ai/core/database/database"
@@ -111,7 +110,7 @@ export const AppLayer = AppNodeBuilderV1.build(
   ]),
 ).pipe(
   Layer.provideMerge(AppNodeBuilderV1.build(Ripgrep.node)),
-  Layer.provideMerge(truthy("OPENCODE_EXPERIMENTAL") ? Observability.layer : Layer.empty),
+  Layer.provideMerge(Observability.layer),
 )
 
 const rt = ManagedRuntime.make(AppLayer, { memoMap })

@@ -2,7 +2,6 @@ import { Effect, Fiber, Layer, ManagedRuntime } from "effect"
 import * as Context from "effect/Context"
 import { InstanceRef, WorkspaceRef } from "./instance-ref"
 import * as Observability from "@opencode-ai/core/observability"
-import { truthy } from "@opencode-ai/core/flag/flag"
 import { WorkspaceContext } from "@/control-plane/workspace-context"
 import type { InstanceContext } from "@/project/instance-context"
 import { memoMap } from "@opencode-ai/core/effect/memo-map"
@@ -35,7 +34,7 @@ export function makeRuntime<I, S, E>(service: Context.Service<I, S>, layer: Laye
   let rt: ManagedRuntime.ManagedRuntime<I, E> | undefined
   const getRuntime = () =>
     (rt ??= ManagedRuntime.make(
-      Layer.provideMerge(layer, truthy("OPENCODE_EXPERIMENTAL") ? Observability.layer : Layer.empty),
+      Layer.provideMerge(layer, Observability.layer),
       { memoMap },
     ))
 
