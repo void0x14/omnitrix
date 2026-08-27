@@ -221,6 +221,38 @@ export function Session() {
     const all = messages()
     return all.length <= MAX_RENDERED_MESSAGES ? all : all.slice(all.length - MAX_RENDERED_MESSAGES)
   })
+  const revertInfo = createMemo(() => session()?.revert)
+  const revertMessageID = createMemo(() => revertInfo()?.messageID)
+  const revertMessageIndex = createMemo(() => {
+    const messageID = revertMessageID()
+    if (!messageID) return -1
+    return messages().findIndex((message) => message.id === messageID)
+  })
+
+  const revertDiffFiles = createMemo(() => getRevertDiffFiles(revertInfo()?.diff ?? ""))
+
+  const revertRevertedMessages = createMemo(() => {
+    const messageID = revertMessageID()
+    if (!messageID) return []
+    const index = revertMessageIndex()
+    if (index === -1) return []
+    return messages()
+      .slice(index)
+      .filter((message) => message.role === "user")
+  })
+
+  const revert = createMemo(() => {
+    const info = revertInfo()
+    if (!info) return
+    if (!info.messageID) return
+    return {
+      messageID: info.messageID,
+      reverted: revertRevertedMessages(),
+      diff: info.diff,
+      diffFiles: revertDiffFiles(),
+    }
+  })
+
   const renderedRevertMessageIndex = createMemo(() => {
     const messageID = revertMessageID()
     if (!messageID) return -1
@@ -1174,37 +1206,6 @@ export function Session() {
     bindings: tuiConfig.keybinds.get("session.background"),
   }))
 
-  const revertInfo = createMemo(() => session()?.revert)
-  const revertMessageID = createMemo(() => revertInfo()?.messageID)
-  const revertMessageIndex = createMemo(() => {
-    const messageID = revertMessageID()
-    if (!messageID) return -1
-    return messages().findIndex((message) => message.id === messageID)
-  })
-
-  const revertDiffFiles = createMemo(() => getRevertDiffFiles(revertInfo()?.diff ?? ""))
-
-  const revertRevertedMessages = createMemo(() => {
-    const messageID = revertMessageID()
-    if (!messageID) return []
-    const index = revertMessageIndex()
-    if (index === -1) return []
-    return messages()
-      .slice(index)
-      .filter((message) => message.role === "user")
-  })
-
-  const revert = createMemo(() => {
-    const info = revertInfo()
-    if (!info) return
-    if (!info.messageID) return
-    return {
-      messageID: info.messageID,
-      reverted: revertRevertedMessages(),
-      diff: info.diff,
-      diffFiles: revertDiffFiles(),
-    }
-  })
 
   // snap to bottom when session changes
   createEffect(on(() => route.sessionID, toBottom))
