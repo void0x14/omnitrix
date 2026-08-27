@@ -410,6 +410,7 @@ const layer = Layer.effect(
                   : `${rawOutput.output}\n\n[${omitted} image${omitted === 1 ? "" : "s"} omitted: could not be resized below the image size limit.]`,
               attachments: attachments.length ? attachments : undefined,
             }
+            yield* completeToolCall(value.id, output)
             return
           }
 
