@@ -9,6 +9,7 @@ import { SessionRevert } from "./revert"
 import { Session } from "./session"
 import { Agent } from "../agent/agent"
 import { Provider } from "@/provider/provider"
+import { deriveTaskPolicy } from "./task-policy"
 
 import { type Tool as AITool, tool, jsonSchema } from "ai"
 import type { JSONSchema7 } from "@ai-sdk/provider"
@@ -1051,6 +1052,10 @@ const layer = Layer.effect(
       return { info, parts }
     }, Effect.scoped)
 
+    // Görev denetimi: echo modelinde her zaman aktif; denetim_tum_ajanlar açıkken tüm modellerde aktif.
+    const denetimAktif = (cfg: { denetim_tum_ajanlar?: boolean }, model?: { providerID: string; modelID: string }) =>
+      cfg.denetim_tum_ajanlar === true || model?.providerID === "echo" || model?.modelID === "echo"
+
     const prompt: (input: PromptInput) => Effect.Effect<SessionV1.WithParts, Image.Error> = Effect.fn(
       "SessionPrompt.prompt",
     )(function* (input: PromptInput) {
@@ -1068,6 +1073,29 @@ const layer = Layer.effect(
         yield* sessions.setPermission({ sessionID: session.id, permission: permissions })
       }
 
+      const cfg = yield* config.get()
+      if (denetimAktif(cfg, message.info.model)) {
+        const taskText = input.parts
+          .filter((part): part is Extract<PromptInput["parts"][number], { type: "text" }> => part.type === "text")
+          .map((part) => part.text)
+          .join("\n")
+        const policy = deriveTaskPolicy(taskText)
+        const denies: PermissionV1.Rule[] = []
+        if (policy.read_only) {
+          denies.push({ permission: "edit", action: "deny", pattern: "*" })
+          denies.push({ permission: "bash", action: "deny", pattern: "*" })
+        }
+        if (policy.web_forbidden) {
+          denies.push({ permission: "webfetch", action: "deny", pattern: "*" })
+          denies.push({ permission: "websearch", action: "deny", pattern: "*" })
+        }
+        if (denies.length > 0) {
+          const merged = Permission.merge(session.permission ?? [], denies)
+          session.permission = merged
+          yield* sessions.setPermission({ sessionID: session.id, permission: merged })
+        }
+      }
+
       if (input.noReply === true) return message
       return yield* loop({ sessionID: input.sessionID })
     })
@@ -1080,11 +1108,56 @@ const layer = Layer.effect(
       throw new Error("Impossible")
     })
 
+    const yapiGate = Effect.fn("SessionPrompt.yapiGate")(function* (sessionID: SessionID) {
+      const cfg = yield* config.get()
+      const msgs = yield* MessageV2.filterCompactedEffect(sessionID).pipe(
+        Effect.provideService(Database.Service, database),
+      )
+      let taskText = ""
+      let model: SessionV1.User["model"] | undefined
+      for (let i = msgs.length - 1; i >= 0; i--) {
+        const msg = msgs[i]
+        if (!msg || msg.info.role !== "user") continue
+        const text = msg.parts
+          .filter((part): part is SessionV1.TextPart => part.type === "text" && !part.synthetic)
+          .map((part) => part.text)
+          .join("\n")
+        if (text) {
+          taskText = text
+          model = msg.info.model
+          break
+        }
+      }
+      if (!denetimAktif(cfg, model)) return { ok: true, reason: "" }
+      const ctx = yield* InstanceState.context
+      for (const match of taskText.matchAll(/(?<![A-Za-z0-9_])\/[^\s"'()<>]+/g)) {
+        const candidate = match[0].replace(/[.,;:]+$/, "")
+        const resolved = path.resolve(ctx.worktree, "." + candidate)
+        if (!resolved.startsWith(ctx.worktree + path.sep)) continue
+        const stat = yield* fsys.stat(resolved).pipe(Effect.option)
+        if (Option.isNone(stat)) return { ok: false, reason: "zorunlu dosya eksik: " + candidate }
+      }
+      for (const line of taskText.split("\n")) {
+        if (!line.startsWith("KABUL_KOMUTU: ")) continue
+        const command = line.slice("KABUL_KOMUTU: ".length)
+        if (!command) continue
+        const proc = Bun.spawn(["/bin/bash", "-c", command], {
+          cwd: ctx.worktree,
+          stdout: "ignore",
+          stderr: "ignore",
+        })
+        const code = yield* Effect.promise(() => proc.exited)
+        if (code !== 0) return { ok: false, reason: "kabul komutu başarısız (exit " + code + "): " + command }
+      }
+      return { ok: true, reason: "" }
+    })
+
     const runLoop: (sessionID: SessionID) => Effect.Effect<SessionV1.WithParts> = Effect.fn("SessionPrompt.run")(
       function* (sessionID: SessionID) {
         const ctx = yield* InstanceState.context
         let structured: unknown
         let step = 0
+        let yapiRetries = 0
         const session = yield* sessions.get(sessionID).pipe(Effect.orDie)
 
         while (true) {
@@ -1126,6 +1199,28 @@ const layer = Layer.effect(
                 tool: orphan.tool,
                 callID: orphan.callID,
               })
+            }
+            const gate = yield* yapiGate(sessionID)
+            if (!gate.ok && yapiRetries < 3) {
+              yapiRetries++
+              const gateUserMsg: SessionV1.User = {
+                id: MessageID.ascending(),
+                sessionID,
+                role: "user",
+                time: { created: Date.now() },
+                agent: lastUser.agent,
+                model: lastUser.model,
+              }
+              yield* sessions.updateMessage(gateUserMsg)
+              yield* sessions.updatePart({
+                id: PartID.ascending(),
+                messageID: gateUserMsg.id,
+                sessionID,
+                type: "text",
+                text: "YAPI_DENETİMİ: " + gate.reason + " Düzelt ve devam et.",
+                synthetic: true,
+              } satisfies SessionV1.TextPart)
+              continue
             }
             yield* Effect.logInfo("exiting loop", { "session.id": sessionID })
             break

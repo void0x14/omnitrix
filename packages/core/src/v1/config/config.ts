@@ -126,6 +126,10 @@ export const Info = Schema.Struct({
   }),
   layout: Schema.optional(ConfigLayoutV1.Layout).annotate({ description: "@deprecated Always uses stretch layout." }),
   permission: Schema.optional(ConfigPermissionV1.Info),
+  denetim_tum_ajanlar: Schema.optional(Schema.Boolean).annotate({
+    description:
+      "Task denetimini (zorunlu dosya + KABUL_KOMUTU doğrulaması ve görev metninden türetilen izin yasakları) tüm ajanlara uygular. false iken denetim yalnızca 'echo' modelinde geçerlidir; true iken tüm modellerde geçerli olur.",
+  }),
   tools: Schema.optional(Schema.Record(Schema.String, Schema.Boolean)),
   attachment: Schema.optional(ConfigAttachmentV1.Info).annotate({
     description: "Attachment processing configuration, including image size limits and resizing behavior",

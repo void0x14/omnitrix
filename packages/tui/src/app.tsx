@@ -24,6 +24,7 @@ import {
   Show,
   on,
 } from "solid-js"
+import { reconcile } from "solid-js/store"
 import { TuiPathsProvider, TuiStartupProvider, TuiTerminalEnvironmentProvider, useTuiStartup } from "./context/runtime"
 import { DialogProvider, useDialog } from "./ui/dialog"
 import { DialogProvider as DialogProviderList } from "./component/dialog-provider"
@@ -137,6 +138,7 @@ const appBindingCommands = [
   "app.toggle.file_context",
   "app.toggle.diffwrap",
   "app.toggle.paste_summary",
+  "app.toggle.denetim_tum_ajanlar",
   "app.toggle.session_directory_filter",
 ] as const
 
@@ -943,6 +945,28 @@ function App(props: { onSnapshot?: () => Promise<string[]>; pluginHost: TuiPlugi
         run: async () => {
           kv.set("session_directory_filter_enabled", !kv.get("session_directory_filter_enabled", true))
           await sync.session.refresh()
+          dialog.clear()
+        },
+      },
+      {
+        name: "app.toggle.denetim_tum_ajanlar",
+        title: "Görev denetimi kapsamı",
+        desc: (sync.data.config as { denetim_tum_ajanlar?: boolean }).denetim_tum_ajanlar
+          ? "Şu an: tüm ajanlarda geçerli"
+          : "Şu an: sadece Echo modelinde geçerli",
+        category: "System",
+        run: async () => {
+          const next = !(sync.data.config as { denetim_tum_ajanlar?: boolean }).denetim_tum_ajanlar
+          const result = await sdk.client.config.update({
+            workspace: project.workspace.current(),
+            config: { denetim_tum_ajanlar: next } as typeof sync.data.config,
+          })
+          if (result.error) {
+            toast.show({ variant: "error", message: "Failed to update config" })
+          } else {
+            const cfg = sync.data.config as Record<string, unknown>
+            sync.set("config", reconcile({ ...cfg, denetim_tum_ajanlar: next } as typeof sync.data.config))
+          }
           dialog.clear()
         },
       },
