@@ -433,6 +433,8 @@ function unsupportedParts(msgs: ModelMessage[], model: Provider.Model): ModelMes
       const modality = mimeToModality(mime)
       if (!modality) return part
       if (model.capabilities.input[modality]) return part
+      // Permissive for image/pdf only for @ai-sdk/openai custom proxies (e.g., opencodex) to avoid false negatives from stale cache; bundled text-only models remain strict
+      if ((modality === "image" || modality === "pdf") && model.api.npm === "@ai-sdk/openai") return part
 
       const name = filename ? `"${filename}"` : modality
       return {
