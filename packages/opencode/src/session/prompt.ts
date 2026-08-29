@@ -47,6 +47,7 @@ import { Cause, Effect, Exit, Latch, Layer, Option, Scope, Context, Schema, Type
 import { InstanceState } from "@/effect/instance-state"
 import { TaskTool, type TaskPromptOps } from "@/tool/task"
 import { BackgroundJob } from "@/background/job"
+import { SubagentState } from "./subagent-state"
 import { SessionRunState } from "./run-state"
 import { RuntimeFlags } from "@/effect/runtime-flags"
 import { EventV2Bridge } from "@/event-v2-bridge"
@@ -1351,31 +1352,47 @@ const layer = Layer.effect(
 
             yield* plugin.trigger("experimental.chat.messages.transform", {}, { messages: msgs })
 
-            const [skills, env, instructions, mcpInstructions, modelMsgs] = yield* Effect.all([
-              sys.skills(agent),
-              sys.environment(model),
-              instruction.system().pipe(Effect.orDie),
-              sys.mcp(agent, session.permission),
-              MessageV2.toModelMessagesEffect(msgs, model),
-            ])
-            const system = [
-              ...env,
-              ...instructions,
-              ...(mcpInstructions ? [mcpInstructions] : []),
-              ...(skills ? [skills] : []),
-            ]
-            // Deterministic subagent state hook: force model to be stateful and aware (beka problemi icin)
+            const yerelModel = model.providerID === "yerel"
+            let skills: string | undefined
+            let env: string[] = []
+            let instructions: string[] = []
+            let mcpInstructions: string | undefined
+            if (!yerelModel) {
+              const loaded = yield* Effect.all([
+                sys.skills(agent),
+                sys.environment(model),
+                instruction.system().pipe(Effect.orDie),
+                sys.mcp(agent, session.permission),
+              ])
+              skills = loaded[0]
+              env = loaded[1]
+              instructions = loaded[2]
+              mcpInstructions = loaded[3]
+            }
+            const modelMsgs = yield* MessageV2.toModelMessagesEffect(msgs, model)
+            const system = yerelModel
+              ? [
+                  "Bu yerel model yalnızca Türkçe teknik icra yapar.",
+                  "Kullanıcının son isteğini doğrudan uygula.",
+                  "Eylem gerekiyorsa gerçek sonucu al; gerçek sonuç olmadan işi tamamlanmış sayma.",
+                  `Çalışma dizini: ${ctx.directory}`,
+                ]
+              : [
+                  ...env,
+                  ...instructions,
+                  ...(mcpInstructions ? [mcpInstructions] : []),
+                  ...(skills ? [skills] : []),
+                ]
+            // Deterministic subagent state hook: durable+memory hybrid — never stateless, SQL truth always injected
             {
-              const allJobs = yield* background.list()
-              const running = allJobs.filter((j) => j.status === "running" && (j.metadata as any)?.parentSessionId === sessionID)
+              const running = yield* SubagentState.hybridRunningWith(sessionID, { background, sessions, database })
               if (running.length > 0) {
                 const lines = running.map((j) => {
                   const title = j.title ?? j.id
-                  const elapsed = Math.floor((Date.now() - j.started_at) / 1000)
-                  const tail = j.output ? j.output.trim().slice(-300).replace(/\n/g, " ") : ""
-                  return `- ${j.id} [running] "${title}" elapsed=${elapsed}s${tail ? ` tail="${tail.slice(0, 120)}"` : ""} (use task status/cancel/update)`
+                  const tail = j.tail ? j.tail.trim().slice(-300).replace(/\n/g, " ") : ""
+                  return `- ${j.id} [${j.status}] "${title}" elapsed=${j.elapsed}s source=${j.source}${tail ? ` tail="${tail.slice(0, 120)}"` : ""} (use task status/cancel/update)`
                 })
-                system.push(`[SUBAGENT STATE] You have ${running.length} running subagent(s):\n${lines.join("\n")}\nYou are stateful and must remain aware and in control. Use the task tool to monitor, cancel, or update them before they complete.`)
+                system.push(`[SUBAGENT STATE] You have ${running.length} running subagent(s) (hybrid durable+memory):\n${lines.join("\n")}\nYou are stateful and must remain aware and in control. Use the task tool to monitor, cancel, or update them before they complete. SQL fallback ensures you never need to query SQL manually.`)
               }
             }
             const format = lastUser.format ?? { type: "text" as const }

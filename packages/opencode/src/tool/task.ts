@@ -3,6 +3,7 @@ import DESCRIPTION from "./task.txt"
 import { ToolJsonSchema } from "./json-schema"
 import { SessionV1 } from "@opencode-ai/core/v1/session"
 import { BackgroundJob } from "@/background/job"
+import { SubagentState } from "@/session/subagent-state"
 import { Session } from "@/session/session"
 import { SessionID, MessageID } from "../session/schema"
 import { MessageV2 } from "../session/message-v2"
@@ -129,62 +130,90 @@ export const TaskTool = Tool.define<typeof Parameters, TaskExecuteMetadata, Task
         }
       }
       if (action === "status") {
-        const infos = (yield* background.list()).filter(
-          (job) =>
-            job.type === id && job.metadata?.parentSessionId === ctx.sessionID && (!params.task_id || job.id === params.task_id),
+        const all = yield* SubagentState.hybridList(ctx.sessionID)
+        const filtered = all.filter(
+          (job) => !params.task_id || job.id === params.task_id || (job.sessionID as string) === params.task_id,
         )
-        if (infos.length === 0 && params.task_id)
+        if (filtered.length === 0 && params.task_id) {
+          // Fallback: standalone session not parented? try direct lookup
+          const direct = yield* sessions
+            .get(SessionID.make(params.task_id))
+            .pipe(Effect.catch(() => Effect.succeed(undefined as unknown as Session.Info)))
+          if (direct) {
+            const msgs = yield* MessageV2.filterCompactedEffect(SessionID.make(params.task_id)).pipe(
+              Effect.provideService(Database.Service, database),
+              Effect.catch(() => Effect.succeed([] as any)),
+            )
+            const tail = direct.title ?? ""
+            const hasPending = (msgs as any[]).some((m: any) =>
+              m.parts.some((p: any) => p.type === "tool" && (p.state.status === "pending" || p.state.status === "running")),
+            )
+            const status = hasPending ? "running" : "completed"
+            return {
+              title: params.description ?? tail ?? "task",
+              metadata: { sessionId: SessionID.make(params.task_id) } as any,
+              output: `${params.task_id} [${status}] source=durable standalone ${tail ? `\n${tail}` : ""}`,
+            }
+          }
           return {
             title: params.description ?? "task",
             metadata: { sessionId: SessionID.make(params.task_id) } as any,
             output: `Task ${params.task_id} not found`,
           }
-        if (infos.length === 0)
+        }
+        if (filtered.length === 0)
           return {
             title: params.description ?? "task",
             metadata: { sessionId: ctx.sessionID } as any,
-            output: "No running tasks found",
+            output: "No tasks found for this parent (hybrid durable+memory). SQL fallback confirms no child sessions.",
           }
-        if (infos.length === 0)
-          return {
-            title: params.description ?? "task",
-            output: "No running tasks found",
-          }
-        const text = infos
+        const text = filtered
           .map((job) => {
-            const tail = job.output ? job.output.trim().slice(-500) : job.error ?? ""
-            return `${job.id} [${job.status}]${job.title ? ` ${job.title}` : ""}${tail ? `\n${tail}` : ""}`
+            const tail = job.tail ?? ""
+            return `${job.id} [${job.status}] source=${job.source}${job.title ? ` ${job.title}` : ""}${tail ? `\n${tail}` : ""}`
           })
           .join("\n\n")
         return {
-          title: params.description ?? infos[0]?.title ?? "task",
-          metadata: { sessionId: SessionID.make(params.task_id ?? infos[0]!.id) } as any,
+          title: params.description ?? filtered[0]?.title ?? "task",
+          metadata: { sessionId: SessionID.make(params.task_id ?? filtered[0]!.id) } as any,
           output: text,
         }
       }
 
       if (action === "cancel") {
         if (!params.task_id) return yield* Effect.fail(new Error("cancel requires a task_id"))
-        const job = yield* background.get(params.task_id)
-        if (!job || job.metadata?.parentSessionId !== ctx.sessionID)
+        const all = yield* SubagentState.hybridList(ctx.sessionID)
+        const target = all.find((j) => j.id === params.task_id || (j.sessionID as string) === params.task_id)
+        const job = yield* background.get(params.task_id).pipe(Effect.catch(() => Effect.succeed(undefined as any)))
+        const isRunning = target?.status === "running" || job?.status === "running"
+        if (!target && (!job || job.metadata?.parentSessionId !== ctx.sessionID))
           return {
             title: params.description ?? "task",
             metadata: { sessionId: SessionID.make(params.task_id) } as any,
-            output: `Task ${params.task_id} not found or not running`,
+            output: `Task ${params.task_id} not found or not running (hybrid check: no durable child nor job)`,
           }
-        const cancelled = yield* background.cancel(params.task_id)
-        if (!cancelled)
+        if (!isRunning)
           return {
             title: params.description ?? "task",
             metadata: { sessionId: SessionID.make(params.task_id) } as any,
-            output: `Task ${params.task_id} not found or not running`,
+            output: `Task ${params.task_id} is not running (status: ${target?.status ?? job?.status ?? "unknown"}). Cannot cancel.`,
           }
+        const cancelled = yield* background.cancel(params.task_id).pipe(Effect.catch(() => Effect.succeed(undefined as any)))
+        // Even if no job to cancel (durable-only orphan), still cancel the session runner
         const cancelOps = ctx.extra?.promptOps as TaskPromptOps | undefined
-        if (cancelOps) yield* cancelOps.cancel(SessionID.make(params.task_id))
+        if (cancelOps) yield* cancelOps.cancel(SessionID.make(params.task_id)).pipe(Effect.catch(() => Effect.void))
+        if (cancelled) {
+          return {
+            title: params.description ?? "task",
+            metadata: { sessionId: SessionID.make(params.task_id), parentSessionId: ctx.sessionID } as any,
+            output: `Task ${params.task_id} cancelled (hybrid)`,
+          }
+        }
+        // Durable-only path: cancelled via session
         return {
           title: params.description ?? "task",
           metadata: { sessionId: SessionID.make(params.task_id), parentSessionId: ctx.sessionID } as any,
-          output: `Task ${params.task_id} cancelled`,
+          output: `Task ${params.task_id} cancelled (durable session)`,
         }
       }
 
@@ -203,12 +232,22 @@ export const TaskTool = Tool.define<typeof Parameters, TaskExecuteMetadata, Task
         }
       }
       if (action === "update") {
-        const job = yield* background.get(params.task_id!)
-        if (!job || job.status !== "running") {
+        const all = yield* SubagentState.hybridList(ctx.sessionID)
+        const target = all.find((j) => j.id === params.task_id || (j.sessionID as string) === params.task_id)
+        const job = yield* background.get(params.task_id!).pipe(Effect.catch(() => Effect.succeed(undefined as any)))
+        const status = target?.status ?? (job?.status as string | undefined)
+        if (!target && !job) {
           return {
             title: params.description ?? "task",
             metadata: { sessionId: SessionID.make(params.task_id!) } as any,
-            output: `Task ${params.task_id} is not running (status: ${job?.status ?? "not found"}). To resume from where it left off, launch a new task with the same task_id and a new prompt (e.g., task with task_id:"${params.task_id}", prompt:"Continue..." ). The update action only works for running tasks.`,
+            output: `Task ${params.task_id} is not running (status: not found). To resume from where it left off, launch a new task with the same task_id and a new prompt (e.g., task with task_id:"${params.task_id}", prompt:"Continue..." ). The update action only works for running tasks.`,
+          }
+        }
+        if (status !== "running") {
+          return {
+            title: params.description ?? "task",
+            metadata: { sessionId: SessionID.make(params.task_id!) } as any,
+            output: `Task ${params.task_id} is not running (status: ${status ?? "unknown"}). To resume from where it left off, launch a new task with the same task_id and a new prompt (e.g., task with task_id:"${params.task_id}", prompt:"Continue..." ). The update action only works for running tasks.`,
           }
         }
       }
