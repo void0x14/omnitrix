@@ -1,8 +1,8 @@
 {
   "$schema": "https://opencode.ai/config.json",
   "provider": {
-    "echo-local": {
-      "name": "Echo yerel B300",
+    "echo-identity-archive": {
+      "name": "Echo Ulaç — Kimlik Arşivi",
       "npm": "@ai-sdk/openai-compatible",
       "options": {
         "apiKey": "local",
@@ -26,8 +26,8 @@
         }
       }
     },
-    "echo-terminal-local": {
-      "name": "Echo Ulaç Okuma Sonrası Tamamlama",
+    "echo-readback-archive": {
+      "name": "Echo Ulaç — Okuma Sonrası Arşivi",
       "npm": "@ai-sdk/openai-compatible",
       "options": {
         "apiKey": "local",
@@ -51,8 +51,8 @@
         }
       }
     },
-    "echo-tool-selection-local": {
-      "name": "Echo Ulaç — Okuma ve Araç Seçimi — Terminal",
+    "echo-local": {
+      "name": "Echo Ulaç — Kişisel Çekirdek",
       "npm": "@ai-sdk/openai-compatible",
       "options": {
         "apiKey": "local",
@@ -61,7 +61,7 @@
       "models": {
         "echo-ulac-okuma-ve-arac-secimi-terminal-800m-b300-nvfp4-tam-parametre": {
           "id": "echo-ulac-okuma-ve-arac-secimi-terminal-800m-b300-nvfp4-tam-parametre",
-          "name": "Echo Ulaç — Okuma ve Araç Seçimi — Terminal — 800M / B300 NVFP4 / Tam Parametre",
+          "name": "Echo Ulaç — Kişisel Çekirdek / Okuma ve Araç Seçimi — 800M / B300 NVFP4 / Tam Parametre",
           "attachment": false,
           "reasoning": true,
           "temperature": false,
