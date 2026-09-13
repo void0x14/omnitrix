@@ -43,6 +43,7 @@ import { Truncate } from "@/tool/truncate"
 import { Image } from "@/image/image"
 import { decodeDataUrl } from "@/util/data-url"
 import { Process } from "@/util/process"
+import { AppProcess } from "@opencode-ai/core/process"
 import { Cause, Effect, Exit, Latch, Layer, Option, Scope, Context, Schema, Types } from "effect"
 import { InstanceState } from "@/effect/instance-state"
 import { TaskTool, type TaskPromptOps } from "@/tool/task"
@@ -144,6 +145,7 @@ const layer = Layer.effect(
     const flags = yield* RuntimeFlags.Service
     const database = yield* Database.Service
     const background = yield* BackgroundJob.Service
+    const appProcess = yield* AppProcess.Service
     const { db } = database
     const ops = Effect.fn("SessionPrompt.ops")(function* () {
       return {
@@ -528,8 +530,10 @@ const layer = Layer.effect(
           const args = Shell.args(sh, input.command, cwd)
           let output = ""
           let aborted = false
+          let processExitCode: number | null | undefined
 
-          const finish = Effect.uninterruptible(
+          const finish = (terminalExit: Exit.Exit<unknown, unknown>) =>
+            Effect.uninterruptible(
             Effect.gen(function* () {
               if (aborted) {
                 output += "\n\n" + ["<metadata>", "User aborted the command", "</metadata>"].join("\n")
@@ -545,13 +549,24 @@ const layer = Layer.effect(
                   time: { ...part.state.time, end: completed },
                   input: part.state.input,
                   title: "",
-                  metadata: { output },
+                  metadata: {
+                    output,
+                    terminationAttempted: aborted,
+                    terminalOutcome: aborted
+                      ? processExitCode === undefined
+                        ? "aborted-unknown"
+                        : "aborted"
+                      : Exit.isSuccess(terminalExit)
+                        ? "completed"
+                        : "unknown",
+                    ...(processExitCode !== undefined ? { exitCode: processExitCode } : {}),
+                  },
                   output,
                 }
                 yield* sessions.updatePart(part)
               }
             }),
-          )
+            )
 
           const exit = yield* restore(
             Effect.gen(function* () {
@@ -577,14 +592,14 @@ const layer = Layer.effect(
                   }
                 }),
               )
-              yield* handle.exitCode
+              processExitCode = yield* handle.exitCode
             }).pipe(Effect.scoped, Effect.orDie),
           ).pipe(Effect.exit)
 
           if (Exit.isFailure(exit) && Cause.hasInterrupts(exit.cause) && !Cause.hasDies(exit.cause)) {
             aborted = true
           }
-          yield* finish
+          yield* finish(exit)
 
           if (Exit.isFailure(exit) && !aborted && !Cause.hasInterruptsOnly(exit.cause)) {
             return yield* Effect.failCause(exit.cause)
@@ -1336,6 +1351,7 @@ const layer = Layer.effect(
               Effect.provideService(MCP.Service, mcp),
               Effect.provideService(Truncate.Service, truncate),
               Effect.provideService(RuntimeFlags.Service, flags),
+              Effect.provideService(AppProcess.Service, appProcess),
             )
 
             if (lastUser.format?.type === "json_schema") {
@@ -1352,7 +1368,11 @@ const layer = Layer.effect(
 
             yield* plugin.trigger("experimental.chat.messages.transform", {}, { messages: msgs })
 
-            const yerelModel = model.providerID === "yerel"
+            const yerelModel =
+              model.providerID === "yerel" ||
+              model.providerID === "echo" ||
+              model.providerID.startsWith("echo-") ||
+              model.api.id.startsWith("echo-")
             let skills: string | undefined
             let env: string[] = []
             let instructions: string[] = []
@@ -1750,6 +1770,7 @@ export const node = LayerNode.make({
     SessionSummary.node,
     SystemPrompt.node,
     LLM.node,
+    AppProcess.node,
     EventV2Bridge.node,
     RuntimeFlags.node,
     Database.node,
