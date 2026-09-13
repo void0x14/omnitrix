@@ -29,6 +29,7 @@ import * as OtelTracer from "@effect/opentelemetry/Tracer"
 import { LLMAISDK } from "./llm/ai-sdk"
 import { LLMNativeRuntime } from "./llm/native-runtime"
 import { LLMRequestPrep } from "./llm/request"
+import { legacyToolCallMiddleware } from "./llm/legacy-tool-call"
 
 export const OUTPUT_TOKEN_MAX = ProviderTransform.OUTPUT_TOKEN_MAX
 
@@ -325,6 +326,7 @@ const live: Layer.Layer<
           model: wrapLanguageModel({
             model: language,
             middleware: [
+              legacyToolCallMiddleware(),
               {
                 specificationVersion: "v3" as const,
                 async transformParams(args) {

@@ -28,8 +28,11 @@ const dosyaKomut = (dosya: string) => {
   return undefined
 }
 
-const dosyaDogrula = Effect.fn("Cekirdek.dosyaDogrula")(function* (dosya: string, cwd: string) {
-  const appProcess = yield* AppProcess.Service
+const dosyaDogrula = Effect.fn("Cekirdek.dosyaDogrula")(function* (
+  dosya: string,
+  cwd: string,
+  appProcess: AppProcess.Interface,
+) {
   const komut = dosyaKomut(dosya)
   if (!komut) return "OLDU"
   const r = yield* appProcess
@@ -71,6 +74,7 @@ export const cekirdekSonuc = Effect.fn("Cekirdek.sonuc")(function* (input: {
   toolId: string
   args: Record<string, unknown>
   result: Tool.ExecuteResult
+  appProcess: AppProcess.Interface
 }) {
   const ham = input.result.output
   const instance = yield* InstanceState.context
@@ -83,7 +87,7 @@ export const cekirdekSonuc = Effect.fn("Cekirdek.sonuc")(function* (input: {
   const dosyalar = hedefDosyalar(input.toolId, input.args)
   if (dosyalar.length > 0) {
     for (const dosya of dosyalar) {
-      const v = yield* dosyaDogrula(dosya, cwd)
+      const v = yield* dosyaDogrula(dosya, cwd, input.appProcess)
       if (v !== "OLDU") return v
     }
     return "OLDU"
@@ -95,6 +99,7 @@ export const invoke = Effect.fn("Cekirdek.invoke")(function* (input: {
   item: Tool.Def
   args: Record<string, unknown>
   ctx: Tool.Context
+  appProcess: AppProcess.Interface
 }) {
   const result = yield* Effect.suspend(() => {
     const raw = input.item.execute(input.args, input.ctx)
@@ -105,12 +110,12 @@ export const invoke = Effect.fn("Cekirdek.invoke")(function* (input: {
     toolId: input.item.id,
     args: input.args,
     result,
+    appProcess: input.appProcess,
   })
   if (v === undefined) return result
   return {
     ...result,
     title: `Cekirdek: ${v.split("\n")[0].slice(0, 80)}` as string,
-    output: `Cekirdek: ${v}\n${result.output}`,
     metadata: { ...result.metadata, cekirdekHukum: v, hamCikti: result.output },
   }
 })

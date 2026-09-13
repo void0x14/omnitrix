@@ -77,6 +77,16 @@ export const prepare = Effect.fn("LLMRequestPrep.prepare")(function* (input: Pre
     system.push(header, rest.join("\n"))
   }
 
+  // Qwen3.5's chat template accepts exactly one system message. Keep the
+  // model-specific contract explicit so providers that allow multiple system
+  // messages retain their existing behavior.
+  const singleSystemMessage = input.model.options?.systemMessageMode === "single"
+  if (singleSystemMessage && system.length > 1) {
+    const merged = system.join("\n")
+    system.length = 0
+    system.push(merged)
+  }
+
   const variant =
     !input.small && input.model.variants && input.user.model.variant
       ? input.model.variants[input.user.model.variant]
@@ -89,6 +99,7 @@ export const prepare = Effect.fn("LLMRequestPrep.prepare")(function* (input: Pre
         providerOptions: input.provider.options,
       })
   const options = mergeOptions(mergeOptions(mergeOptions(base, input.model.options), input.agent.options), variant)
+  if (singleSystemMessage) delete options.systemMessageMode
   if (
     input.model.api.npm === "@ai-sdk/azure" &&
     (input.provider.options.useCompletionUrls || input.model.options.useCompletionUrls || options.useCompletionUrls)

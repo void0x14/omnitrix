@@ -27,7 +27,9 @@
       }
     }
   },
-  "permission": {},
+  "permission": {
+    "read": "allow"
+  },
   "references": {
     "effect": {
       "repository": "github.com/Effect-TS/effect-smol",
