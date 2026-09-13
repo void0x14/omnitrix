@@ -50,6 +50,31 @@
           }
         }
       }
+    },
+    "echo-tool-selection-local": {
+      "name": "Echo Ulaç — Okuma ve Araç Seçimi — Terminal",
+      "npm": "@ai-sdk/openai-compatible",
+      "options": {
+        "apiKey": "local",
+        "baseURL": "http://127.0.0.1:8089/v1"
+      },
+      "models": {
+        "echo-ulac-okuma-ve-arac-secimi-terminal-800m-b300-nvfp4-tam-parametre": {
+          "id": "echo-ulac-okuma-ve-arac-secimi-terminal-800m-b300-nvfp4-tam-parametre",
+          "name": "Echo Ulaç — Okuma ve Araç Seçimi — Terminal — 800M / B300 NVFP4 / Tam Parametre",
+          "attachment": false,
+          "reasoning": true,
+          "temperature": false,
+          "tool_call": true,
+          "limit": {
+            "context": 16384,
+            "output": 4096
+          },
+          "options": {
+            "systemMessageMode": "single"
+          }
+        }
+      }
     }
   },
   "permission": {
