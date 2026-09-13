@@ -50,14 +50,21 @@ export type Prepared = {
   readonly headers: Record<string, string>
 }
 
+const isEchoModel = (model: Provider.Model) =>
+  model.providerID === "yerel" ||
+  model.providerID === "echo" ||
+  model.providerID.startsWith("echo-") ||
+  model.api.id.startsWith("echo-")
+
 const mergeOptions = (target: Record<string, any>, source: Record<string, any> | undefined): Record<string, any> =>
   mergeDeep(target, source ?? {}) as Record<string, any>
 
 export const prepare = Effect.fn("LLMRequestPrep.prepare")(function* (input: PrepareInput) {
   const isOpenaiOauth = input.provider.id === "openai" && input.auth?.type === "oauth"
+  const echoModel = isEchoModel(input.model)
   const system = [
     [
-      ...(input.agent.prompt ? [input.agent.prompt] : SystemPrompt.provider(input.model)),
+      ...(input.agent.prompt ? [input.agent.prompt] : echoModel ? [] : SystemPrompt.provider(input.model)),
       ...input.system,
       ...(input.user.system ? [input.user.system] : []),
     ]

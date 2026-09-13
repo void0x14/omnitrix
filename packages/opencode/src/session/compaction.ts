@@ -458,6 +458,15 @@ const layer = Layer.effect(
         return "stop"
       }
 
+      if (result === "continue" && processor.message.finish === "length") {
+        processor.message.error = new SessionV1.ContextOverflowError({
+          message: `Compaction summary did not finish: ${processor.message.finish ?? "unknown"}`,
+        }).toObject()
+        processor.message.finish = "error"
+        yield* session.updateMessage(processor.message)
+        return "stop"
+      }
+
       if (compactionPart && selected.tail_start_id && compactionPart.tail_start_id !== selected.tail_start_id) {
         yield* session.updatePart({
           ...compactionPart,
