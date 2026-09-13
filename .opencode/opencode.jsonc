@@ -9,9 +9,9 @@
         "baseURL": "http://127.0.0.1:8084/v1"
       },
       "models": {
-        "echo-ulac-800m-b300-nvfp4-fullparam-identity-r1": {
-          "id": "echo-ulac-800m-b300-nvfp4-fullparam-identity-r1",
-          "name": "Echo Ulaç 800M B300 NVFP4 Full-Parameter Identity R1",
+        "echo-ulac-kisisel-cekirdek-800m-b300-nvfp4-tam-parametre": {
+          "id": "echo-ulac-kisisel-cekirdek-800m-b300-nvfp4-tam-parametre",
+          "name": "Echo Ulaç — Kişisel Çekirdek — 800M / B300 NVFP4 / Tam Parametre",
           "attachment": false,
           "reasoning": true,
           "temperature": false,
