@@ -6,12 +6,12 @@
       "npm": "@ai-sdk/openai-compatible",
       "options": {
         "apiKey": "local",
-        "baseURL": "http://127.0.0.1:8086/v1"
+        "baseURL": "http://127.0.0.1:8084/v1"
       },
       "models": {
-        "echo-ulac-800m-b300-nvfp4-fullparam-toolflow-replay-r7": {
-          "id": "echo-ulac-800m-b300-nvfp4-fullparam-toolflow-replay-r7",
-          "name": "Echo Ulaç 800M B300 NVFP4 Full-Parameter Toolflow Replay R7",
+        "echo-ulac-800m-b300-nvfp4-fullparam-identity-r1": {
+          "id": "echo-ulac-800m-b300-nvfp4-fullparam-identity-r1",
+          "name": "Echo Ulaç 800M B300 NVFP4 Full-Parameter Identity R1",
           "attachment": false,
           "reasoning": true,
           "temperature": false,
