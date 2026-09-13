@@ -25,6 +25,31 @@
           }
         }
       }
+    },
+    "echo-terminal-local": {
+      "name": "Echo Ulaç Okuma Sonrası Tamamlama",
+      "npm": "@ai-sdk/openai-compatible",
+      "options": {
+        "apiKey": "local",
+        "baseURL": "http://127.0.0.1:8087/v1"
+      },
+      "models": {
+        "echo-ulac-okuma-sonrasi-tamamlama-800m-b300-nvfp4-tam-parametre": {
+          "id": "echo-ulac-okuma-sonrasi-tamamlama-800m-b300-nvfp4-tam-parametre",
+          "name": "Echo Ulaç — Okuma Sonrası Tamamlama — 800M / B300 NVFP4 / Tam Parametre",
+          "attachment": false,
+          "reasoning": true,
+          "temperature": false,
+          "tool_call": true,
+          "limit": {
+            "context": 16384,
+            "output": 4096
+          },
+          "options": {
+            "systemMessageMode": "single"
+          }
+        }
+      }
     }
   },
   "permission": {
