@@ -116,6 +116,7 @@ export const invoke = Effect.fn("Cekirdek.invoke")(function* (input: {
   return {
     ...result,
     title: `Cekirdek: ${v.split("\n")[0].slice(0, 80)}` as string,
+    output: result.output.startsWith("durum=") ? result.output : `durum=completed\n${result.output}`,
     metadata: { ...result.metadata, cekirdekHukum: v, hamCikti: result.output },
   }
 })

@@ -131,11 +131,6 @@ function flushPending(
     controller.enqueue(pending.end)
     return
   }
-  if (parsed.residual) {
-    controller.enqueue(pending.start)
-    controller.enqueue({ type: "text-delta", id: pending.start.id, delta: parsed.residual })
-    controller.enqueue(pending.end)
-  }
   for (const call of parsed.calls) {
     controller.enqueue({
       type: "tool-call",
