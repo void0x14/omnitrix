@@ -1396,6 +1396,7 @@ const layer = Layer.effect(
                   "Kullanıcının son isteğini doğrudan uygula.",
                   "Eylem gerekiyorsa gerçek sonucu al; gerçek sonuç olmadan işi tamamlanmış sayma.",
                   "Dosya içeriği istenirse read aracını kullan; aynı işi bash, grep veya başka bir araçla değiştirme.",
+                  "Kullanıcı açıkça yazma istemedikçe dosyayı write veya edit ile değiştirme.",
                   "Bir araç sonucu görevi tamamlıyorsa yeni araç çağrısı yapmadan nihai yanıtı ver.",
                   `Çalışma dizini: ${ctx.directory}`,
                 ]
