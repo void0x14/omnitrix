@@ -2,16 +2,16 @@
   "$schema": "https://opencode.ai/config.json",
   "provider": {
     "echo-local": {
-      "name": "Echo Ulaç — Kişisel Çekirdek",
+      "name": "Echo yerel B300",
       "npm": "@ai-sdk/openai-compatible",
       "options": {
         "apiKey": "local",
-        "baseURL": "http://127.0.0.1:8087/v1"
+        "baseURL": "http://127.0.0.1:8084/v1"
       },
       "models": {
-        "echo-ulac-okuma-sonrasi-tamamlama-800m-b300-nvfp4-tam-parametre": {
-          "id": "echo-ulac-okuma-sonrasi-tamamlama-800m-b300-nvfp4-tam-parametre",
-          "name": "Echo Ulaç — Kişisel Çekirdek / Okuma Sonrası Tamamlama — 800M / B300 NVFP4 / Tam Parametre",
+        "echo-ulac-kisisel-cekirdek-800m-b300-nvfp4-tam-parametre": {
+          "id": "echo-ulac-kisisel-cekirdek-800m-b300-nvfp4-tam-parametre",
+          "name": "Echo Ulaç — Kişisel Çekirdek — 800M / B300 NVFP4 / Tam Parametre",
           "attachment": false,
           "reasoning": true,
           "temperature": false,
@@ -26,17 +26,17 @@
         }
       }
     },
-    "echo-identity-archive": {
-      "name": "Echo Ulaç — Kimlik Arşivi",
+    "echo-terminal-local": {
+      "name": "Echo Ulaç Okuma Sonrası Tamamlama",
       "npm": "@ai-sdk/openai-compatible",
       "options": {
         "apiKey": "local",
-        "baseURL": "http://127.0.0.1:8084/v1"
+        "baseURL": "http://127.0.0.1:8087/v1"
       },
       "models": {
-        "echo-ulac-kisisel-cekirdek-800m-b300-nvfp4-tam-parametre": {
-          "id": "echo-ulac-kisisel-cekirdek-800m-b300-nvfp4-tam-parametre",
-          "name": "Echo Ulaç — Kimlik Arşivi — 800M / B300 NVFP4 / Tam Parametre",
+        "echo-ulac-okuma-sonrasi-tamamlama-800m-b300-nvfp4-tam-parametre": {
+          "id": "echo-ulac-okuma-sonrasi-tamamlama-800m-b300-nvfp4-tam-parametre",
+          "name": "Echo Ulaç — Okuma Sonrası Tamamlama — 800M / B300 NVFP4 / Tam Parametre",
           "attachment": false,
           "reasoning": true,
           "temperature": false,
