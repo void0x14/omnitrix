@@ -31,6 +31,11 @@ const TOOL_OUTPUT_MAX_CHARS = 2_000
 const PRUNE_PROTECTED_TOOLS = ["skill"]
 const MIN_PRESERVE_RECENT_TOKENS = 2_000
 const MAX_PRESERVE_RECENT_TOKENS = 15_000
+const isEchoModel = (model: Provider.Model) =>
+  model.providerID === "yerel" ||
+  model.providerID === "echo" ||
+  model.providerID.startsWith("echo-") ||
+  (model.api?.id ?? "").startsWith("echo-")
 type Turn = {
   start: number
   end: number
@@ -458,7 +463,17 @@ const layer = Layer.effect(
         return "stop"
       }
 
-      if (result === "continue" && processor.message.finish === "length") {
+      const generatedSummary = (yield* session.messages({ sessionID: input.sessionID })).find(
+        (message) => message.info.id === processor.message.id,
+      )
+      const generatedSummaryText = generatedSummary ? summaryText(generatedSummary) : undefined
+      const invalidSummary =
+        isEchoModel(model) &&
+        result === "continue" &&
+        (processor.message.finish === "length" ||
+          !generatedSummaryText ||
+          /<tool_call|<function=|<think>/i.test(generatedSummaryText))
+      if (invalidSummary) {
         processor.message.error = new SessionV1.ContextOverflowError({
           message: `Compaction summary did not finish: ${processor.message.finish ?? "unknown"}`,
         }).toObject()
