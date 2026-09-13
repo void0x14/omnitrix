@@ -1,6 +1,32 @@
 {
   "$schema": "https://opencode.ai/config.json",
-  "provider": {},
+  "provider": {
+    "echo-local": {
+      "name": "Echo yerel B300",
+      "npm": "@ai-sdk/openai-compatible",
+      "options": {
+        "apiKey": "local",
+        "baseURL": "http://127.0.0.1:8084/v1"
+      },
+      "models": {
+        "echo-ulac-800m-b300-nvfp4-fullparam-identity-r1": {
+          "id": "echo-ulac-800m-b300-nvfp4-fullparam-identity-r1",
+          "name": "Echo Ulaç 800M B300 NVFP4 Full-Parameter Identity R1",
+          "attachment": false,
+          "reasoning": true,
+          "temperature": false,
+          "tool_call": true,
+          "limit": {
+            "context": 16384,
+            "output": 4096
+          },
+          "options": {
+            "systemMessageMode": "single"
+          }
+        }
+      }
+    }
+  },
   "permission": {},
   "references": {
     "effect": {
@@ -12,7 +38,25 @@
       "description": "Contains opencode logs and data",
     },
   },
-  "mcp": {},
+  "mcp": {
+    "bug-bounty-mcp": { "enabled": false },
+    "chrome-devtools": { "enabled": false },
+    "codebase-memory-mcp": { "enabled": false },
+    "context7": { "enabled": false },
+    "exa": { "enabled": false },
+    "ffs": { "enabled": false },
+    "filesystem": { "enabled": false },
+    "firecrawl": { "enabled": false },
+    "hashline": { "enabled": false },
+    "in-memoria": { "enabled": false },
+    "kahin": { "enabled": false },
+    "linkup": { "enabled": false },
+    "paper-search-mcp": { "enabled": false },
+    "pentest-mcp": { "enabled": false },
+    "semble": { "enabled": false },
+    "sequential-thinking": { "enabled": false },
+    "tavily": { "enabled": false }
+  },
   "tools": {
     "github-triage": false,
     "github-pr-search": false,
