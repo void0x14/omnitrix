@@ -1,5 +1,7 @@
 {
   "$schema": "https://opencode.ai/config.json",
+  "model": "echo-local/echo-sinamalar-aligned-v5-Q4_K_M",
+  "small_model": "echo-local/echo-sinamalar-aligned-v5-Q4_K_M",
   "provider": {
     "echo-identity-archive": {
       "name": "Echo Ulaç — Kimlik Arşivi",
@@ -56,12 +58,12 @@
       "npm": "@ai-sdk/openai-compatible",
       "options": {
         "apiKey": "local",
-        "baseURL": "http://127.0.0.1:8098/v1"
+        "baseURL": "http://127.0.0.1:8305/v1"
       },
       "models": {
-        "echo-ulac-okuma-ve-arac-secimi-terminal-800m-b300-nvfp4-tam-parametre": {
-          "id": "echo-ulac-okuma-ve-arac-secimi-terminal-800m-b300-nvfp4-tam-parametre",
-          "name": "Echo Ulaç — Kişisel Çekirdek / Okuma ve Araç Seçimi — 800M / B300 NVFP4 / Tam Parametre",
+        "echo-sinamalar-aligned-v5-Q4_K_M": {
+          "id": "echo-sinamalar-aligned-v5-Q4_K_M",
+          "name": "Echo Ulaç — echo-sinamalar-aligned-v5-Q4_K_M",
           "attachment": false,
           "reasoning": true,
           "temperature": false,
@@ -91,23 +93,23 @@
     },
   },
   "mcp": {
-    "bug-bounty-mcp": { "enabled": false },
-    "chrome-devtools": { "enabled": false },
-    "codebase-memory-mcp": { "enabled": false },
-    "context7": { "enabled": false },
-    "exa": { "enabled": false },
-    "ffs": { "enabled": false },
-    "filesystem": { "enabled": false },
-    "firecrawl": { "enabled": false },
-    "hashline": { "enabled": false },
+    "bug-bounty-mcp": { "enabled": true },
+    "chrome-devtools": { "enabled": true },
+    "codebase-memory-mcp": { "enabled": true },
+    "context7": { "enabled": true },
+    "exa": { "enabled": true },
+    "ffs": { "enabled": true },
+    "filesystem": { "enabled": true },
+    "firecrawl": { "enabled": true },
+    "hashline": { "enabled": true },
     "in-memoria": { "enabled": false },
-    "kahin": { "enabled": false },
-    "linkup": { "enabled": false },
-    "paper-search-mcp": { "enabled": false },
-    "pentest-mcp": { "enabled": false },
-    "semble": { "enabled": false },
-    "sequential-thinking": { "enabled": false },
-    "tavily": { "enabled": false }
+    "kahin": { "enabled": true },
+    "linkup": { "enabled": true },
+    "paper-search-mcp": { "enabled": true },
+    "pentest-mcp": { "enabled": true },
+    "semble": { "enabled": true },
+    "sequential-thinking": { "enabled": true },
+    "tavily": { "enabled": true }
   },
   "tools": {
     "github-triage": false,

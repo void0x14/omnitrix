@@ -15,6 +15,7 @@ import { Effect, Exit, Schema, Scope } from "effect"
 import { EffectBridge } from "@/effect/bridge"
 import { RuntimeFlags } from "@/effect/runtime-flags"
 import { Database } from "@opencode-ai/core/database/database"
+import { isRecord } from "@/util/record"
 
 export interface TaskPromptOps {
   cancel(sessionID: SessionID): Effect.Effect<void>
@@ -148,7 +149,14 @@ export const TaskTool = Tool.define<typeof Parameters, TaskExecuteMetadata, Task
             const hasPending = (msgs as any[]).some((m: any) =>
               m.parts.some((p: any) => p.type === "tool" && (p.state.status === "pending" || p.state.status === "running")),
             )
-            const status = hasPending ? "running" : "completed"
+            const execution = SubagentState.executionFromMetadata(direct.metadata)
+            const status = execution
+              ? ["starting", "running", "cancelling"].includes(execution.state)
+                ? "orphaned"
+                : SubagentState.executionToHybridStatus(execution.state)
+              : hasPending
+                ? "running"
+                : "completed"
             return {
               title: params.description ?? tail ?? "task",
               metadata: { sessionId: SessionID.make(params.task_id) } as any,
@@ -325,6 +333,33 @@ export const TaskTool = Tool.define<typeof Parameters, TaskExecuteMetadata, Task
           ],
         }))
 
+      const previousExecution = SubagentState.executionFromMetadata(session?.metadata ?? nextSession.metadata)
+      let execution =
+        action === "update" && previousExecution && ["starting", "running", "cancelling"].includes(previousExecution.state)
+          ? SubagentState.transitionExecution(previousExecution, "running", {
+              mode: runInBackground ? "background" : "foreground",
+            })
+          : SubagentState.startExecution({
+              sessionID: nextSession.id,
+              parentSessionID: ctx.sessionID,
+              mode: runInBackground ? "background" : "foreground",
+              previous: previousExecution,
+            })
+
+      const persistExecution = Effect.fn("TaskTool.persistExecution")(function* (
+        state: SubagentState.DurableExecutionState,
+        patch: Partial<SubagentState.DurableExecution> = {},
+      ) {
+        execution = SubagentState.transitionExecution(execution, state, patch)
+        const current = yield* sessions.get(nextSession.id)
+        yield* sessions.setMetadata({
+          sessionID: nextSession.id,
+          metadata: { ...(current.metadata ?? {}), [SubagentState.DURABLE_EXECUTION_KEY]: execution },
+        })
+      })
+
+      yield* persistExecution(execution.state)
+
       const msg = yield* MessageV2.get({ sessionID: ctx.sessionID, messageID: ctx.messageID }).pipe(
         Effect.provideService(Database.Service, database),
         Effect.orDie,
@@ -351,6 +386,7 @@ export const TaskTool = Tool.define<typeof Parameters, TaskExecuteMetadata, Task
       const ops = ctx.extra?.promptOps as TaskPromptOps
       if (!ops) return yield* Effect.fail(new Error("TaskTool requires promptOps in ctx.extra"))
 
+      let executionEvidence: Partial<SubagentState.DurableExecution> = {}
       const runTask = Effect.fn("TaskTool.runTask")(function* () {
         const parts = yield* ops.resolvePromptParts(params.prompt!)
         const result = yield* ops.prompt({
@@ -364,6 +400,28 @@ export const TaskTool = Tool.define<typeof Parameters, TaskExecuteMetadata, Task
           agent: next.name,
           parts,
         })
+        const evidencePart = result.parts.findLast((item) => item.type === "tool")
+        if (
+          evidencePart?.type === "tool" &&
+          "metadata" in evidencePart.state &&
+          isRecord(evidencePart.state.metadata)
+        ) {
+          const evidence = evidencePart.state.metadata
+          executionEvidence = {
+            ...(typeof evidence.sideEffectObserved === "boolean"
+              ? { sideEffectObserved: evidence.sideEffectObserved }
+              : {}),
+            ...(typeof evidence.verified === "boolean" ? { verified: evidence.verified } : {}),
+            ...(typeof evidence.outputPath === "string" ? { outputPath: evidence.outputPath } : {}),
+            ...(typeof evidence.originalBytes === "number" ? { originalBytes: evidence.originalBytes } : {}),
+            ...(typeof evidence.originalLines === "number" ? { originalLines: evidence.originalLines } : {}),
+            ...(typeof evidence.retainedBytes === "number" ? { retainedBytes: evidence.retainedBytes } : {}),
+            ...(typeof evidence.retainedLines === "number" ? { retainedLines: evidence.retainedLines } : {}),
+            ...(evidence.retainedDirection === "head" || evidence.retainedDirection === "tail"
+              ? { retainedDirection: evidence.retainedDirection }
+              : {}),
+          }
+        }
         if (result.info.role === "assistant" && result.info.error) {
           const message =
             "message" in result.info.error.data && typeof result.info.error.data.message === "string"
@@ -377,6 +435,25 @@ export const TaskTool = Tool.define<typeof Parameters, TaskExecuteMetadata, Task
         }
         return result.parts.findLast((item) => item.type === "text")?.text ?? ""
       })
+      const trackedRun = (): Effect.Effect<string, unknown> =>
+        runTask().pipe(
+          Effect.tap(() =>
+            persistExecution(
+              ctx.abort.aborted ? "aborted" : "succeeded",
+              ctx.abort.aborted
+                ? { ...executionEvidence, terminalReason: "subagent completed after cancellation request" }
+                : executionEvidence,
+            ),
+          ),
+          Effect.tapError(() =>
+            persistExecution("failed", { ...executionEvidence, terminalReason: "subagent execution failed" }),
+          ),
+          Effect.onInterrupt(() =>
+            persistExecution("aborted", { ...executionEvidence, terminalReason: "subagent execution interrupted" }).pipe(
+              Effect.ignore,
+            ),
+          ),
+        )
 
       const inject = Effect.fn("TaskTool.injectBackgroundResult")(function* (
         state: "completed" | "error",
@@ -418,7 +495,7 @@ export const TaskTool = Tool.define<typeof Parameters, TaskExecuteMetadata, Task
         )
       })
 
-      if (yield* background.extend({ id: nextSession.id, run: runTask() })) {
+      if (yield* background.extend({ id: nextSession.id, run: trackedRun() })) {
         return {
           title: params.description,
           metadata: {
@@ -447,8 +524,10 @@ export const TaskTool = Tool.define<typeof Parameters, TaskExecuteMetadata, Task
           }),
           notify(nextSession.id),
         ]),
-        run: runTask().pipe(Effect.onInterrupt(() => ops.cancel(nextSession.id))),
+        run: trackedRun().pipe(Effect.onInterrupt(() => ops.cancel(nextSession.id))),
       })
+
+      yield* persistExecution("running", { jobID: info.id })
 
       function backgroundResult() {
         return {
@@ -467,24 +546,54 @@ export const TaskTool = Tool.define<typeof Parameters, TaskExecuteMetadata, Task
         }
       }
 
-      // Deterministic stateful hook: never block parent, always return running state immediately.
-      // Parent remains aware via [SUBAGENT STATE] injection and can use task status/cancel/update
-      // in real-time before child completes. This fixes the architectural flaw where
-      // foreground tasks blocked the parent and made it stateless.
       const runCancel = yield* EffectBridge.make()
-      const cancel = ops.cancel(nextSession.id)
+      const cancel = Effect.all(
+        [
+          persistExecution("cancelling", { terminalReason: "cancel requested" }).pipe(Effect.ignore),
+          ops.cancel(nextSession.id),
+        ],
+        { discard: true },
+      )
       function onAbort() {
         runCancel.fork(cancel)
       }
-      // Setup abort handling (ESC -> cancel child) without blocking
-      yield* Effect.sync(() => {
-        ctx.abort.addEventListener("abort", onAbort)
-      }).pipe(
-        Effect.ensuring(Effect.sync(() => ctx.abort.removeEventListener("abort", onAbort))),
-        Effect.forkIn(scope, { startImmediately: true }),
+
+      if (runInBackground) {
+        yield* notify(info.id)
+        return backgroundResult()
+      }
+
+      return yield* Effect.acquireUseRelease(
+        Effect.sync(() => {
+          ctx.abort.addEventListener("abort", onAbort)
+        }),
+        () =>
+          Effect.gen(function* () {
+            const result = yield* Effect.raceFirst(
+              background.wait({ id: nextSession.id }).pipe(Effect.map((waited) => waited.info)),
+              background.waitForPromotion(nextSession.id),
+            )
+            if (result?.metadata?.background === true) return backgroundResult()
+            if (result?.status === "error") return yield* Effect.fail(new Error(result.error ?? "Task failed"))
+            if (result?.status === "cancelled") return yield* Effect.fail(new Error("Task cancelled"))
+            return {
+              title: params.description,
+              metadata,
+              output: renderOutput({ sessionID: nextSession.id, state: "completed", text: result?.output ?? "" }),
+            }
+          }),
+        (_, exit) =>
+          Effect.gen(function* () {
+            if (Exit.hasInterrupts(exit))
+              yield* Effect.all([cancel, background.cancel(nextSession.id)], { discard: true })
+          }).pipe(
+            Effect.ensuring(
+              Effect.sync(() => {
+                ctx.abort.removeEventListener("abort", onAbort)
+              }),
+            ),
+          ),
       )
-      yield* notify(info.id)
-      return backgroundResult()
     })
 
     return {

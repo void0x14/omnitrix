@@ -587,6 +587,10 @@ it.instance(
         }),
       )
       expect(err).toBeInstanceOf(PermissionV1.DeniedError)
+      const denied = err instanceof PermissionV1.DeniedError ? err : undefined
+      expect(denied?.message).toContain("Tool call denied by permission policy")
+      expect(denied?.message).toContain("bash:deny")
+      expect(denied?.message).not.toContain("rm -rf /")
     }),
   { git: true },
 )

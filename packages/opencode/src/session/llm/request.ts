@@ -53,7 +53,9 @@ export type Prepared = {
 const isEchoModel = (model: Provider.Model) =>
   model.providerID === "yerel" ||
   model.providerID === "echo" ||
+  model.providerID === "echo-local" ||
   model.providerID.startsWith("echo-") ||
+  model.providerID.startsWith("opencode-echo") ||
   model.api.id.startsWith("echo-")
 
 const mergeOptions = (target: Record<string, any>, source: Record<string, any> | undefined): Record<string, any> =>
@@ -62,7 +64,9 @@ const mergeOptions = (target: Record<string, any>, source: Record<string, any> |
 export const prepare = Effect.fn("LLMRequestPrep.prepare")(function* (input: PrepareInput) {
   const isOpenaiOauth = input.provider.id === "openai" && input.auth?.type === "oauth"
   const echoModel = isEchoModel(input.model)
-  const system = [
+  const system = echoModel
+    ? []
+    : [
     [
       ...(input.agent.prompt ? [input.agent.prompt] : echoModel ? [] : SystemPrompt.provider(input.model)),
       ...input.system,
@@ -70,7 +74,7 @@ export const prepare = Effect.fn("LLMRequestPrep.prepare")(function* (input: Pre
     ]
       .filter((x) => x)
       .join("\n"),
-  ]
+      ]
 
   const header = system[0]
   yield* input.plugin.trigger(
@@ -107,6 +111,9 @@ export const prepare = Effect.fn("LLMRequestPrep.prepare")(function* (input: Pre
       })
   const options = mergeOptions(mergeOptions(mergeOptions(base, input.model.options), input.agent.options), variant)
   if (singleSystemMessage) delete options.systemMessageMode
+  if (echoModel) {
+    options.stop = ["<|im_end|>", "<|endoftext|>"]
+  }
   if (
     input.model.api.npm === "@ai-sdk/azure" &&
     (input.provider.options.useCompletionUrls || input.model.options.useCompletionUrls || options.useCompletionUrls)
@@ -117,7 +124,7 @@ export const prepare = Effect.fn("LLMRequestPrep.prepare")(function* (input: Pre
   if (isOpenaiOauth) options.instructions = system.join("\n")
 
   const messages =
-    isOpenaiOauth || input.isWorkflow
+    isOpenaiOauth || input.isWorkflow || echoModel
       ? input.messages
       : [
           ...system.map(

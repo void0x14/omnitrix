@@ -13,17 +13,30 @@ type ParsedText = {
   residual: string
 }
 
-const TOOL_CALL_BLOCK = /<tool_call>\s*<function=([^>\s]+)>([\s\S]*?)<\/function>\s*<\/tool_call>/g
+const TOOL_CALL_BLOCK = /<tool_call>\s*(?:<\s*)?<function=([^>\s]+)>([\s\S]*?)<\/function>\s*<\/tool_call>/g
 const PARAMETER_BLOCK = /<parameter=([^>\s]+)>\s*([\s\S]*?)\s*<\/parameter>/g
 
 function parseFunction(name: string, body: string): ParsedCall | undefined {
+  const trimmed = body.trim()
+  if (trimmed.startsWith("{") && trimmed.endsWith("}")) {
+    try {
+      const parsed = JSON.parse(trimmed)
+      if (typeof parsed === "object" && parsed !== null) {
+        return { name, arguments: parsed }
+      }
+    } catch {}
+  }
+
   const args: Record<string, unknown> = {}
   let cursor = 0
   let match: RegExpExecArray | null
   while ((match = PARAMETER_BLOCK.exec(body)) !== null) {
     if (body.slice(cursor, match.index).trim() !== "") return undefined
     const parameter = match[1]
-    if (parameter in args) return undefined
+    if (parameter in args) {
+      cursor = match.index + match[0].length
+      continue
+    }
     const raw = match[2].trim()
     try {
       args[parameter] = JSON.parse(raw)
@@ -124,10 +137,22 @@ function flushPending(
   controller: TransformStreamDefaultController<LanguageModelV3StreamPart>,
   allocateCallID?: () => string,
 ) {
-  const parsed = parseLegacyText(pending.delta)
+  let delta = pending.delta
+  const thinkMatch = delta.match(/<think>([\s\S]*?)<\/think>/)
+  if (thinkMatch) {
+    const thought = thinkMatch[1].trim()
+    if (thought) {
+      controller.enqueue({ type: "reasoning-start", id: `think-${pending.start.id}` })
+      controller.enqueue({ type: "reasoning-delta", id: `think-${pending.start.id}`, delta: thought })
+      controller.enqueue({ type: "reasoning-end", id: `think-${pending.start.id}` })
+    }
+    delta = delta.replace(/<think>[\s\S]*?<\/think>\s*/g, "")
+  }
+
+  const parsed = parseLegacyText(delta)
   if (!parsed) {
     controller.enqueue(pending.start)
-    if (pending.delta) controller.enqueue({ type: "text-delta", id: pending.start.id, delta: pending.delta })
+    if (delta) controller.enqueue({ type: "text-delta", id: pending.start.id, delta })
     controller.enqueue(pending.end)
     return
   }

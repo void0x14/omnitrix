@@ -139,7 +139,14 @@ function wrap<Parameters extends Schema.Decoder<unknown>, Result extends Metadat
             metadata: {
               ...result.metadata,
               truncated: truncated.truncated,
-              ...(truncated.truncated && { outputPath: truncated.outputPath }),
+              ...(truncated.truncated && {
+                outputPath: truncated.outputPath,
+                originalBytes: truncated.originalBytes,
+                originalLines: truncated.originalLines,
+                retainedBytes: truncated.retainedBytes,
+                retainedLines: truncated.retainedLines,
+                retainedDirection: truncated.retainedDirection,
+              }),
             },
           }
         }).pipe(Effect.orDie, Effect.withSpan("Tool.execute", { attributes: attrs }))

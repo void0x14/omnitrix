@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto"
 import { Effect } from "effect"
 import { Database } from "@opencode-ai/core/database/database"
 import { BackgroundJob } from "@/background/job"
@@ -6,7 +7,141 @@ import { MessageV2 } from "./message-v2"
 import { SessionV1 } from "@opencode-ai/core/v1/session"
 import type { SessionID } from "./schema"
 
-export type HybridStatus = "running" | "completed" | "error" | "cancelled"
+export type HybridStatus = "running" | "completed" | "error" | "cancelled" | "orphaned"
+
+export type DurableExecutionState =
+  | "starting"
+  | "running"
+  | "cancelling"
+  | "succeeded"
+  | "failed"
+  | "aborted"
+  | "orphaned"
+
+export type DurableExecution = {
+  version: 1
+  executionID: string
+  parentSessionID: string
+  sessionID: string
+  attempt: number
+  mode: "foreground" | "background"
+  state: DurableExecutionState
+  startedAt: number
+  updatedAt: number
+  terminalAt?: number
+  terminalReason?: string
+  ownerID?: string
+  jobID?: string
+  exitCode?: number | null
+  signal?: string
+  verified: boolean
+  sideEffectObserved?: boolean
+  outputPath?: string
+  originalBytes?: number
+  originalLines?: number
+  retainedBytes?: number
+  retainedLines?: number
+  retainedDirection?: "head" | "tail"
+}
+
+export const DURABLE_EXECUTION_KEY = "opencode.execution"
+export const PROCESS_OWNER_ID = `${process.pid}:${Date.now()}:${randomUUID()}`
+
+const TERMINAL_EXECUTION_STATES = new Set<DurableExecutionState>(["succeeded", "failed", "aborted", "orphaned"])
+
+export function executionFromMetadata(metadata: Record<string, unknown> | undefined): DurableExecution | undefined {
+  const value = metadata?.[DURABLE_EXECUTION_KEY]
+  if (!value || typeof value !== "object") return undefined
+  const item = value as Partial<DurableExecution>
+  if (
+    item.version !== 1 ||
+    typeof item.executionID !== "string" ||
+    typeof item.parentSessionID !== "string" ||
+    typeof item.sessionID !== "string" ||
+    typeof item.attempt !== "number" ||
+    (item.mode !== "foreground" && item.mode !== "background") ||
+    typeof item.state !== "string" ||
+    !["starting", "running", "cancelling", "succeeded", "failed", "aborted", "orphaned"].includes(item.state) ||
+    typeof item.startedAt !== "number" ||
+    typeof item.updatedAt !== "number" ||
+    typeof item.verified !== "boolean" ||
+    (item.ownerID !== undefined && typeof item.ownerID !== "string")
+  )
+    return undefined
+  return item as DurableExecution
+}
+
+export function startExecution(input: {
+  sessionID: string
+  parentSessionID: string
+  mode: "foreground" | "background"
+  previous?: DurableExecution
+  now?: number
+}): DurableExecution {
+  const now = input.now ?? Date.now()
+  const attempt = (input.previous?.attempt ?? 0) + 1
+  return {
+    version: 1,
+    executionID: `${input.sessionID}:${attempt}`,
+    parentSessionID: input.parentSessionID,
+    sessionID: input.sessionID,
+    attempt,
+    mode: input.mode,
+    state: "starting",
+    startedAt: now,
+    updatedAt: now,
+    ownerID: PROCESS_OWNER_ID,
+    verified: false,
+  }
+}
+
+export function reconcileAfterRestart(
+  execution: DurableExecution,
+  ownerID: string,
+  now = Date.now(),
+): DurableExecution {
+  if (TERMINAL_EXECUTION_STATES.has(execution.state)) return execution
+  if (!execution.ownerID || execution.ownerID === ownerID) return execution
+  return transitionExecution(
+    execution,
+    "orphaned",
+    { terminalReason: `owner process unavailable: ${execution.ownerID}` },
+    now,
+  )
+}
+
+export function transitionExecution(
+  execution: DurableExecution,
+  state: DurableExecutionState,
+  patch: Partial<DurableExecution> = {},
+  now = Date.now(),
+): DurableExecution {
+  if (TERMINAL_EXECUTION_STATES.has(execution.state)) return execution
+  const next = {
+    ...execution,
+    ...patch,
+    ...(TERMINAL_EXECUTION_STATES.has(state) ? {} : { ownerID: PROCESS_OWNER_ID }),
+    state,
+    updatedAt: now,
+  }
+  if (TERMINAL_EXECUTION_STATES.has(state)) next.terminalAt ??= now
+  return next
+}
+
+export function executionToHybridStatus(state: DurableExecutionState): HybridStatus {
+  switch (state) {
+    case "succeeded":
+      return "completed"
+    case "failed":
+      return "error"
+    case "aborted":
+      return "cancelled"
+    case "orphaned":
+      return "orphaned"
+    default:
+      return "running"
+  }
+}
 
 export type HybridInfo = {
   id: string
@@ -20,7 +155,7 @@ export type HybridInfo = {
   sessionID: SessionID
 }
 
-function durableStatusFromMessages(msgs: SessionV1.WithParts[]): HybridStatus {
+export function durableStatusFromMessages(msgs: SessionV1.WithParts[]): HybridStatus {
   if (msgs.length === 0) return "running"
   const hasPendingTool = msgs.some((m) =>
     m.parts.some((p: SessionV1.Part) => p.type === "tool" && (p.state.status === "pending" || p.state.status === "running")),
@@ -33,6 +168,22 @@ function durableStatusFromMessages(msgs: SessionV1.WithParts[]): HybridStatus {
   if (last && !last.finish) return "running"
   if (latest.user && !last) return "running"
   return msgs.length > 0 ? "running" : "running"
+}
+
+function durableStatusForChild(child: Session.Info, msgs: SessionV1.WithParts[], live: boolean) {
+  const execution = executionFromMetadata(child.metadata)
+  if (execution) {
+    const reconciled = reconcileAfterRestart(execution, PROCESS_OWNER_ID)
+    if (reconciled.state === "orphaned") {
+      return { status: "orphaned" as const, execution: reconciled }
+    }
+    if (live || TERMINAL_EXECUTION_STATES.has(reconciled.state)) {
+      return { status: executionToHybridStatus(reconciled.state), execution: reconciled }
+    }
+    return { status: "orphaned" as const, execution: transitionExecution(reconciled, "orphaned", {}, Date.now()) }
+  }
+  const status = durableStatusFromMessages(msgs)
+  return { status: live || status !== "running" ? status : ("orphaned" as const), execution: undefined }
 }
 
 function tailFromMessages(msgs: SessionV1.WithParts[]): string | undefined {
@@ -123,15 +274,26 @@ export const hybridList = Effect.fn("SubagentState.hybridList")(function* (paren
       Effect.provideService(Database.Service, database),
       Effect.catch(() => Effect.succeed([] as SessionV1.WithParts[])),
     )
-    const dur = durableStatusFromMessages(msgs)
+    const dur = durableStatusForChild(child, msgs, false)
+    if (dur.execution?.state === "orphaned") {
+      yield* sessions.setMetadata({
+        sessionID: child.id,
+        metadata: { ...(child.metadata ?? {}), [DURABLE_EXECUTION_KEY]: dur.execution },
+      })
+    }
     result.set(cid, {
       id: cid,
       title: child.title,
-      status: dur,
+      status: dur.status,
       started_at: child.time.created,
       elapsed: Math.floor((now - child.time.created) / 1000),
       tail: tailFromMessages(msgs),
-      metadata: { parentSessionId: parentID, sessionId: cid } as Record<string, unknown>,
+      metadata: {
+        ...child.metadata,
+        parentSessionId: parentID,
+        sessionId: cid,
+        ...(dur.execution ? { execution: dur.execution } : {}),
+      } as Record<string, unknown>,
       source: "durable",
       sessionID: child.id,
     })
@@ -213,15 +375,26 @@ export const hybridListWith = Effect.fn("SubagentState.hybridListWith")(function
     const msgs = yield* MessageV2.filterCompactedEffect(child.id).pipe(
       Effect.provideService(Database.Service, database),
     )
-    const dur = durableStatusFromMessages(msgs)
+    const dur = durableStatusForChild(child, msgs, false)
+    if (dur.execution?.state === "orphaned") {
+      yield* sessions.setMetadata({
+        sessionID: child.id,
+        metadata: { ...(child.metadata ?? {}), [DURABLE_EXECUTION_KEY]: dur.execution },
+      })
+    }
     result.set(cid, {
       id: cid,
       title: child.title,
-      status: dur,
+      status: dur.status,
       started_at: child.time.created,
       elapsed: Math.floor((now - child.time.created) / 1000),
       tail: tailFromMessages(msgs),
-      metadata: { parentSessionId: parentID, sessionId: cid } as Record<string, unknown>,
+      metadata: {
+        ...child.metadata,
+        parentSessionId: parentID,
+        sessionId: cid,
+        ...(dur.execution ? { execution: dur.execution } : {}),
+      } as Record<string, unknown>,
       source: "durable",
       sessionID: child.id,
     })

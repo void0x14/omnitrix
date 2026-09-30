@@ -22,7 +22,16 @@ export class DeniedError extends Schema.TaggedErrorClass<DeniedError>()("Permiss
   ruleset: Schema.Any,
 }) {
   override get message() {
-    return `The user has specified a rule which prevents you from using this specific tool call. Here are some of the relevant rules ${JSON.stringify(this.ruleset)}`
+    const rules = Array.isArray(this.ruleset) ? this.ruleset : []
+    const actions = [
+      ...new Set(
+        rules
+          .filter((rule): rule is Record<string, unknown> => typeof rule === "object" && rule !== null)
+          .map((rule) => `${String(rule.permission ?? "permission")}:${String(rule.action ?? "deny")}`),
+      ),
+    ]
+    const summary = actions.length > 0 ? ` Matching policy actions: ${actions.slice(0, 4).join(", ")}.` : ""
+    return `Tool call denied by permission policy.${summary} Do not retry the same call without changing its target or permission context.`
   }
 }
 

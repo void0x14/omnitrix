@@ -463,6 +463,8 @@ export const ShellTool = Tool.define(
       let expired = false
       let timedOut = false
       let aborted = false
+      let totalBytes = 0
+      let totalNewlines = 0
 
       const closeSink = Effect.fnUntraced(function* () {
         const stream = sink
@@ -523,6 +525,8 @@ export const ShellTool = Tool.define(
           const streamFiber = yield* Effect.forkDetach(
             Stream.runForEach(Stream.decodeText(handle.all), (chunk) => {
               const size = Buffer.byteLength(chunk, "utf-8")
+              totalBytes += size
+              totalNewlines += (chunk.match(/\n/g) ?? []).length
               list.push({ text: chunk, size })
               used += size
               while (used > keep && list.length > 1) {
@@ -635,9 +639,20 @@ export const ShellTool = Tool.define(
       if (!output) output = "(no output)"
 
       if (cut && file) {
-        const spillBytes = Buffer.byteLength(raw, "utf-8")
-        const spillLines = raw.split("\n").length
-        output = `Sonuc dogrulandi. Ham cikti (${spillBytes} bayt, ${spillLines} satir) kayitli: ${file}\n\n` + output
+        const totalLines = totalBytes === 0 ? 0 : totalNewlines + 1
+        const keptBytes = Buffer.byteLength(end.text, "utf-8")
+        const keptLines = end.text.split("\n").length
+        const byteLimited = totalBytes > limits.maxBytes
+        const removed = byteLimited
+          ? Math.max(0, totalBytes - keptBytes)
+          : Math.max(0, totalLines - keptLines)
+        const unit = byteLimited ? "bytes" : "lines"
+        output = [
+          "The tool call succeeded but the output was truncated.",
+          `Full output saved to: ${file}`,
+          `...${removed} ${unit} truncated...`,
+          output,
+        ].join("\n\n")
       }
 
       if (meta.length > 0) {
@@ -650,7 +665,26 @@ export const ShellTool = Tool.define(
           exit: code,
           truncated: cut,
           timedOut,
-          ...(cut && file ? { outputPath: file } : {}),
+          terminationAttempted: aborted || expired,
+          terminalOutcome: aborted
+            ? code === null
+              ? "aborted-unknown"
+              : "aborted"
+            : expired
+              ? "timed-out"
+              : code === null
+                ? "unknown"
+                : "completed",
+          ...(cut && file
+            ? {
+                outputPath: file,
+                originalBytes: totalBytes,
+                originalLines: totalBytes === 0 ? 0 : totalNewlines + 1,
+                retainedBytes: Buffer.byteLength(end.text, "utf-8"),
+                retainedLines: end.text.split("\n").length,
+                retainedDirection: "tail" as const,
+              }
+            : {}),
         },
         output,
       }

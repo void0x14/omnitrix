@@ -1,0 +1,2 @@
+$ bun run --conditions=browser ./src/index.ts --pure run --format json --model "echo-terminal-local/echo-ulac-okuma-sonrasi-tamamlama-800m-b300-nvfp4-tam-parametre" --agent build --thinking --auto --dir /tmp/echo-gate-workspace --title "Echo readback gate" " /tmp/echo-gate-workspace/echo-read-gate.txt dosyasını gerçek read aracıyla oku. Sonucu aldıktan sonra gördüğün değeri tek cümleyle yaz ve işi bitir; yeni araç çağrısı yapma."
+error: script "dev" exited with code 1

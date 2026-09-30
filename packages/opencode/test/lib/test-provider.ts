@@ -10,6 +10,11 @@ export function testProviderConfig(llmUrl: string) {
   return {
     formatter: false,
     lsp: false,
+    // The CLI tests must never inherit or initialize an MCP server. The
+    // subprocess also runs with an isolated HOME and project-config loading
+    // disabled; keeping this explicit makes the no-MCP contract visible in
+    // the actual config OpenCode parses.
+    mcp: {},
     provider: {
       test: {
         name: "Test",

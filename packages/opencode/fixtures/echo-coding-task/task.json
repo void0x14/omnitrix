@@ -1,0 +1,23 @@
+{
+  "schema": "echo.coding-task.v1",
+  "task_id": "echo-coding-slugify-20260830",
+  "language": "typescript",
+  "target_file": "src/slugify.ts",
+  "acceptance_command": ["bun", "test", "test"],
+  "requirement": "Implement slugify so surrounding whitespace is removed, letters are lower-case, and every run of non-alphanumeric characters becomes one hyphen.",
+  "required_evidence": [
+    "target file was read",
+    "target file changed",
+    "acceptance command exited zero",
+    "final diff is available",
+    "final response is concise Turkish"
+  ],
+  "fail_conditions": [
+    "wrong file changed",
+    "narration without a file change",
+    "acceptance command skipped or failed",
+    "invented tool result",
+    "unfinished background task",
+    "duplicate execution"
+  ]
+}

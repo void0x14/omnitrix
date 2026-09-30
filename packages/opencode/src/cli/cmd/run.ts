@@ -285,9 +285,10 @@ export const RunCommand = effectCmd({
         throw error
       }
 
-      let message = [...args.message, ...(args["--"] || [])]
-        .map((arg) => (arg.includes(" ") ? `"${arg.replace(/"/g, '\\"')}"` : arg))
-        .join(" ")
+      // CLI arguments are already tokenized by yargs. Re-quoting arguments
+      // changes the user's prompt (e.g. `ben kimim` becomes `"ben kimim"`).
+      // Preserve the exact text that was passed to the command.
+      let message = [...args.message, ...(args["--"] || [])].join(" ")
 
       if (interactive && args.command) {
         die("--mini cannot be used with --command")
@@ -793,7 +794,8 @@ export const RunCommand = effectCmd({
             if (
               event.type === "session.status" &&
               event.properties.sessionID === sessionID &&
-              event.properties.status.type === "idle"
+              event.properties.status.type === "idle" &&
+              toggles.get("start") === true
             ) {
               break
             }

@@ -24,7 +24,16 @@ import { Reference } from "@opencode-ai/core/reference"
 import { MCP } from "@/mcp"
 import { PermissionV1 } from "@opencode-ai/core/v1/permission"
 
+const isEchoModel = (model: Provider.Model) =>
+  model.providerID === "yerel" ||
+  model.providerID === "echo" ||
+  model.providerID === "echo-local" ||
+  model.providerID.startsWith("echo-") ||
+  model.providerID.startsWith("opencode-echo") ||
+  model.api.id.startsWith("echo-")
+
 export function provider(model: Provider.Model) {
+  if (isEchoModel(model)) return []
   if (model.api.id.includes("muse")) {
     const name = model.api.id.includes("muse-glimmer") ? "Muse Glimmer" : "Muse Spark"
     return [PROMPT_META.replaceAll("{{MODEL_NAME}}", name)]
@@ -65,6 +74,7 @@ const layer = Layer.effect(
 
     return Service.of({
       environment: Effect.fn("SystemPrompt.environment")(function* (model: Provider.Model) {
+        if (isEchoModel(model)) return []
         const ctx = yield* InstanceState.context
         const references = yield* Effect.gen(function* () {
           return (yield* (yield* Reference.Service).list()).filter((reference) => reference.description !== undefined)

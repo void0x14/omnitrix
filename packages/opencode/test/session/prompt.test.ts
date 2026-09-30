@@ -1876,6 +1876,8 @@ unixNoLLMServer(
           const tool = completedTool(exit.value.parts)
           if (tool) {
             expect(tool.state.output).toContain("User aborted the command")
+            expect(tool.state.metadata.terminationAttempted).toBe(true)
+            expect(["aborted", "aborted-unknown"]).toContain(tool.state.metadata.terminalOutcome)
           }
         }
       }),
@@ -1976,6 +1978,11 @@ unix(
 
       expect(tool.state.metadata.truncated).toBe(true)
       expect(typeof tool.state.metadata.outputPath).toBe("string")
+      expect(tool.state.metadata.originalBytes).toBeGreaterThan(tool.state.metadata.retainedBytes)
+      expect(tool.state.metadata.originalLines).toBeGreaterThan(tool.state.metadata.retainedLines)
+      expect(tool.state.metadata.retainedDirection).toBe("tail")
+      expect(tool.state.metadata.terminationAttempted).toBe(true)
+      expect(["aborted", "aborted-unknown"]).toContain(tool.state.metadata.terminalOutcome)
       expect(tool.state.output).toMatch(/\.\.\.output truncated\.\.\./)
       expect(tool.state.output).toMatch(/Full output saved to:\s+\S+/)
       expect(tool.state.output).not.toContain("Tool execution aborted")

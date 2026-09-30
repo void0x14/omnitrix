@@ -587,6 +587,56 @@ describe("ProviderTransform.options - gpt-5 textVerbosity", () => {
     expect(result.tools.lookup.strict).toBe(false)
   })
 
+  test("single-system model contract merges transformed system messages", async () => {
+    const model = {
+      ...createGpt5Model("echo-fsociety-h200-20260828"),
+      id: "echo-local/echo-fsociety-h200-20260828",
+      providerID: "echo-local",
+      api: {
+        id: "echo-fsociety-h200-20260828",
+        url: "http://127.0.0.1:8080/v1",
+        npm: "@ai-sdk/openai-compatible",
+      },
+      options: { systemMessageMode: "single" },
+    }
+    const result = await Effect.runPromise(
+      LLMRequestPrep.prepare({
+        user: {
+          id: "msg_user-echo-single-system",
+          sessionID,
+          role: "user",
+          time: { created: Date.now() },
+          agent: "test",
+          model: { providerID: "echo-local", modelID: "echo-fsociety-h200-20260828" },
+        } as any,
+        sessionID,
+        model,
+        agent: { name: "test", mode: "primary", options: {}, permission: [] } as any,
+        system: ["second system"],
+        messages: [{ role: "user", content: "Hello" }],
+        tools: {},
+        provider: { id: "echo-local", options: {} } as any,
+        auth: undefined,
+        plugin: {
+          trigger: (name: string, _input: unknown, output: any) => {
+            if (name === "experimental.chat.system.transform") output.system.push("first system")
+            return Effect.succeed(output)
+          },
+          list: () => Effect.succeed([]),
+          init: () => Effect.void,
+        } as any,
+        flags: { outputTokenMax: 32_000, client: "test" } as any,
+        isWorkflow: false,
+      }),
+    )
+    expect(result.system).toHaveLength(1)
+    expect(result.messages.filter((message) => message.role === "system")).toHaveLength(1)
+    expect(result.messages[0]?.role).toBe("system")
+    expect(result.messages[0]?.content).toContain("first system")
+    expect(result.messages[0]?.content).toContain("second system")
+    expect(result.params.options.systemMessageMode).toBeUndefined()
+  })
+
   test("gpt-5.1 should have textVerbosity set to low", () => {
     const model = createGpt5Model("gpt-5.1")
     const result = ProviderTransform.options({ model, sessionID, providerOptions: {} })

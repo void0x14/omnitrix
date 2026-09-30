@@ -17,6 +17,7 @@ import { SessionRunState } from "@/session/run-state"
 import { SessionStatus } from "@/session/status"
 
 import { TaskTool, type TaskPromptOps } from "../../src/tool/task"
+import { SubagentState } from "../../src/session/subagent-state"
 import { Truncate } from "@/tool/truncate"
 import { ToolRegistry } from "@/tool/registry"
 import { RuntimeFlags } from "@/effect/runtime-flags"
@@ -101,6 +102,8 @@ function stubOps(opts?: {
   text?: string
   error?: NonNullable<SessionV1.Assistant["error"]>
   toolError?: string
+  toolMetadata?: Record<string, unknown>
+  toolOutput?: string
 }): TaskPromptOps {
   return {
     cancel: () => Effect.void,
@@ -108,7 +111,7 @@ function stubOps(opts?: {
     prompt: (input) =>
       Effect.sync(() => {
         opts?.onPrompt?.(input)
-        return reply(input, opts?.text ?? "done", opts?.error, opts?.toolError)
+        return reply(input, opts?.text ?? "done", opts?.error, opts?.toolError, opts?.toolMetadata, opts?.toolOutput)
       }),
   }
 }
@@ -118,8 +121,44 @@ function reply(
   text: string,
   error?: NonNullable<SessionV1.Assistant["error"]>,
   toolError?: string,
+  toolMetadata?: Record<string, unknown>,
+  toolOutput?: string,
 ): SessionV1.WithParts {
   const id = MessageID.ascending()
+  const toolPart = toolError
+    ? {
+        id: PartID.ascending(),
+        messageID: id,
+        sessionID: input.sessionID,
+        type: "tool" as const,
+        tool: "read",
+        callID: "call-1",
+        state: {
+          status: "error" as const,
+          input: { filePath: "/external" },
+          error: toolError,
+          metadata: toolMetadata,
+          time: { start: Date.now(), end: Date.now() },
+        },
+      }
+    : toolMetadata || toolOutput
+      ? {
+          id: PartID.ascending(),
+          messageID: id,
+          sessionID: input.sessionID,
+          type: "tool" as const,
+          tool: "read",
+          callID: "call-1",
+          state: {
+            status: "completed" as const,
+            input: { filePath: "/external" },
+            output: toolOutput ?? "tool result",
+            title: "read",
+            metadata: toolMetadata ?? {},
+            time: { start: Date.now(), end: Date.now() },
+          },
+        }
+      : undefined
   return {
     info: {
       id,
@@ -145,24 +184,7 @@ function reply(
         type: "text",
         text,
       },
-      ...(toolError
-        ? [
-            {
-              id: PartID.ascending(),
-              messageID: id,
-              sessionID: input.sessionID,
-              type: "tool" as const,
-              tool: "read",
-              callID: "call-1",
-              state: {
-                status: "error" as const,
-                input: { filePath: "/external" },
-                error: toolError,
-                time: { start: Date.now(), end: Date.now() },
-              },
-            },
-          ]
-        : []),
+      ...(toolPart ? [toolPart] : []),
     ],
   }
 }
@@ -419,6 +441,7 @@ describe("tool.task", () => {
 
   it.instance("execute cancels child session when abort signal fires", () =>
     Effect.gen(function* () {
+      const sessions = yield* Session.Service
       const { chat, assistant } = yield* seed()
       const tool = yield* TaskTool
       const def = yield* tool.init()
@@ -435,7 +458,15 @@ describe("tool.task", () => {
           Effect.promise(() => {
             ready.resolve(input)
             return cancelled.promise
-          }).pipe(Effect.as(reply(input, "cancelled"))),
+          }).pipe(
+            Effect.as(
+              reply(input, "cancelled", undefined, undefined, {
+                sideEffectObserved: true,
+                verified: false,
+                outputPath: "/tmp/disposable-side-effect",
+              }, "artifact observed"),
+            ),
+          ),
       }
 
       const fiber = yield* def
@@ -464,6 +495,10 @@ describe("tool.task", () => {
 
       const exit = yield* Fiber.await(fiber)
       expect(Exit.isSuccess(exit)).toBe(true)
+      const execution = SubagentState.executionFromMetadata((yield* sessions.get(input.sessionID)).metadata)
+      expect(execution?.state).toBe("aborted")
+      expect(execution?.sideEffectObserved).toBe(true)
+      expect(execution?.verified).toBe(false)
     }),
   )
 
@@ -501,6 +536,111 @@ describe("tool.task", () => {
       expect(result.metadata.sessionId).not.toBe("ses_missing")
       expect(result.output).toContain(`<task id="${result.metadata.sessionId}" state="completed">`)
       expect(seen?.sessionID).toBe(result.metadata.sessionId)
+    }),
+  )
+
+  it.instance("persists task execution state and makes explicit resume a new attempt", () =>
+    Effect.gen(function* () {
+      const sessions = yield* Session.Service
+      const { chat, assistant } = yield* seed()
+      const tool = yield* TaskTool
+      const def = yield* tool.init()
+      const context = {
+        sessionID: chat.id,
+        messageID: assistant.id,
+        agent: "build",
+        abort: new AbortController().signal,
+        extra: { promptOps: stubOps({ text: "done" }) },
+        messages: [],
+        metadata: () => Effect.void,
+        ask: () => Effect.void,
+      }
+
+      const first = yield* def.execute(
+        { description: "inspect bug", prompt: "inspect the cache path", subagent_type: "general" },
+        context,
+      )
+      const firstSession = yield* sessions.get(first.metadata.sessionId)
+      const firstExecution = SubagentState.executionFromMetadata(firstSession.metadata)
+      expect(firstExecution?.state).toBe("succeeded")
+      expect(firstExecution?.attempt).toBe(1)
+      expect(firstExecution?.mode).toBe("foreground")
+
+      const second = yield* def.execute(
+        {
+          description: "resume bug",
+          prompt: "continue from the saved task state",
+          subagent_type: "general",
+          task_id: first.metadata.sessionId,
+        },
+        context,
+      )
+      const secondSession = yield* sessions.get(second.metadata.sessionId)
+      const secondExecution = SubagentState.executionFromMetadata(secondSession.metadata)
+      expect(secondExecution?.state).toBe("succeeded")
+      expect(secondExecution?.attempt).toBe(2)
+      expect(secondExecution?.executionID).not.toBe(firstExecution?.executionID)
+    }),
+  )
+
+  it.instance("reconciles a durable nonterminal task as orphaned without spawning", () =>
+    Effect.gen(function* () {
+      const sessions = yield* Session.Service
+      const jobs = yield* BackgroundJob.Service
+      const { chat } = yield* seed()
+      const execution = SubagentState.startExecution({
+        sessionID: "ses_orphaned_child",
+        parentSessionID: chat.id,
+        mode: "background",
+        now: 1,
+      })
+      const child = yield* sessions.create({
+        parentID: chat.id,
+        title: "orphaned child",
+        metadata: { [SubagentState.DURABLE_EXECUTION_KEY]: execution },
+      })
+
+      const listed = yield* SubagentState.hybridList(chat.id)
+      const item = listed.find((entry) => entry.sessionID === child.id)
+      expect(item?.status).toBe("orphaned")
+      expect((yield* jobs.list()).some((job) => job.metadata?.sessionId === child.id)).toBe(false)
+
+      const reconciled = SubagentState.executionFromMetadata((yield* sessions.get(child.id)).metadata)
+      expect(reconciled?.executionID).toBe(execution.executionID)
+      expect(reconciled?.attempt).toBe(execution.attempt)
+      expect(reconciled?.state).toBe("orphaned")
+    }),
+  )
+
+  it.effect("reconciles a task owned by a crashed process and preserves terminality", () =>
+    Effect.gen(function* () {
+      const execution = SubagentState.startExecution({
+        sessionID: "ses_crashed_owner_child",
+        parentSessionID: "ses_parent",
+        mode: "background",
+        now: 1,
+      })
+      const foreign = { ...execution, ownerID: "crashed-process-owner" }
+      const reconciled = SubagentState.reconcileAfterRestart(foreign, "new-process-owner", 2)
+      expect(reconciled.state).toBe("orphaned")
+      expect(reconciled.terminalReason).toContain("crashed-process-owner")
+      expect(reconciled.terminalAt).toBe(2)
+
+      const retried = SubagentState.startExecution({
+        sessionID: foreign.sessionID,
+        parentSessionID: foreign.parentSessionID,
+        mode: foreign.mode,
+        previous: reconciled,
+        now: 3,
+      })
+      expect(retried.attempt).toBe(2)
+      expect(retried.executionID).not.toBe(reconciled.executionID)
+      expect(retried.ownerID).toBe(SubagentState.PROCESS_OWNER_ID)
+
+      const terminal = SubagentState.transitionExecution(retried, "succeeded", {}, 4)
+      const cannotReopen = SubagentState.reconcileAfterRestart(terminal, "another-process-owner", 5)
+      expect(cannotReopen.state).toBe("succeeded")
+      expect(cannotReopen.terminalAt).toBe(4)
     }),
   )
 

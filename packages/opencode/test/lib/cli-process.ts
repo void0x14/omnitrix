@@ -11,6 +11,8 @@
 //   - OPENCODE_DISABLE_PROJECT_CONFIG : skip walking up for opencode.json
 //   - OPENCODE_PURE                : skip external plugin discovery + install
 //   - OPENCODE_DISABLE_AUTOUPDATE / AUTOCOMPACT / MODELS_FETCH : no background work
+// The inline config contains `mcp: {}` so configured MCP servers cannot add
+// tool definitions or instruction text to the model request.
 // Plus HOME / XDG_* pointing at the tmpdir for belt-and-suspenders isolation.
 //
 // Today only `opencode.run` is fully wired. The shape supports adding more
@@ -86,6 +88,7 @@ export type RunResult = {
 
 export type RunHandle = {
   readonly interrupt: () => void
+  readonly kill: (signal?: "SIGINT" | "SIGTERM" | "SIGKILL") => void
   readonly result: Effect.Effect<RunResult>
 }
 
@@ -302,6 +305,7 @@ export function withCliFixture<A, E>(
 
       return {
         interrupt: () => proc.kill("SIGINT"),
+        kill: (signal = "SIGKILL") => proc.kill(signal),
         result: Effect.promise(async () => ({
           exitCode: await proc.exited,
           stdout: normalizeLines(await stdout),
@@ -481,7 +485,9 @@ export function withCliFixture<A, E>(
 }
 
 function parseJsonEvents(stdout: string): Array<Record<string, unknown>> {
+  const terminalControls = /\u001b(?:[@-_]|\[[0-?]*[ -/]*[@-~])/g
   return stdout
+    .replace(terminalControls, "")
     .split("\n")
     .map((line) => line.trim())
     .filter((line) => line.length > 0)

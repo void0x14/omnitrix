@@ -225,6 +225,23 @@ const layer = Layer.effect(
         ? yield* provider.getModel(ag.model.providerID, ag.model.modelID)
         : ((yield* provider.getSmallModel(input.providerID)) ??
           (yield* provider.getModel(input.providerID, input.modelID)))
+
+      const isEcho =
+        mdl.providerID === "yerel" ||
+        mdl.providerID === "echo" ||
+        mdl.providerID === "echo-local" ||
+        mdl.providerID.startsWith("echo-") ||
+        mdl.api.id.startsWith("echo-")
+      if (isEcho) {
+        const promptText = firstUser.parts
+          .filter((p) => p.type === "text")
+          .map((p: any) => p.text)
+          .join(" ")
+        const title = promptText.trim().slice(0, 60) || "Echo Oturumu"
+        yield* sessions.setTitle({ sessionID: input.session.id, title })
+        return
+      }
+
       const msgs = onlySubtasks
         ? [{ role: "user" as const, content: subtasks.map((p) => p.prompt).join("\n") }]
         : yield* MessageV2.toModelMessagesEffect(context, mdl)
@@ -1371,6 +1388,7 @@ const layer = Layer.effect(
             const yerelModel =
               model.providerID === "yerel" ||
               model.providerID === "echo" ||
+              model.providerID === "echo-local" ||
               model.providerID.startsWith("echo-") ||
               model.api.id.startsWith("echo-")
             let skills: string | undefined
@@ -1391,15 +1409,7 @@ const layer = Layer.effect(
             }
             const modelMsgs = yield* MessageV2.toModelMessagesEffect(msgs, model)
             const system = yerelModel
-              ? [
-                  "Bu yerel model yalnızca Türkçe teknik icra yapar.",
-                  "Kullanıcının son isteğini doğrudan uygula.",
-                  "Eylem gerekiyorsa gerçek sonucu al; gerçek sonuç olmadan işi tamamlanmış sayma.",
-                  "Dosya içeriği istenirse read aracını kullan; aynı işi bash, grep veya başka bir araçla değiştirme.",
-                  "Kullanıcı açıkça yazma istemedikçe dosyayı write veya edit ile değiştirme.",
-                  "Bir araç sonucu görevi tamamlıyorsa yeni araç çağrısı yapmadan nihai yanıtı ver.",
-                  `Çalışma dizini: ${ctx.directory}`,
-                ]
+              ? []
               : [
                   ...env,
                   ...instructions,
@@ -1407,7 +1417,7 @@ const layer = Layer.effect(
                   ...(skills ? [skills] : []),
                 ]
             // Deterministic subagent state hook: durable+memory hybrid — never stateless, SQL truth always injected
-            {
+            if (!yerelModel) {
               const running = yield* SubagentState.hybridRunningWith(sessionID, { background, sessions, database })
               if (running.length > 0) {
                 const lines = running.map((j) => {
@@ -1415,11 +1425,11 @@ const layer = Layer.effect(
                   const tail = j.tail ? j.tail.trim().slice(-300).replace(/\n/g, " ") : ""
                   return `- ${j.id} [${j.status}] "${title}" elapsed=${j.elapsed}s source=${j.source}${tail ? ` tail="${tail.slice(0, 120)}"` : ""} (use task status/cancel/update)`
                 })
-                system.push(`[SUBAGENT STATE] You have ${running.length} running subagent(s) (hybrid durable+memory):\n${lines.join("\n")}\nYou are stateful and must remain aware and in control. Use the task tool to monitor, cancel, or update them before they complete. SQL fallback ensures you never need to query SQL manually.`)
+                system.push(`[SUBAGENT STATE] Running subagent records (hybrid durable+memory):\n${lines.join("\n")}`)
               }
             }
             const format = lastUser.format ?? { type: "text" as const }
-            if (format.type === "json_schema") system.push(STRUCTURED_OUTPUT_SYSTEM_PROMPT)
+            if (!yerelModel && format.type === "json_schema") system.push(STRUCTURED_OUTPUT_SYSTEM_PROMPT)
             const result = yield* handle.process({
               user: lastUser,
               agent,

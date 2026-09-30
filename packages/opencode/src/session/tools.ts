@@ -83,6 +83,14 @@ const SUPPORTED_MCP_RESOURCE_ATTACHMENT_MIMES = new Set([
   "image/webp",
 ])
 
+const isEchoModel = (model: Provider.Model) =>
+  model.providerID === "yerel" ||
+  model.providerID === "echo" ||
+  model.providerID === "echo-local" ||
+  model.providerID.startsWith("echo-") ||
+  model.providerID.startsWith("opencode-echo") ||
+  model.api.id.startsWith("echo-")
+
 export const resolve = Effect.fn("SessionTools.resolve")(function* (input: {
   agent: Agent.Info
   model: Provider.Model
@@ -100,6 +108,7 @@ export const resolve = Effect.fn("SessionTools.resolve")(function* (input: {
   const mcp = yield* MCP.Service
   const truncate = yield* Truncate.Service
   const flags = yield* RuntimeFlags.Service
+  const appProcess = yield* AppProcess.Service
 
   const context = (args: Record<string, unknown>, options: ToolExecutionOptions): Tool.Context => ({
     sessionID: input.session.id,
@@ -153,8 +162,8 @@ export const resolve = Effect.fn("SessionTools.resolve")(function* (input: {
               { tool: item.id, sessionID: ctx.sessionID, callID: ctx.callID },
               { args },
             )
-            const result = yield* Cekirdek.invoke({ item, args: toRecord(args), ctx })
-            const output = {
+            const result = yield* Cekirdek.invoke({ item, args: toRecord(args), ctx, appProcess })
+            let output = {
               ...result,
               attachments: (result.attachments as unknown as SessionV1.FilePart[] | undefined)?.map((attachment) => ({
                 ...attachment,
@@ -162,6 +171,26 @@ export const resolve = Effect.fn("SessionTools.resolve")(function* (input: {
                 sessionID: ctx.sessionID,
                 messageID: input.processor.message.id,
               })),
+            }
+            // Some long-running tools finish after their abort signal has fired and
+            // persist truncation metadata through the live-call path. Normalize the
+            // final model-visible payload here as a last boundary guarantee so a
+            // completed tool never exposes an unmarked partial preview.
+            if (
+              isRecord(output.metadata) &&
+              output.metadata.truncated === true &&
+              typeof output.metadata.outputPath === "string" &&
+              !output.output.includes("...output truncated...")
+            ) {
+              output = {
+                ...output,
+                output: [
+                  "The tool call succeeded but the output was truncated.",
+                  `Full output saved to: ${output.metadata.outputPath}`,
+                  "...output truncated...",
+                  output.output,
+                ].join("\n\n"),
+              }
             }
             yield* plugin.trigger(
               "tool.execute.after",
@@ -178,7 +207,7 @@ export const resolve = Effect.fn("SessionTools.resolve")(function* (input: {
     })
   }
 
-  const hasMcpResourceServer = Object.values(yield* mcp.clients()).some(
+  const hasMcpResourceServer = !isEchoModel(input.model) && Object.values(yield* mcp.clients()).some(
     (client) => !!client.getServerCapabilities()?.resources,
   )
   if (hasMcpResourceServer) {
@@ -246,7 +275,14 @@ export const resolve = Effect.fn("SessionTools.resolve")(function* (input: {
                 servers: resourceServers,
                 ...(parsed.server ? { server: parsed.server } : {}),
                 truncated: truncated.truncated,
-                ...(truncated.truncated && { outputPath: truncated.outputPath }),
+                ...(truncated.truncated && {
+                  outputPath: truncated.outputPath,
+                  originalBytes: truncated.originalBytes,
+                  originalLines: truncated.originalLines,
+                  retainedBytes: truncated.retainedBytes,
+                  retainedLines: truncated.retainedLines,
+                  retainedDirection: truncated.retainedDirection,
+                }),
               },
               output: truncated.content,
             }
@@ -329,7 +365,14 @@ export const resolve = Effect.fn("SessionTools.resolve")(function* (input: {
                 servers: resourceServers,
                 ...(parsed.server ? { server: parsed.server } : {}),
                 truncated: truncated.truncated,
-                ...(truncated.truncated && { outputPath: truncated.outputPath }),
+                ...(truncated.truncated && {
+                  outputPath: truncated.outputPath,
+                  originalBytes: truncated.originalBytes,
+                  originalLines: truncated.originalLines,
+                  retainedBytes: truncated.retainedBytes,
+                  retainedLines: truncated.retainedLines,
+                  retainedDirection: truncated.retainedDirection,
+                }),
               },
               output: truncated.content,
             }
@@ -405,7 +448,14 @@ export const resolve = Effect.fn("SessionTools.resolve")(function* (input: {
                 contents: formatted.contents,
                 attachments: formatted.attachments.length,
                 truncated: truncated.truncated,
-                ...(truncated.truncated && { outputPath: truncated.outputPath }),
+                ...(truncated.truncated && {
+                  outputPath: truncated.outputPath,
+                  originalBytes: truncated.originalBytes,
+                  originalLines: truncated.originalLines,
+                  retainedBytes: truncated.retainedBytes,
+                  retainedLines: truncated.retainedLines,
+                  retainedDirection: truncated.retainedDirection,
+                }),
               },
               output: truncated.content,
               attachments: formatted.attachments.map((attachment) => ({
@@ -432,7 +482,16 @@ export const resolve = Effect.fn("SessionTools.resolve")(function* (input: {
 
   if (flags.experimentalCodeMode) return tools
 
+  const echoModel = isEchoModel(input.model)
   for (const [key, entry] of Object.entries(yield* mcp.tools())) {
+    if (echoModel) {
+      const allowedPrefixes = ["context7", "kahin", "hashfile", "ffs", "semble", "websearch"]
+      const clientName = typeof entry?.client === "string" ? entry.client.toLowerCase() : ""
+      const isAllowed = allowedPrefixes.some(
+        (prefix) => key.toLowerCase().includes(prefix) || (clientName && clientName.includes(prefix)),
+      )
+      if (!isAllowed) continue
+    }
     const item = McpCatalog.convertTool(entry.def, entry.client, entry.timeout)
     const mcpItem = item as unknown as Tool.Def
     const execute = item.execute
@@ -455,6 +514,7 @@ export const resolve = Effect.fn("SessionTools.resolve")(function* (input: {
             item: { id: key, description: item.description ?? "", parameters: mcpItem.parameters, execute: mcpItem.execute },
             args: toRecord(args),
             ctx,
+            appProcess,
           })
           const result = ham
           yield* plugin.trigger(
@@ -505,7 +565,14 @@ export const resolve = Effect.fn("SessionTools.resolve")(function* (input: {
           const metadata = {
             ...result.metadata,
             truncated: truncated.truncated,
-            ...(truncated.truncated && { outputPath: truncated.outputPath }),
+            ...(truncated.truncated && {
+              outputPath: truncated.outputPath,
+              originalBytes: truncated.originalBytes,
+              originalLines: truncated.originalLines,
+              retainedBytes: truncated.retainedBytes,
+              retainedLines: truncated.retainedLines,
+              retainedDirection: truncated.retainedDirection,
+            }),
           }
 
           const output = {

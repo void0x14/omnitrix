@@ -52,9 +52,9 @@ function statusWithFetch(
   fetch: typeof globalThis.fetch | undefined,
 ): RuntimeStatus {
   const providerID = input.model.providerID
+  const npm = input.model.api.npm
   if (providerID !== "openai" && providerID !== "anthropic" && !providerID.startsWith("opencode"))
     return { type: "unsupported", reason: "provider is not openai, opencode, or anthropic" }
-  const npm = input.model.api.npm
   if (npm !== "@ai-sdk/openai" && npm !== "@ai-sdk/openai-compatible" && npm !== "@ai-sdk/anthropic")
     return { type: "unsupported", reason: "provider package is not OpenAI, OpenAI-compatible, or Anthropic" }
   if (input.auth?.type === "oauth" && !(input.provider.id === "openai" && fetch)) {
@@ -87,6 +87,11 @@ export function stream(input: StreamInput): StreamResult {
   // — if a field ever needs to differ between the two surfaces, the
   // translation belongs here, not split across both packages.
   const tools = nativeTools(input.tools, input)
+  const providerOptions = ProviderTransform.providerOptions(input.model, input.providerOptions ?? {})
+  const nativeProviderOptions =
+    input.model.api.npm === "@ai-sdk/openai-compatible"
+      ? { openai: providerOptions[input.model.providerID] ?? input.providerOptions ?? {} }
+      : providerOptions
   const request = LLMNative.request({
     model: input.model,
     apiKey: current.apiKey,
@@ -97,18 +102,24 @@ export function stream(input: StreamInput): StreamResult {
     topP: input.topP,
     topK: input.topK,
     maxOutputTokens: input.maxOutputTokens,
-    providerOptions: ProviderTransform.providerOptions(input.model, input.providerOptions ?? {}),
+    providerOptions: nativeProviderOptions,
     headers: { ...providerHeaders(input.provider.options.headers), ...input.headers },
   })
   const stream = Stream.scoped(
     Stream.unwrap(
       Effect.gen(function* () {
+        const isEcho =
+          input.model.providerID === "yerel" ||
+          input.model.providerID === "echo" ||
+          input.model.providerID === "echo-local" ||
+          input.model.providerID.startsWith("echo-") ||
+          input.model.api.id.startsWith("echo-")
         const settlements = yield* FiberSet.make<void>()
         const results = yield* Queue.unbounded<LLMEvent, Cause.Done>()
         const provider = input.llmClient
           .stream(
             LLMRequest.update(request, {
-              tools: [...request.tools, ...toDefinitions(tools)],
+              tools: isEcho ? [] : [...request.tools, ...toDefinitions(tools)],
             }),
           )
           .pipe(
@@ -134,7 +145,23 @@ export function stream(input: StreamInput): StreamResult {
               ),
             ),
           )
-        return provider.pipe(Stream.concat(Stream.fromQueue(results)))
+        return provider.pipe(
+          Stream.tap((event) =>
+            Effect.logInfo("native llm event type", {
+              providerID: input.model.providerID,
+              modelID: input.model.id,
+              type: event.type,
+            }),
+          ),
+          Stream.tapError((error) =>
+            Effect.logError("native llm stream failed", {
+              providerID: input.model.providerID,
+              modelID: input.model.id,
+              error: errorMessage(error),
+            }),
+          ),
+          Stream.concat(Stream.fromQueue(results)),
+        )
       }),
     ),
   )
@@ -166,6 +193,12 @@ function nativeSchema(value: unknown): JsonSchema {
   return asSchema(value as Parameters<typeof asSchema>[0]).jsonSchema as JsonSchema
 }
 
+function nativeDescription(value: unknown): string {
+  if (typeof value !== "string") return ""
+  const first = value.split(/\r?\n/).map((line) => line.trim()).find(Boolean)
+  return first ?? ""
+}
+
 export function nativeTools(tools: Record<string, Tool>, input: Pick<StreamInput, "messages" | "abort">) {
   return Object.fromEntries(
     Object.entries(tools).map(([name, item]) => [
@@ -173,7 +206,7 @@ export function nativeTools(tools: Record<string, Tool>, input: Pick<StreamInput
       // Tool execution remains opencode-owned. The native runtime only adapts
       // the @opencode-ai/llm tool call back into the AI SDK Tool.execute shape.
       NativeTool.make({
-        description: item.description ?? "",
+        description: nativeDescription(item.description),
         jsonSchema: nativeSchema(item.inputSchema),
         execute: (args: unknown, ctx) =>
           Effect.tryPromise({

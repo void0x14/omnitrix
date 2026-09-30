@@ -224,7 +224,8 @@ const live: Layer.Layer<
 
       // Runtime seam: native is an opt-in adapter over @opencode-ai/llm. It
       // either returns a ready LLMEvent stream or a concrete fallback reason.
-      if (flags.experimentalNativeLlm) {
+      const useNativeLlm = flags.experimentalNativeLlm || input.model.providerID.startsWith("opencode")
+      if (useNativeLlm) {
         const native = LLMNativeRuntime.stream({
           model: input.model,
           provider: item,
@@ -302,6 +303,24 @@ const live: Layer.Layer<
                 toolName: lower,
               }
             }
+            if (lower === "websearch" || lower === "google_search") {
+              const searchTool = Object.keys(prepared.tools).find(
+                (t) =>
+                  t === "websearch" ||
+                  t === "google_search" ||
+                  t.includes("tavily") ||
+                  t.includes("exa") ||
+                  t.includes("linkup") ||
+                  t.includes("firecrawl") ||
+                  t.includes("search"),
+              )
+              if (searchTool) {
+                return {
+                  ...failed.toolCall,
+                  toolName: searchTool,
+                }
+              }
+            }
             return {
               ...failed.toolCall,
               input: JSON.stringify({
@@ -337,6 +356,15 @@ const live: Layer.Layer<
                       input.model,
                       prepared.messageTransformOptions,
                     )
+                    const isEcho =
+                      input.model.providerID === "yerel" ||
+                      input.model.providerID === "echo" ||
+                      input.model.providerID === "echo-local" ||
+                      input.model.providerID.startsWith("echo-") ||
+                      input.model.api.id.startsWith("echo-")
+                    if (isEcho) {
+                      delete (args.params as any).tools
+                    }
                   }
                   return args.params
                 },

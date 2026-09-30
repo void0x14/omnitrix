@@ -1,0 +1,9 @@
+{
+  "schema": "echo.coding-task-baseline.v1",
+  "task_id": "echo-coding-slugify-20260830",
+  "target_file": "src/slugify.ts",
+  "target_sha256_before": "f249743253088d22eb3bf55a651c56c3a6a64bd1dceacbdd3fa765387807cb9e",
+  "task_sha256_before": "060c054d2c8ba3be257e1139061c5957a4579a49140e533cf9647b5d3d578a73",
+  "fixture_revision": "initial-intentionally-failing-target",
+  "acceptance_command": ["bun", "test", "test"]
+}

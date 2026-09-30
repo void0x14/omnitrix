@@ -61,6 +61,10 @@ export function webSearchEnabled(providerID: ProviderV2.ID, flags = { exa: false
   return (
     providerID === ProviderV2.ID.opencode ||
     providerID === ProviderV2.ID.make("opencode-go") ||
+    providerID.startsWith("opencode-") ||
+    providerID.startsWith("echo-") ||
+    providerID === ProviderV2.ID.make("echo") ||
+    providerID === ProviderV2.ID.make("yerel") ||
     flags.exa ||
     flags.parallel
   )
@@ -166,7 +170,14 @@ const layer = Layer.effect(
                   metadata: {
                     ...metadata,
                     truncated: out.truncated,
-                    ...(out.truncated && { outputPath: out.outputPath }),
+                    ...(out.truncated && {
+                      outputPath: out.outputPath,
+                      originalBytes: out.originalBytes,
+                      originalLines: out.originalLines,
+                      retainedBytes: out.retainedBytes,
+                      retainedLines: out.retainedLines,
+                      retainedDirection: out.retainedDirection,
+                    }),
                   },
                 }
               }).pipe(

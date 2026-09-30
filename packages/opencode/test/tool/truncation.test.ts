@@ -184,6 +184,11 @@ describe("Truncate", () => {
         expect(result.content).toContain("Grep")
         if (!result.truncated) throw new Error("expected truncated")
         expect(result.outputPath).toBeDefined()
+        expect(result.originalBytes).toBe(Buffer.byteLength(lines, "utf-8"))
+        expect(result.originalLines).toBe(100)
+        expect(result.retainedBytes).toBeLessThan(result.originalBytes)
+        expect(result.retainedLines).toBe(10)
+        expect(result.retainedDirection).toBe("head")
         expect(result.outputPath).toContain("tool_")
 
         const fsys = yield* FSUtil.Service

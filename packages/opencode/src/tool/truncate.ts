@@ -4,20 +4,22 @@ import { Cause, Duration, Effect, Layer, Option, Schedule, Context } from "effec
 import path from "path"
 import os from "node:os"
 import { randomUUID } from "node:crypto"
+import { mkdir } from "node:fs/promises"
 import type { Agent } from "../agent/agent"
 import { FSUtil } from "@opencode-ai/core/fs-util"
 import { Config } from "@/config/config"
+import { evaluate } from "@/permission/evaluate"
 import { ToolID } from "./schema"
 import { TRUNCATION_DIR } from "./truncation-dir"
 
 
 const SPILL_DIR = path.join(os.tmpdir(), "opencode-spill")
-const PREVIEW_LINES = 20
 
 export interface SpillOptions {
   maxLines?: number
   maxBytes?: number
   direction?: "head" | "tail"
+  agent?: Agent.Info
 }
 
 export interface SpillResult {
@@ -27,6 +29,84 @@ export interface SpillResult {
   outputPath?: string
   bytes: number
   lines: number
+  retainedBytes: number
+  retainedLines: number
+  direction: "head" | "tail"
+}
+
+function hasTaskTool(agent?: Agent.Info) {
+  if (!agent?.permission) return false
+  return evaluate("task", "*", agent.permission).action !== "deny"
+}
+
+function sliceBytes(text: string, maxBytes: number, direction: "head" | "tail") {
+  const bytes = Buffer.from(text, "utf-8")
+  if (bytes.length <= maxBytes) return text
+  const slice = direction === "head" ? bytes.subarray(0, maxBytes) : bytes.subarray(bytes.length - maxBytes)
+  let start = 0
+  let end = slice.length
+  while (start < end && (slice[start]! & 0xc0) === 0x80) start++
+  while (end > start && (slice[end - 1]! & 0xc0) === 0x80) end--
+  return slice.subarray(start, end).toString("utf-8")
+}
+
+function boundedPreview(text: string, maxLines: number, maxBytes: number, direction: "head" | "tail") {
+  const lines = text.split("\n")
+  const selected: string[] = []
+  let selectedBytes = 0
+  const indexes = direction === "head" ? lines.keys() : Array.from(lines.keys()).reverse().values()
+
+  for (const index of indexes) {
+    if (selected.length >= maxLines) break
+    const line = lines[index] ?? ""
+    const separator = selected.length > 0 ? 1 : 0
+    const lineBytes = Buffer.byteLength(line, "utf-8")
+    const available = maxBytes - selectedBytes - separator
+    if (available <= 0) break
+    if (lineBytes > available) {
+      const partial = sliceBytes(line, available, direction)
+      if (direction === "head") selected.push(partial)
+      else selected.unshift(partial)
+      selectedBytes += Buffer.byteLength(partial, "utf-8") + separator
+      break
+    }
+    if (direction === "head") selected.push(line)
+    else selected.unshift(line)
+    selectedBytes += lineBytes + separator
+  }
+
+  const content = selected.join("\n")
+  return {
+    content,
+    bytes: Buffer.byteLength(content, "utf-8"),
+    lines: selected.length,
+  }
+}
+
+function truncationContent(input: {
+  preview: string
+  totalBytes: number
+  totalLines: number
+  keptBytes: number
+  keptLines: number
+  maxBytes: number
+  maxLines: number
+  direction: "head" | "tail"
+  outputPath: string
+  agent?: Agent.Info
+}) {
+  const byteLimited = input.totalBytes > input.maxBytes
+  const removed = byteLimited
+    ? Math.max(0, input.totalBytes - input.keptBytes)
+    : Math.max(0, input.totalLines - input.keptLines)
+  const unit = byteLimited ? "bytes" : "lines"
+  const marker = `...${removed} ${unit} truncated...`
+  const hint = hasTaskTool(input.agent)
+    ? `The tool call succeeded but the output was truncated. Full output saved to: ${input.outputPath}\nUse the Task tool to have an explore agent process this file with Grep and Read (with offset/limit). Do NOT read the full file yourself - delegate to save context.`
+    : `The tool call succeeded but the output was truncated. Full output saved to: ${input.outputPath}\nUse Grep to search the full content or Read with offset/limit to view specific sections.`
+  return input.direction === "head"
+    ? `${input.preview}\n\n${marker}\n\n${hint}`
+    : `${marker}\n\n${hint}\n\n${input.preview}`
 }
 
 /**
@@ -37,28 +117,51 @@ export interface SpillResult {
 export async function spillOrInline(text: string, opts: SpillOptions = {}): Promise<SpillResult> {
   const maxLines = opts.maxLines ?? MAX_LINES
   const maxBytes = opts.maxBytes ?? MAX_BYTES
+  const direction = opts.direction ?? "head"
   const lines = text.split("\n")
   const bytes = Buffer.byteLength(text, "utf-8")
 
   if (lines.length <= maxLines && bytes <= maxBytes) {
-    return { spilled: false, content: text, bytes, lines: lines.length }
+    return {
+      spilled: false,
+      content: text,
+      bytes,
+      lines: lines.length,
+      retainedBytes: bytes,
+      retainedLines: lines.length,
+      direction,
+    }
   }
 
-  const head = lines.slice(0, PREVIEW_LINES)
-  const tail = lines.length > PREVIEW_LINES * 2 ? lines.slice(-PREVIEW_LINES) : []
   const file = path.join(SPILL_DIR, `${randomUUID()}.txt`)
 
+  await mkdir(SPILL_DIR, { recursive: true })
   await Bun.write(file, text)
 
-  const note = `Tam cikti (${bytes} bayt, ${lines.length} satir) kayitli: ${file}`
-  const envelope = [
-    ...head,
-    ...(tail.length ? ["", "... (ortadan kesildi) ...", "", ...tail] : []),
-    "",
-    note,
-  ].join("\n")
+  const preview = boundedPreview(text, maxLines, maxBytes, direction)
+  const envelope = truncationContent({
+    preview: preview.content,
+    totalBytes: bytes,
+    totalLines: lines.length,
+    keptBytes: preview.bytes,
+    keptLines: preview.lines,
+    maxBytes,
+    maxLines,
+    direction,
+    outputPath: file,
+    agent: opts.agent,
+  })
 
-  return { spilled: true, content: envelope, outputPath: file, bytes, lines: lines.length }
+  return {
+    spilled: true,
+    content: envelope,
+    outputPath: file,
+    bytes,
+    lines: lines.length,
+    retainedBytes: preview.bytes,
+    retainedLines: preview.lines,
+    direction,
+  }
 }
 const RETENTION = Duration.days(7)
 
@@ -69,7 +172,16 @@ export const GLOB = path.join(TRUNCATION_DIR, "*")
 
 export type Result =
   | { content: string; truncated: false; outputPath?: string }
-  | { content: string; truncated: true; outputPath: string }
+  | {
+      content: string
+      truncated: true
+      outputPath: string
+      originalBytes: number
+      originalLines: number
+      retainedBytes: number
+      retainedLines: number
+      retainedDirection: "head" | "tail"
+    }
 
 export interface Options {
   maxLines?: number
@@ -103,7 +215,9 @@ const layer = Layer.effect(
       const cutoff = Date.now() - Duration.toMillis(RETENTION)
       for (const dir of [TRUNCATION_DIR, SPILL_DIR]) {
         const entries = yield* fs.readDirectory(dir).pipe(
-          Effect.map((all) => all.filter((name) => name.endsWith(".txt"))),
+          Effect.map((all) =>
+            all.filter((name) => dir === TRUNCATION_DIR ? name.startsWith("tool_") : name.endsWith(".txt")),
+          ),
           Effect.catch(() => Effect.succeed([])),
         )
         for (const entry of entries) {
@@ -133,15 +247,38 @@ const layer = Layer.effect(
       }
     })
 
-    const output = Effect.fn("Truncate.output")(function* (text: string, options: Options = {}, _agent?: Agent.Info) {
+    const output = Effect.fn("Truncate.output")(function* (text: string, options: Options = {}, agent?: Agent.Info) {
       const resolved = yield* limits()
       const maxLines = options.maxLines ?? resolved.maxLines
       const maxBytes = options.maxBytes ?? resolved.maxBytes
-      const spill = yield* Effect.promise(() =>
-        spillOrInline(text, { maxLines, maxBytes, direction: options.direction ?? "head" }),
-      )
-      if (!spill.spilled) return { content: text, truncated: false } as const
-      return { content: spill.content, truncated: true, outputPath: spill.outputPath! } as const
+      const direction = options.direction ?? "head"
+      const lines = text.split("\n")
+      const bytes = Buffer.byteLength(text, "utf-8")
+      if (lines.length <= maxLines && bytes <= maxBytes) return { content: text, truncated: false } as const
+
+      const preview = boundedPreview(text, maxLines, maxBytes, direction)
+      const outputPath = yield* write(text)
+      return {
+        content: truncationContent({
+          preview: preview.content,
+          totalBytes: bytes,
+          totalLines: lines.length,
+          keptBytes: preview.bytes,
+          keptLines: preview.lines,
+          maxBytes,
+          maxLines,
+          direction,
+          outputPath,
+          agent,
+        }),
+        truncated: true,
+        outputPath,
+        originalBytes: bytes,
+        originalLines: lines.length,
+        retainedBytes: preview.bytes,
+        retainedLines: preview.lines,
+        retainedDirection: direction,
+      } as const
     })
 
     yield* cleanup().pipe(

@@ -15,13 +15,7 @@ let logFilePath = ""
 let cleanupFns: Array<() => void> = []
 
 function getLogFile(): string {
-  // Use Global.Path.log if available, else fallback to ~/.local/share/opencode/log/app-debug.log
-  try {
-    // Dynamic import to avoid cycle
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const { Global } = require("@opencode-ai/core/global")
-    if (Global?.Path?.log) return path.join(Global.Path.log, "app-debug.log")
-  } catch {}
+  // Keep this synchronous: core/global.ts uses top-level await and cannot be loaded via require.
   const home = process.env.HOME || process.env.USERPROFILE || "/tmp"
   return path.join(home, ".local", "share", "opencode", "log", "app-debug.log")
 }
